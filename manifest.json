@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "id": "krieziey.omarchy-xray",
+  "name": "Xray",
+  "version": "2.6.0",
+  "author": "krieziey",
+  "license": "MIT",
+  "description": "Xray in the Omarchy bar: omarchy-xray manager, node switching, TUN/proxy modes, subscription manager, latency tests and live traffic.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Xray",
+    "description": "Toggle the xray service, switch nodes, run latency tests and update the subscription.",
+    "category": "Network",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "refreshIntervalSec": 20,
+      "barLabel": "speed"
+    },
+    "schema": [
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "min": 10,
+        "max": 600,
+        "step": 5,
+        "defaultValue": 20
+      },
+      {
+        "key": "barLabel",
+        "type": "string",
+        "label": "Bar label: icon | node | speed",
+        "defaultValue": "speed"
+      }
+    ]
+  }
+}

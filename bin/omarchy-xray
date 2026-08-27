@@ -1,0 +1,597 @@
+#!/usr/bin/env python3
+"""omarchy-xray — minimal Xray subscription manager for the Omarchy widget.
+
+Subcommands:
+  import <url>     add a subscription (or replace if it exists) and fetch nodes
+  subremove <key>  remove a subscription (url or index) and its nodes
+  update           re-fetch every subscription, rebuild config
+  select <key>     switch node (n3 or name substring); restarts service if active
+  mode <m>         proxy | tun  — tun adds a TUN device + full routing (needs pkexec once)
+  route-up         [root] apply TUN policy routing
+  route-down       [root] remove TUN policy routing
+  on | off         start / stop the xray service
+  restart          restart the xray service
+  test             latency-test every node through its own temp xray instance
+  stats            traffic counters + per-call speed (JSON)
+  status           machine-readable JSON for the widget
+  install-unit     write the systemd user unit
+"""
+import base64, json, pathlib, socket, subprocess, sys, time, urllib.parse, urllib.request
+
+_self = pathlib.Path(__file__).resolve()
+# Under `pkexec` HOME points to /root — derive the real home from the
+# installed script path (~/.local/bin/omarchy-xray) so root always operates
+# on the user's config.
+if _self.parents[1].name == ".local":
+    HOME = _self.parents[2]
+else:
+    HOME = pathlib.Path.home()
+CFG = HOME / ".config/omarchy-xray"
+CONF = CFG / "config.json"
+STATE = CFG / "state.json"
+LAT = CFG / "latency.json"
+TRAFFIC = CFG / "traffic.json"
+UNIT = HOME / ".config/systemd/user/omarchy-xray.service"
+SERVICE = "omarchy-xray.service"
+def find_xray():
+    """Locate the xray core — PATH first, then the standard Arch location."""
+    import shutil
+    p = shutil.which("xray")
+    return p if p else "/usr/bin/xray"
+
+
+XRAY = find_xray()
+SELF = str(pathlib.Path(__file__).resolve())
+SOCKS, HTTP, TESTPORT, APIPORT = 20170, 20171, 10809, 15490
+TUN_NAME, TUN_ADDR, TUN_TABLE = "xray0", "172.19.0.1/30", "518"
+PROBE = "https://www.gstatic.com/generate_204"
+PRIVATE = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+           "127.0.0.0/8", "::1/128", "fc00::/7", "fe80::/10"]
+
+UNIT_TEXT = """[Unit]
+Description=Xray core driven by omarchy-xray
+After=network-online.target
+
+[Service]
+ExecStart=%s run -c %s
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+""" % (XRAY, CONF)
+
+
+def die(msg, code=1):
+    print(json.dumps({"ok": False, "error": msg}), file=sys.stderr)
+    sys.exit(code)
+
+
+def load_state():
+    if STATE.exists():
+        st = json.loads(STATE.read_text())
+    else:
+        st = {}
+    st.setdefault("subs", [])
+    st.setdefault("selected", 0)
+    st.setdefault("nodes", [])
+    st.setdefault("mode", "proxy")
+    return st
+
+
+def save_state(st):
+    CFG.mkdir(parents=True, exist_ok=True)
+    STATE.write_text(json.dumps(st, indent=2, ensure_ascii=False))
+
+
+def sh(*cmd, timeout=120):
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+
+
+def active():
+    return sh("systemctl", "--user", "is-active", SERVICE).stdout.strip() == "active"
+
+
+def restart_if_active():
+    if not active():
+        return True
+    sh("systemctl", "--user", "daemon-reload")
+    return sh("systemctl", "--user", "restart", SERVICE).returncode == 0
+
+
+def fetch(url):
+    req = urllib.request.Request(url, headers={"User-Agent": "omarchy-xray/1.0"})
+    return urllib.request.urlopen(req, timeout=25).read()
+
+
+def parse_links(body):
+    try:
+        text = base64.b64decode(body + b"===").decode("utf-8", "replace")
+    except Exception:
+        text = body.decode("utf-8", "replace")
+    return [l.strip() for l in text.splitlines() if l.strip()]
+
+
+def parse_link(link):
+    u = urllib.parse.urlparse(link)
+    if u.scheme != "vless":
+        raise ValueError("only vless:// links are supported, got: " + u.scheme)
+    q = {k: v[0] for k, v in urllib.parse.parse_qs(u.query).items()}
+    return {
+        "name": urllib.parse.unquote(u.fragment or "") or u.hostname,
+        "host": u.hostname, "port": int(u.port or 443), "uuid": u.username,
+        "encryption": q.get("encryption", "none"), "flow": q.get("flow", ""),
+        "network": q.get("type", "tcp"), "security": q.get("security", "tls"),
+        "sni": q.get("sni", ""), "fingerprint": q.get("fp", "chrome"),
+        "pbk": q.get("pbk", ""), "sid": q.get("sid", ""),
+        "serviceName": q.get("serviceName", ""),
+        "wsPath": q.get("path", "/"), "wsHost": q.get("host", ""),
+    }
+
+
+def fetch_subs(st):
+    nodes = []
+    for url in st["subs"]:
+        try:
+            for link in parse_links(fetch(url)):
+                try:
+                    nodes.append(parse_link(link))
+                except ValueError:
+                    pass
+        except Exception as e:
+            print("warn: fetch failed for %s: %s" % (url, e), file=sys.stderr)
+    # dedupe by host:port:uuid
+    seen, uniq = set(), []
+    for n in nodes:
+        k = (n["host"], n["port"], n["uuid"])
+        if k not in seen:
+            seen.add(k)
+            uniq.append(n)
+    return uniq
+
+
+def rebuild(st, restart=True):
+    if st["selected"] >= len(st["nodes"]):
+        st["selected"] = 0
+    save_state(st)
+    if st["nodes"]:
+        write_config(st)
+    if restart and st["nodes"]:
+        restart_if_active()
+
+
+def stream_settings(n):
+    s = {"network": n["network"], "security": n["security"]}
+    if n["security"] == "reality":
+        s["realitySettings"] = {"serverName": n["sni"] or n["host"],
+                                "fingerprint": n["fingerprint"] or "chrome",
+                                "publicKey": n["pbk"], "shortId": n["sid"],
+                                "spiderX": n["wsPath"] or "/"}
+    elif n["security"] == "tls":
+        s["tlsSettings"] = {"serverName": n["sni"] or n["host"],
+                            "fingerprint": n["fingerprint"] or "chrome"}
+    if n["network"] == "grpc":
+        s["grpcSettings"] = {"serviceName": n["serviceName"], "multiMode": False}
+    elif n["network"] == "ws":
+        h = {"Host": n["wsHost"]} if n["wsHost"] else {}
+        s["wsSettings"] = {"path": n["wsPath"] or "/", "headers": h}
+    return s
+
+
+def outbound_for(n, tag):
+    return {"tag": tag, "protocol": "vless",
+            "settings": {"vnext": [{"address": n["host"], "port": n["port"],
+                                    "users": [{"id": n["uuid"], "encryption": n["encryption"],
+                                               "flow": n["flow"]}]}]},
+            "streamSettings": stream_settings(n)}
+
+
+def build_config(st):
+    nodes, selected, mode = st["nodes"], st["selected"], st["mode"]
+    sel = nodes[selected]
+    inbounds = [
+        {"tag": "socks-in", "listen": "127.0.0.1", "port": SOCKS, "protocol": "socks",
+         "settings": {"auth": "noauth", "udp": True}},
+        {"tag": "http-in", "listen": "127.0.0.1", "port": HTTP, "protocol": "http",
+         "settings": {}},
+        {"tag": "api-in", "listen": "127.0.0.1", "port": APIPORT, "protocol": "dokodemo-door",
+         "settings": {"address": "127.0.0.1"}},
+    ]
+    if mode == "tun":
+        inbounds.insert(0, {"tag": "tun-in", "protocol": "tun", "settings": {
+            "name": TUN_NAME, "mtu": 1500},
+            "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"], "routeOnly": False}})
+    conf = {
+        "log": {"loglevel": "warning"},
+        "stats": {},
+        "api": {"tag": "api", "services": ["StatsService"]},
+        "policy": {"system": {"statsInboundUplink": True, "statsInboundDownlink": True}},
+        "inbounds": inbounds,
+        "outbounds": [outbound_for(sel, "proxy"),
+                      {"tag": "direct", "protocol": "freedom"},
+                      {"tag": "block", "protocol": "blackhole"}],
+        "routing": {"domainStrategy": "AsIs", "rules": [
+            {"type": "field", "inboundTag": ["api-in"], "outboundTag": "api"},
+            {"type": "field", "ip": PRIVATE, "outboundTag": "direct"},
+            {"type": "field", "network": "tcp,udp", "outboundTag": "proxy"},
+        ]},
+    }
+    for i, n in enumerate(nodes):
+        if i != selected:
+            conf["outbounds"].append(outbound_for(n, "node-%d" % i))
+    return conf
+
+
+def write_config(st):
+    CFG.mkdir(parents=True, exist_ok=True)
+    CONF.write_text(json.dumps(build_config(st), indent=2))
+
+
+def cmd_import(url):
+    if not url:
+        die("usage: omarchy-xray import <subscription-url>")
+    st = load_state()
+    if url not in st["subs"]:
+        st["subs"].append(url)
+    save_state(st)
+    st["nodes"] = fetch_subs(st)
+    rebuild(st)
+    print(json.dumps({"ok": True, "subs": len(st["subs"]), "nodes": len(st["nodes"])}))
+
+
+def cmd_subremove(key):
+    st = load_state()
+    k = str(key or "").strip()
+    if k.isdigit() and int(k) < len(st["subs"]):
+        del st["subs"][int(k)]
+    elif k in st["subs"]:
+        st["subs"].remove(k)
+    else:
+        die("no subscription matches: " + k)
+    st["nodes"] = fetch_subs(st) if st["subs"] else []
+    rebuild(st)
+    print(json.dumps({"ok": True, "subs": len(st["subs"]), "nodes": len(st["nodes"])}))
+
+
+def cmd_update():
+    st = load_state()
+    if not st["subs"]:
+        die("no subscriptions — run: omarchy-xray import <url>")
+    st["nodes"] = fetch_subs(st)
+    rebuild(st)
+    print(json.dumps({"ok": True, "nodes": len(st["nodes"])}))
+
+
+def resolve_key(st, key):
+    k = str(key or "").strip()
+    if k.startswith("n") and k[1:].isdigit():
+        i = int(k[1:])
+        if 0 <= i < len(st["nodes"]):
+            return i
+    low = k.lower()
+    for i, n in enumerate(st["nodes"]):
+        if low in n["name"].lower():
+            return i
+    die("no node matches: " + k)
+
+
+def cmd_select(key):
+    st = load_state()
+    if not st["nodes"]:
+        die("no nodes — run: omarchy-xray import <url>")
+    i = resolve_key(st, key)
+    changed = st["selected"] != i
+    st["selected"] = i
+    save_state(st)
+    restarted = False
+    if changed:
+        write_config(st)
+        if active():
+            restarted = restart_if_active()
+            time.sleep(1)
+    print(json.dumps({"ok": True, "selected": i, "name": st["nodes"][i]["name"], "restarted": restarted}))
+
+
+def node_ips(st):
+    ips = []
+    for n in st["nodes"]:
+        try:
+            infos = socket.getaddrinfo(n["host"], None, socket.AF_INET)
+            ips.append(infos[0][4][0])
+        except Exception:
+            pass
+    return sorted(set(ips))
+
+
+def cmd_mode(mode):
+    if mode not in ("proxy", "tun"):
+        die("mode must be proxy or tun")
+    st = load_state()
+    if not st["nodes"]:
+        die("no nodes — run: omarchy-xray import <url>")
+    prev = st["mode"]
+    st["mode"] = mode
+    # Resolve node IPs while the network is still normal — route-up (root)
+    # must never depend on DNS, it reads this list from state.json.
+    st["bypass"] = node_ips(st) if mode == "tun" else []
+    save_state(st)
+    if mode == "tun":
+        # Stop the old instance first: route-up owns the TUN device lifecycle
+        # (create -> address -> routes), xray attaches to the ready device.
+        if active():
+            sh("systemctl", "--user", "stop", SERVICE)
+        r = sh("pkexec", SELF, "route-up", timeout=120)
+        if r.returncode != 0:
+            die("route-up failed: " + (r.stderr.strip() or "pkexec denied"))
+    write_config(st)
+    if prev == "tun" and mode != "tun":
+        sh("pkexec", SELF, "route-down", timeout=120)
+    sh("systemctl", "--user", "daemon-reload")
+    if active():
+        sh("systemctl", "--user", "restart", SERVICE)
+    else:
+        sh("systemctl", "--user", "enable", "--now", SERVICE)
+    time.sleep(1)
+    apply_system_proxy()
+    print(json.dumps({"ok": True, "mode": mode, "running": active(),
+                      "bypass": len(st.get("bypass", []))}))
+
+
+def cmd_route_up():
+    """[root] Create the persistent TUN device (owned by the user), address it,
+    add bypass routes for node servers and policy routing for the full tunnel."""
+    # Under pkexec the env is reset (getpass would say "root") — derive the
+    # real user from the owner of our config directory.
+    import pwd, os
+    user = pwd.getpwuid(os.stat(CFG).st_uid).pw_name
+    st = load_state()
+    cmds = []
+    # Drop any device a previous xray instance created for itself — we own the
+    # device, xray just attaches to it.
+    sh("ip", "tuntap", "del", "dev", TUN_NAME, "mode", "tun")
+    sh("ip", "link", "del", TUN_NAME)
+    cmds += [["ip", "tuntap", "add", "mode", "tun", "dev", TUN_NAME, "user", user]]
+    cmds += [
+        ["ip", "addr", "replace", TUN_ADDR, "dev", TUN_NAME],
+        ["ip", "link", "set", TUN_NAME, "up"],
+    ]
+    # node servers bypass the tunnel (no loops) — pinned via the current
+    # default gateway; a bare /32 has no egress device of its own
+    toks = sh("ip", "route", "show", "default").stdout.split()
+    gw = toks[toks.index("via") + 1] if "via" in toks else ""
+    dev = toks[toks.index("dev") + 1] if "dev" in toks else ""
+    for ip in st.get("bypass", []):
+        if gw and dev:
+            cmds += [["ip", "route", "replace", ip + "/32", "via", gw, "dev", dev, "table", "main"]]
+    # everything more specific than the default goes to the main table (LAN keeps
+    # working); the default route itself comes from the TUN table
+    cmds += [
+        ["ip", "rule", "add", "priority", "99", "lookup", "main", "suppress_prefixlength", "0"],
+        ["ip", "route", "replace", "default", "dev", TUN_NAME, "table", TUN_TABLE],
+        ["ip", "rule", "add", "priority", "1000", "lookup", TUN_TABLE],
+        ["ip", "-6", "rule", "add", "priority", "99", "lookup", "main", "suppress_prefixlength", "0"],
+        ["ip", "-6", "route", "replace", "default", "dev", TUN_NAME, "table", TUN_TABLE],
+        ["ip", "-6", "rule", "add", "priority", "1000", "lookup", TUN_TABLE],
+    ]
+    for c in cmds:
+        r = sh(*c)
+        if r.returncode != 0 and "File exists" not in r.stderr and "RTNETLINK answers: File exists" not in r.stderr:
+            die(" ".join(c) + " -> " + (r.stderr.strip() or "failed"))
+    print(json.dumps({"ok": True, "bypass": len(st.get("bypass", []))}))
+
+
+def cmd_route_down():
+    for c in (["ip", "rule", "del", "priority", "1000"],
+              ["ip", "-6", "rule", "del", "priority", "1000"],
+              ["ip", "rule", "del", "priority", "99"],
+              ["ip", "-6", "rule", "del", "priority", "99"]):
+        sh(*c)
+    sh("ip", "route", "flush", "table", TUN_TABLE)
+    sh("ip", "-6", "route", "flush", "table", TUN_TABLE)
+    sh("ip", "tuntap", "del", "dev", TUN_NAME)
+    print(json.dumps({"ok": True}))
+
+
+def cmd_on():
+    st = load_state()
+    if not st["nodes"]:
+        die("no nodes — run: omarchy-xray import <url>")
+    sh("systemctl", "--user", "daemon-reload")
+    if st["mode"] == "tun":
+        if active():
+            sh("systemctl", "--user", "stop", SERVICE)
+        r0 = sh("pkexec", SELF, "route-up", timeout=120)
+        if r0.returncode != 0:
+            die("route-up failed: " + (r0.stderr.strip() or "pkexec denied"))
+    write_config(st)
+    if active():
+        r = sh("systemctl", "--user", "restart", SERVICE)
+    else:
+        r = sh("systemctl", "--user", "enable", "--now", SERVICE)
+    if r.returncode != 0:
+        die(r.stderr.strip() or "failed to start " + SERVICE)
+    time.sleep(1)
+    apply_system_proxy()
+    print(json.dumps({"ok": True, "running": active(),
+                      "mode": st["mode"], "selected": st["nodes"][st["selected"]]["name"]}))
+
+
+def cmd_off():
+    if load_state().get("mode") == "tun":
+        sh("pkexec", SELF, "route-down", timeout=120)
+    r = sh("systemctl", "--user", "disable", "--now", SERVICE)
+    apply_system_proxy()
+    print(json.dumps({"ok": r.returncode == 0, "running": active()}))
+
+
+def gset(*args):
+    # Best-effort: absent gsettings/GNOME must never break the tunnel.
+    sh("gsettings", *args)
+
+
+def apply_system_proxy():
+    """When the service runs in proxy mode, make proxy-aware apps use it by
+    flipping the GNOME/GTK system proxy to 127.0.0.1; turn it off otherwise."""
+    st = load_state()
+    on = st["mode"] == "proxy" and active()
+    if on:
+        gset("set", "org.gnome.system.proxy", "mode", "manual")
+        gset("set", "org.gnome.system.proxy.http", "host", "127.0.0.1")
+        gset("set", "org.gnome.system.proxy.http", "port", str(HTTP))
+        gset("set", "org.gnome.system.proxy.https", "host", "127.0.0.1")
+        gset("set", "org.gnome.system.proxy.https", "port", str(HTTP))
+        gset("set", "org.gnome.system.proxy.socks", "host", "127.0.0.1")
+        gset("set", "org.gnome.system.proxy.socks", "port", str(SOCKS))
+    else:
+        gset("set", "org.gnome.system.proxy", "mode", "none")
+
+
+def cmd_test():
+    st = load_state()
+    if not st["nodes"]:
+        die("no nodes")
+    lat = json.loads(LAT.read_text()) if LAT.exists() else {}
+    for i, n in enumerate(st["nodes"]):
+        probe_cfg = {
+            "log": {"loglevel": "error"},
+            "inbounds": [{"listen": "127.0.0.1", "port": TESTPORT, "protocol": "socks",
+                          "settings": {"auth": "noauth"}}],
+            "outbounds": [outbound_for(n, "proxy")],
+        }
+        tmp = CFG / "probe.json"
+        CFG.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(probe_cfg))
+        proc = subprocess.Popen([XRAY, "run", "-c", str(tmp)],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(1.2)
+        t0 = time.time()
+        r = sh("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+               "--socks5-hostname", "127.0.0.1:%d" % TESTPORT, "--max-time", "8", PROBE)
+        dt = time.time() - t0
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except Exception:
+            proc.kill()
+        if r.stdout.strip() in ("200", "204"):
+            lat["n%d" % i] = "%dms" % round(dt * 1000)
+        else:
+            lat["n%d" % i] = "timeout"
+        print("%-28s %s" % (n["name"][:28], lat["n%d" % i]), file=sys.stderr)
+    CFG.mkdir(parents=True, exist_ok=True)
+    LAT.write_text(json.dumps(lat))
+    print(json.dumps({"ok": True, "latency": lat}))
+
+
+def cmd_stats():
+    if not active():
+        print(json.dumps({"ok": True, "running": False}))
+        return
+    r = sh(XRAY, "api", "statsquery", "--server=127.0.0.1:%d" % APIPORT,
+           "-pattern", "inbound", timeout=15)
+    counters = {}
+    try:
+        q = json.loads(r.stdout)
+        for stat in q.get("stat", []):
+            counters[stat["name"]] = int(stat.get("value", 0))
+    except Exception:
+        die("stats query failed")
+    # Sum traffic across every inbound (socks, http and tun) — the TUN path
+    # never touches socks-in, so keying on one tag made throughput read 0.
+    up = down = 0
+    for name, val in counters.items():
+        if name.endswith(">>>traffic>>>uplink"):
+            up += val
+        elif name.endswith(">>>traffic>>>downlink"):
+            down += val
+    now = time.time()
+    prev = json.loads(TRAFFIC.read_text()) if TRAFFIC.exists() else {}
+    dt = now - prev.get("t", 0)
+    pu, pd = prev.get("up", -1), prev.get("down", -1)
+    if dt > 0.4 and pu >= 0 and pd >= 0 and up >= pu and down >= pd:
+        up_speed, down_speed = max(0, (up - pu) / dt), max(0, (down - pd) / dt)
+    else:
+        up_speed = down_speed = 0
+    # Only persist a new baseline if enough time passed; avoids rewriting the
+    # traffic file on every 2s poll (the previous values still stand).
+    if dt > 0.4:
+        TRAFFIC.write_text(json.dumps({"up": up, "down": down, "t": now}))
+    print(json.dumps({"ok": True, "running": True, "upTotal": up, "downTotal": down,
+                      "upSpeed": round(up_speed), "downSpeed": round(down_speed)}))
+
+
+def cmd_status():
+    st = load_state()
+    lat = json.loads(LAT.read_text()) if LAT.exists() else {}
+    running = active()
+    nodes, groups = [], [{"title": "SERVERS", "status": "", "nodes": []}]
+    for i, n in enumerate(st["nodes"]):
+        key = "n%d" % i
+        node = {"key": key, "name": n["name"],
+                "address": "%s:%d" % (n["host"], n["port"]),
+                "net": (n["security"] + "/" + n["network"]),
+                "latency": lat.get(key, ""),
+                "connected": running and i == st["selected"]}
+        nodes.append(node)
+        groups[0]["nodes"].append(node)
+    subs = [{"index": i, "host": urllib.parse.urlparse(u).hostname or u, "url": u}
+            for i, u in enumerate(st["subs"])]
+    print(json.dumps({
+        "ok": True,
+        "running": running,
+        "mode": st["mode"],
+        "hasUrl": len(st["subs"]) > 0,
+        "subs": subs,
+        "selected": st["selected"],
+        "touch": {"running": running, "groups": groups, "nodes": nodes,
+                  "connectedKeys": {nodes[st["selected"]]["key"]: True} if running and nodes else {}},
+    }))
+
+
+def cmd_install_unit():
+    UNIT.parent.mkdir(parents=True, exist_ok=True)
+    UNIT.write_text(UNIT_TEXT)
+    sh("systemctl", "--user", "daemon-reload")
+    print(json.dumps({"ok": True, "unit": str(UNIT)}))
+
+
+def main():
+    args = sys.argv[1:]
+    if not args:
+        die("usage: omarchy-xray <import|subremove|update|select|mode|route-up|route-down|"
+            "on|off|restart|test|stats|status|install-unit> [arg]")
+    cmd, rest = args[0], args[1:]
+    if cmd == "import":
+        cmd_import(rest[0] if rest else "")
+    elif cmd == "subremove":
+        cmd_subremove(rest[0] if rest else "")
+    elif cmd == "update":
+        cmd_update()
+    elif cmd == "select":
+        cmd_select(rest[0] if rest else "")
+    elif cmd == "mode":
+        cmd_mode(rest[0] if rest else "")
+    elif cmd == "route-up":
+        cmd_route_up()
+    elif cmd == "route-down":
+        cmd_route_down()
+    elif cmd == "on":
+        cmd_on()
+    elif cmd == "off":
+        cmd_off()
+    elif cmd == "restart":
+        print(json.dumps({"ok": restart_if_active()}))
+    elif cmd == "test":
+        cmd_test()
+    elif cmd == "stats":
+        cmd_stats()
+    elif cmd == "status":
+        cmd_status()
+    elif cmd == "install-unit":
+        cmd_install_unit()
+    else:
+        die("unknown command: " + cmd)
+
+
+if __name__ == "__main__":
+    main()
