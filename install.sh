@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Installs the krieziey.omarchy-xray Omarchy shell widget (v2 — omarchy-xray backend):
-#   1. checks prerequisites (omarchy, curl, python3)
+#   1. checks prerequisites (omarchy, python3); curl is used by the manager, not this installer
 #   2. installs the xray core (AUR: xray) if missing
 #   3. installs the omarchy-xray manager to ~/.local/bin + systemd user unit
 #   4. asks for the subscription URL (or reuses an existing omarchy-xray config)
@@ -59,7 +59,6 @@ warn() { printf '\033[33mwarning:\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
 command -v omarchy  >/dev/null 2>&1 || die "omarchy CLI not found — this installer targets Omarchy Linux"
-command -v curl     >/dev/null 2>&1 || die "curl is required"
 command -v python3  >/dev/null 2>&1 || die "python3 is required (omarchy-xray manager)"
 
 say "Installing ${PLUGIN_ID} (omarchy-xray backend)"
@@ -144,9 +143,25 @@ if [[ $NO_DEPS -eq 0 ]] && [[ -f "$STATE" ]]; then
   if ask "Start the Xray service now?"; then
     "$BIN_DIR/omarchy-xray" on || warn "failed to start; try: omarchy-xray on"
     sleep 1
-    code="$(curl -s -o /dev/null -w '%{http_code}' --socks5-hostname 127.0.0.1:20170 --max-time 8 https://www.gstatic.com/generate_204 || true)"
+    # Best-effort tunnel probe (non-fatal): python3 already required; curl is not.
+    code="$(python3 - <<'PYPROBE'
+try:
+    import urllib.request, urllib.error
+    proxy = urllib.request.ProxyHandler({
+        "http": "http://127.0.0.1:20171",
+        "https": "http://127.0.0.1:20171",
+    })
+    r = urllib.request.build_opener(proxy).open(
+        "https://www.gstatic.com/generate_204", timeout=8)
+    print(r.status)
+except urllib.error.HTTPError as e:
+    print(e.code)
+except Exception:
+    print(0)
+PYPROBE
+)"
     [[ "$code" == "204" || "$code" == "200" ]] \
-      && say "Tunnel verified: HTTP $code through 127.0.0.1:20170" \
+      && say "Tunnel verified: HTTP $code through 127.0.0.1:20171" \
       || warn "Tunnel check failed (HTTP ${code:-none}). Try: omarchy-xray test"
   fi
 fi

@@ -39,7 +39,7 @@ so the widget now drives `/usr/bin/xray` directly through a tiny manager.
 ## Install
 
 ```bash
-git clone <this repo> omarchy-v2raya
+git clone https://github.com/KRIEZIEYR/omarchy-xray omarchy-v2raya
 cd omarchy-v2raya
 ./install.sh
 ```
