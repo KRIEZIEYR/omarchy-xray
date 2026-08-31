@@ -112,7 +112,7 @@ bind = $mainMod SHIFT, T, exec, omarchy-shell krieziey.omarchy-xray select JP
 ## Development
 
 ```bash
-node tests/run.js        # model assertions (53)
+node tests/run.js        # model assertions (60)
 omarchy plugin validate .
 ./install.sh --no-deps --yes   # re-copy; the shell hot-reloads plugin code
 ```

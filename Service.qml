@@ -44,7 +44,7 @@ Item {
   })
 
   readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 20, 10, 600)
-  readonly property string barLabel: strSetting("barLabel", "icon")
+  readonly property string barLabel: strSetting("barLabel", "speed")
 
   function setting(name, fallback) {
     var value = settings ? settings[name] : undefined
