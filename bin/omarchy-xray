@@ -96,6 +96,7 @@ After=network-online.target
 
 [Service]
 ExecStart=%s run -c %s
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
 PrivateTmp=true
 Restart=on-failure
@@ -213,15 +214,21 @@ def sh(*cmd, timeout=120):
 
 
 def run_root(*args):
-    """Escalate one manager subcommand: polkit first, sudo fallback, else
-    print the exact manual command so the user can do it themselves."""
+    """Escalate one manager subcommand. sudo first (works in a terminal and
+    does not need a graphical polkit agent), pkexec only when sudo is absent
+    or passwordless sudo is refused — then the exact manual command is shown
+    so the user can run it themselves."""
+    if shutil.which("sudo"):
+        r = sh("sudo", SELF, *args, timeout=120)
+        if r.returncode == 0:
+            return r
+        err = (r.stderr or "")
+        if "a password is required" not in err and "no tty" not in err.lower():
+            return r  # real root-side failure — surface it, don't mask it
     if shutil.which("pkexec"):
         return sh("pkexec", SELF, *args, timeout=120)
-    r = sh("sudo", "-n", SELF, *args, timeout=120)
-    if r.returncode != 0 and "not found: sudo" in (r.stderr or ""):
-        die("no polkit/sudo helper found — run manually: sudo %s %s"
-            % (SELF, " ".join(args)))
-    return r
+    die("escalation unavailable (sudo needs a password, no polkit agent?) — "
+        "run manually: sudo %s %s" % (SELF, " ".join(args)))
 
 
 def active():
