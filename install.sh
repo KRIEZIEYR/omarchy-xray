@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 #
 # Installs the krieziey.omarchy-xray Omarchy shell widget (v2 — omarchy-xray backend):
-#   1. checks prerequisites (omarchy, python3); curl is used by the manager, not this installer
-#   2. installs the xray core (AUR: xray) if missing
-#   3. installs the omarchy-xray manager to ~/.local/bin + systemd user unit
-#   4. asks for the subscription URL (or reuses an existing omarchy-xray config)
-#   5. copies the plugin into ~/.config/omarchy/plugins/ and enables it
+#   1. checks prerequisites (omarchy, python3, xray core)
+#   2. installs the omarchy-xray manager to ~/.local/bin + systemd user unit
+#   3. asks for the subscription URL (or reuses an existing omarchy-xray config)
+#   4. copies the plugin into ~/.config/omarchy/plugins/ and enables it
+#
+# The installer never escalates and never grants capabilities:
+#   - the xray core is NOT installed automatically (AUR PKGBUILDs are
+#     unaudited third-party builds — review and install it yourself)
+#   - no setcap is applied to any binary; TUN mode uses a user-owned device
+#     created by one explicit privileged step (polkit prompt or manual sudo)
+#   - the subscription URL is passed via environment, never argv
 #
 # v2rayA is NOT required anymore: its panel (<=2.4.15) cannot pass the new
 # VLESS `encryption` parameter, so the widget drives xray directly instead.
@@ -65,36 +71,19 @@ say "Installing ${PLUGIN_ID} (omarchy-xray backend)"
 
 if [[ $NO_DEPS -eq 0 ]]; then
   # --- Xray core (AUR; not in the official repos) ---------------------------
+  # Deliberately NOT installed here: AUR PKGBUILDs are unaudited third-party
+  # sources. Review the PKGBUILD yourself, then: omarchy pkg aur add xray
   if command -v xray &>/dev/null; then
     say "Xray core found: $(xray version 2>/dev/null | head -1)"
+    say "Verify it came from a source you trust: $(command -v xray) ($(pacman -Qo "$(command -v xray)" 2>/dev/null || echo 'not owned by any package'))"
   else
-    warn "No Xray core found."
-    if ask "Install xray from the AUR now?"; then
-      omarchy pkg aur add xray || die "failed to install xray from the AUR"
-    else
-      die "xray is required — install it later with: omarchy pkg aur add xray"
-    fi
+    die "xray core not found — review the AUR package first, then install with: omarchy pkg aur add xray"
   fi
 
   # --- retire v2raya if present ---------------------------------------------
   if systemctl list-unit-files v2raya.service &>/dev/null && systemctl is-enabled v2raya.service &>/dev/null; then
-    if ask "v2raya system service is enabled. Disable it? (the widget no longer uses v2rayA)"; then
-      sudo systemctl disable --now v2raya.service || warn "could not disable v2raya.service"
-    fi
-  fi
-fi
-
-# --- TUN support: cap_net_admin on the xray binary (best-effort) ---------------
-# xray's tun inbounds need CAP_NET_ADMIN to create the TUN device; without it
-# TUN mode fails on a fresh machine. Proxy-only usage never needs this, so a
-# failure here only disables TUN mode and is never fatal.
-if command -v xray &>/dev/null && command -v setcap &>/dev/null; then
-  XRAY_BIN="$(command -v xray)"
-  if sudo -n setcap cap_net_admin,cap_net_bind_service=+ep "$XRAY_BIN" 2>/dev/null \
-     || sudo setcap cap_net_admin,cap_net_bind_service=+ep "$XRAY_BIN" 2>/dev/null; then
-    say "TUN capability granted to $XRAY_BIN"
-  else
-    warn "could not set cap_net_admin on $XRAY_BIN — TUN mode unavailable (proxy mode works)"
+    warn "v2raya system service is enabled, but the widget no longer uses v2rayA."
+    warn "Disable it yourself when ready: sudo systemctl disable --now v2raya.service"
   fi
 fi
 
@@ -125,16 +114,19 @@ say "Manager installed to $BIN_DIR/omarchy-xray"
 say "Systemd user unit installed"
 
 # --- subscription ---------------------------------------------------------------
-if [[ -f "$STATE" ]] && python3 -c "import json,sys;json.load(open('$STATE'));sys.exit(0 if json.load(open('$STATE')).get('url') else 1)" 2>/dev/null; then
+if [[ -f "$STATE" ]] && python3 -c "import json;sys.exit(0 if json.load(open('$STATE')).get('subs') else 1)" 2>/dev/null; then
   say "Existing omarchy-xray configuration found — keeping it"
   "$BIN_DIR/omarchy-xray" update >/dev/null 2>&1 || warn "subscription refresh failed (offline?)"
 elif [[ $NO_DEPS -eq 0 ]]; then
   echo
-  read -r -p "Paste your subscription URL (Enter to skip): " SUBURL </dev/tty || SUBURL=""
+  read -r -s -p "Paste your subscription URL (Enter to skip; hidden input): " SUBURL </dev/tty || SUBURL=""
+  echo
   if [[ -n "${SUBURL// }" ]]; then
-    "$BIN_DIR/omarchy-xray" import "$SUBURL" || die "failed to fetch the subscription"
+    # via environment so the secret never appears in argv/ps output
+    OMARCHY_XRAY_SUB_URL="$SUBURL" "$BIN_DIR/omarchy-xray" import - || die "failed to fetch the subscription"
+    unset SUBURL
   else
-    warn "Skipped. Later run: omarchy-xray import <subscription-url>"
+    warn "Skipped. Later: export OMARCHY_XRAY_SUB_URL=<url>; omarchy-xray import -"
   fi
 fi
 
@@ -201,10 +193,15 @@ cat <<EOF
 
 Done. The widget talks to omarchy-xray (no accounts, no passwords):
 
-  omarchy-xray import <url>   set the subscription
+  export OMARCHY_XRAY_SUB_URL=<url>; omarchy-xray import -   # set the subscription
   omarchy-xray select <name>  switch node
   omarchy-xray on | off       start / stop the tunnel
-  omarchy-xray test           latency-test all nodes
+  omarchy-xray test           latency-test nodes (first 200, 10 min cap)
+
+Privileged step (TUN mode only, once per boot): confirm the polkit prompt
+when switching to TUN, or run manually:
+  sudo omarchy-xray route-up     # undo: sudo omarchy-xray route-down
+The installer itself never escalates and never grants file capabilities.
 
 Scripting (Hyprland binds):
   bind = SUPER SHIFT, V, exec, omarchy-shell ${PLUGIN_ID} toggleProxy

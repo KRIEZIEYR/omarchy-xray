@@ -552,7 +552,7 @@ Panel {
                   TextActionButton {
                     label: "✕"
                     enabled: !v2raya.busy
-                    onClicked: v2raya.subRemove(subRow.sub.url)
+                    onClicked: v2raya.subRemove(String(subRow.sub.index))
                   }
                 }
               }
