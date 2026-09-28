@@ -58,7 +58,11 @@ Item {
     return ""
   }
 
+  // "connecting" | "switching" | "disconnecting" while a connection change runs.
+  property string pending: ""
+
   readonly property var _heroInput: ({
+    pending: pending,
     unreachable: !reachable,
     touch: touch,
     mode: mode,
@@ -213,6 +217,7 @@ Item {
     var msg = scrub(opName(slot._label) + " took too long and was stopped. Try again")
     if (slot === _action || slot === _long) lastError = msg
     else serviceError = msg
+    if (slot === _action) pending = ""
     actionStatus = ""
     refresh()
   }
@@ -300,35 +305,54 @@ Item {
   function connectNode(node) {
     if (!node || !node.key) return
     if (String(node.key).length > 64) { lastError = "Bad node key — refused"; return }
+    var wasRunning = coreRunning
     if (!run(_action, [manager, "select", node.key], function(resp) {
       _actionDeadline.stop()
-      if (!resp.ok) { lastError = "Couldn't switch to " + scrub(node.name) + ": " + (resp.message || "no details"); refresh(); return }
-      flash("Switched to " + scrub(node.name))
+      if (!resp.ok) {
+        pending = ""; actionStatus = ""
+        lastError = "Couldn't switch to " + scrub(node.name) + ": " + (resp.message || "no details"); refresh(); return
+      }
       persistLastNode(node.key)
-      if (!coreRunning) cmdOn()
-      else refresh()
+      if (!coreRunning) { cmdOn(true); return }
+      pending = ""
+      flash("Switched to " + scrub(node.name))
+      refresh()
     })) { busyRefused(); return }
+    pending = wasRunning ? "switching" : "connecting"
+    actionStatusTimer.stop()
+    actionStatus = (wasRunning ? "Switching to " : "Connecting to ") + scrub(node.name) + "…"
     armDeadline(_action, _actionDeadline, 60000, "select")
   }
 
   function disconnect() {
     if (!run(_action, [manager, "off"], function(resp) {
       _actionDeadline.stop()
+      pending = ""
       if (resp.ok) flash("Disconnected")
-      else lastError = "Couldn't disconnect: " + (resp.message || "no details")
+      else { actionStatus = ""; lastError = "Couldn't disconnect: " + (resp.message || "no details") }
       traffic = null
       refresh()
     })) { busyRefused(); return }
+    pending = "disconnecting"
+    actionStatusTimer.stop()
+    actionStatus = "Disconnecting…"
     armDeadline(_action, _actionDeadline, 60000, "disconnect")
   }
 
-  function cmdOn() {
+  // chained: called from connectNode's callback, which already shows the status
+  function cmdOn(chained) {
     if (!run(_action, [manager, "on"], function(resp) {
       _actionDeadline.stop()
-      if (!resp.ok) lastError = "Couldn't connect: " + (resp.message || "no details")
+      pending = ""
+      if (!resp.ok) { actionStatus = ""; lastError = "Couldn't connect: " + (resp.message || "no details") }
       else flash(mode === "tun" ? "Connected (TUN)" : "Connected")
       refresh()
     })) { busyRefused(); return }
+    if (!chained) {
+      pending = "connecting"
+      actionStatusTimer.stop()
+      actionStatus = "Connecting…"
+    }
     armDeadline(_action, _actionDeadline, 120000, "start")
   }
 

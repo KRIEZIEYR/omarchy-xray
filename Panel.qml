@@ -103,9 +103,15 @@ Panel {
   readonly property color hoverFill: bar ? Style.hoverFillFor(bar.foreground, Color.accent) : "transparent"
   readonly property color selectedFill: bar ? Style.selectedFillFor(bar.foreground, Color.accent) : "transparent"
 
-  // "Connected" uses the theme's own green (colors.toml), so a monochrome
-  // theme stays monochrome; a theme without one falls back to its accent.
-  property color onColor: Color.accent
+  // "Connected" uses the theme's own green (colors.toml). A monochrome theme's
+  // "green" is just another grey (often the secondary text grey itself), so
+  // there "on" is drawn in the brightest colour, the foreground; the shield's
+  // fill carries the state either way.
+  property color onColor: foreground
+  function onColorFor(hex) {
+    var c = hex ? Qt.color(hex) : Color.accent
+    return c.hslSaturation < 0.2 ? foreground : c
+  }
   readonly property color barIconColor: {
     if (!xray.reachable) return urgent
     if (xray.connected) return onColor
@@ -135,7 +141,7 @@ Panel {
     onFileChanged: reload()
     onLoaded: {
       var m = /^\s*green\s*=\s*["']?(#[0-9A-Fa-f]{6})/m.exec(text())
-      root.onColor = m ? m[1] : Color.accent
+      root.onColor = root.onColorFor(m ? m[1] : "")
     }
   }
 
@@ -241,6 +247,9 @@ Panel {
     root.bar.shell.updateEntryInline(root.moduleName, entry)
   }
 
+  // Node, subscription and error strings come from the subscription provider:
+  // every Text here is PlainText (as in the kit), so markup such as <img src>
+  // can never render or make the shell fetch a URL outside the tunnel.
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
@@ -303,8 +312,8 @@ Panel {
     // The kit slot fits an icon only; widen it by exactly the label so the
     // label no longer paints over the neighbouring widget.
     fixedWidth: vertical ? -1 : slotSize + (root.barLabelWidth > 0 ? root.barLabelWidth + Style.space(5) : 0)
-    dimmed: xray.reachable && !xray.connected
-    tooltipText: xray.heroSummary
+    dimmed: xray.reachable && (!xray.connected || xray.pending !== "")
+    tooltipText: xray.pending !== "" ? xray.actionStatus : xray.heroSummary
     iconComponent: Component {
       Item {
         readonly property string label: root.barLabelText
@@ -323,6 +332,7 @@ Panel {
             warning: !xray.reachable
           }
           Text {
+            textFormat: Text.PlainText
             id: labelText
             visible: row.parent.label !== ""
             text: row.parent.label
@@ -436,6 +446,7 @@ Panel {
           // Status line: what is running now (sentence case, wraps), else the
           // last error with a glyph so it does not rely on colour alone.
           Text {
+            textFormat: Text.PlainText
             visible: xray.actionStatus !== "" || xray.errorText !== ""
             width: parent.width
             text: xray.actionStatus !== "" ? xray.actionStatus : "󰀦 " + xray.errorText
@@ -446,6 +457,7 @@ Panel {
           }
 
           Text {
+            textFormat: Text.PlainText
             readonly property bool live: xray.connected && xray.traffic !== null
             visible: xray.reachable
             width: parent.width
@@ -600,6 +612,7 @@ Panel {
             }
 
             Text {
+              textFormat: Text.PlainText
               visible: root.regionsOpen
               width: parent.width
               text: {
@@ -642,6 +655,7 @@ Panel {
             }
 
             Text {
+              textFormat: Text.PlainText
               visible: xray.skippedText !== ""
               width: parent.width
               text: xray.skippedText
@@ -698,6 +712,7 @@ Panel {
             }
 
             Text {
+              textFormat: Text.PlainText
               visible: root.visibleNodes.length === 0
               width: parent.width
               text: xray.touch === null ? "Loading…"
@@ -830,6 +845,7 @@ Panel {
                   spacing: Style.space(8)
 
                   Text {
+                    textFormat: Text.PlainText
                     text: "󰌹"
                     color: root.dim
                     font.family: root.fontFamily
@@ -841,6 +857,7 @@ Panel {
                     spacing: Style.space(1)
 
                     Text {
+                      textFormat: Text.PlainText
                       Layout.fillWidth: true
                       text: subRow.sub ? (subRow.sub.title || subRow.sub.host) : ""
                       color: root.foreground
@@ -850,6 +867,7 @@ Panel {
                     }
 
                     Text {
+                      textFormat: Text.PlainText
                       Layout.fillWidth: true
                       visible: text !== ""
                       text: subRow.sub ? (subRow.sub.error ? "⚠ " + subRow.sub.error : Model.subInfoLabel(subRow.sub.info)) : ""
@@ -891,6 +909,7 @@ Panel {
           }
 
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             text: "j/k move · h/l choose · Enter apply · / filter · t test/stop · u update subs · c connect/disconnect · w config folder"
             wrapMode: Text.WordWrap
@@ -972,6 +991,7 @@ Panel {
       spacing: Style.space(8)
 
       Text {
+        textFormat: Text.PlainText
         text: nodeRow.isConnected ? "󰐾" : "󰐽"
         color: nodeRow.isConnected ? root.foreground : root.dim
         font.family: root.fontFamily
@@ -980,6 +1000,7 @@ Panel {
       }
 
       Text {
+        textFormat: Text.PlainText
         Layout.fillWidth: true
         text: nodeRow.node ? nodeRow.node.name : ""
         color: root.foreground
@@ -990,6 +1011,7 @@ Panel {
       }
 
       Text {
+        textFormat: Text.PlainText
         visible: nodeRow.transport !== ""
         Layout.maximumWidth: rowInner.width * 0.4
         text: nodeRow.transport
@@ -1001,6 +1023,7 @@ Panel {
       }
 
       Text {
+        textFormat: Text.PlainText
         visible: nodeRow.latencyText !== ""
         text: nodeRow.latencyText
         color: nodeRow.latencyBadLat ? root.urgent : (nodeRow.latencyOk ? root.foreground : root.dim)

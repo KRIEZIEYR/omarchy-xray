@@ -250,6 +250,8 @@ function heroTitle(state) {
 function heroState(state) {
   if (!state) return "…"
   if (state.unreachable) return "Manager unreachable"
+  var pending = { connecting: "Connecting…", switching: "Switching…", disconnecting: "Disconnecting…" }
+  if (pending[state.pending]) return pending[state.pending]
   var t = state.touch
   if (!t) return "Checking…"
   if (connectedNode(t)) return "Connected · " + (state.mode === "tun" ? "TUN" : "proxy")

@@ -123,6 +123,9 @@ module.exports = function ({ Xray, assert, eq }) {
   eq('state unreachable', Xray.heroState({ unreachable: true }), 'Manager unreachable')
   eq('state checking', Xray.heroState({}), 'Checking…')
   eq('title checking', Xray.heroTitle({}), 'Xray')
+  eq('state connecting', Xray.heroState({ touch: { nodes: [], connectedKeys: {} }, pending: 'connecting' }), 'Connecting…')
+  eq('state disconnecting', Xray.heroState({ touch: { nodes: [], connectedKeys: {} }, pending: 'disconnecting' }), 'Disconnecting…')
+  eq('state unknown pending ignored', Xray.heroState({ touch: { nodes: [], connectedKeys: {} }, pending: 'x' }), 'Disconnected')
 
   /* ---- formatSpeed / formatBytes ---- */
   eq('speed zero', Xray.formatSpeed(0), '0 B/s')
