@@ -1,0 +1,85 @@
+import QtQuick
+import qs.Commons
+import qs.Ui
+
+/*
+ * Vector shield-with-V mark drawn with Canvas primitives — no fonts, no SVG,
+ * so it renders identically in tiny bar slots and in the panel hero.
+ */
+Item {
+  id: root
+
+  property real iconSize: Style.font.icon
+  property color color: Color.foreground
+  property bool warning: false
+  property color badgeColor: Color.urgent
+
+  width: iconSize
+  height: iconSize
+  implicitWidth: iconSize
+  implicitHeight: iconSize
+
+  Canvas {
+    id: canvas
+    anchors.fill: parent
+    antialiasing: true
+
+    onPaint: {
+      var ctx = canvas.getContext("2d")
+      ctx.reset()
+      var w = canvas.width
+      var h = canvas.height
+      var lw = Math.max(1.2, w * 0.075)
+
+      ctx.lineWidth = lw
+      ctx.strokeStyle = root.color
+      ctx.lineJoin = "round"
+      ctx.lineCap = "round"
+
+      // Shield outline
+      ctx.beginPath()
+      ctx.moveTo(0.16 * w, 0.18 * h)
+      ctx.lineTo(0.84 * w, 0.18 * h)
+      ctx.lineTo(0.84 * w, 0.46 * h)
+      ctx.quadraticCurveTo(0.84 * w, 0.72 * h, 0.5 * w, 0.9 * h)
+      ctx.quadraticCurveTo(0.16 * w, 0.72 * h, 0.16 * w, 0.46 * h)
+      ctx.closePath()
+      ctx.stroke()
+
+      // The V
+      ctx.beginPath()
+      ctx.moveTo(0.35 * w, 0.34 * h)
+      ctx.lineTo(0.5 * w, 0.64 * h)
+      ctx.lineTo(0.65 * w, 0.34 * h)
+      ctx.stroke()
+    }
+
+    onWidthChanged: canvas.requestPaint()
+    onHeightChanged: canvas.requestPaint()
+  }
+
+  Connections {
+    target: root
+    function onColorChanged() { canvas.requestPaint() }
+  }
+
+  BorderSurface {
+    visible: root.warning
+    width: Math.max(7, parent.width * 0.42)
+    height: width
+    radius: width / 2
+    color: root.badgeColor
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    borderSpec: Border.flat(Color.popups.background, 1)
+
+    Text {
+      anchors.centerIn: parent
+      text: "!"
+      color: Color.background
+      font.family: Style.font.family
+      font.pixelSize: Math.max(6, parent.height * 0.72)
+      font.bold: true
+    }
+  }
+}
