@@ -5,7 +5,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
-import "model/V2rayA.js" as V2rayA
+import "model/Xray.js" as Model
 
 Panel {
   id: root
@@ -28,13 +28,13 @@ Panel {
 
   readonly property color vpnGreen: "#22c55e"
   readonly property color barIconColor: {
-    if (!v2raya.reachable) return urgent
-    if (v2raya.connected) return vpnGreen
+    if (!xray.reachable) return urgent
+    if (xray.connected) return vpnGreen
     return Qt.darker(foreground, 1.55)
   }
 
   // Flat, filtered node list the cursor walks over.
-  readonly property var visibleGroups: V2rayA.filterNodes(v2raya.touch ? v2raya.touch.groups : [], filterQuery)
+  readonly property var visibleGroups: Model.filterNodes(xray.touch ? xray.touch.groups : [], filterQuery)
   readonly property var visibleNodes: {
     var out = []
     for (var g = 0; g < visibleGroups.length; g++)
@@ -66,7 +66,7 @@ Panel {
   function activateCursor() {
     ensureCursor()
     var node = selectedNode()
-    if (node) v2raya.connectNode(node)
+    if (node) xray.connectNode(node)
   }
 
   function scrollItemIntoView(item) {
@@ -115,14 +115,14 @@ Panel {
   onOpenedChanged: if (opened) {
     cursorActive = false
     if (panelFlick) panelFlick.contentY = 0
-    v2raya.panelOpen = true
-    v2raya.refresh()
+    xray.panelOpen = true
+    xray.refresh()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
   onVisibleNodesChanged: ensureCursor()
 
   Service {
-    id: v2raya
+    id: xray
     settings: root.settings
     panelRef: root
     panelOpen: root.opened
@@ -135,27 +135,30 @@ Panel {
     function show(): void { root.open() }
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
-    function refreshNow(): string { v2raya.refresh(); return "ok" }
-    function status(): string { return v2raya.heroSummary }
-    function connect(): string { v2raya.toggleConnection(root.lastNodeKey); return "ok" }
-    function disconnect(): string { v2raya.disconnect(); return "ok" }
-    function toggleProxy(): string { v2raya.toggleConnection(root.lastNodeKey); return "ok" }
+    function refreshNow(): string { xray.refresh(); return "ok" }
+    function status(): string { return xray.heroSummary }
+    function connect(): string { xray.toggleConnection(root.lastNodeKey); return "ok" }
+    function disconnect(): string { xray.disconnect(); return "ok" }
+    function toggleProxy(): string { xray.toggleConnection(root.lastNodeKey); return "ok" }
     function select(name: string): string {
       var q = String(name).toLowerCase()
       var nodes = root.visibleNodes
       for (var i = 0; i < nodes.length; i++) {
-        if (nodes[i].name.toLowerCase().indexOf(q) !== -1) { v2raya.connectNode(nodes[i]); return "ok" }
+        if (nodes[i].name.toLowerCase().indexOf(q) !== -1) { xray.connectNode(nodes[i]); return "ok" }
       }
       return "no node matches: " + name
     }
-    function test(): string { v2raya.testNodes(root.visibleNodes); return "ok" }
-    function updateSubs(): string { v2raya.updateSubscriptions(); return "ok" }
-    function startCore(): string { v2raya.startCore(); return "ok" }
-    function stopCore(): string { v2raya.stopCore(); return "ok" }
-    function importUrl(url: string): string { v2raya.importUrl(url); return "ok" }
-    function subRemove(url: string): string { v2raya.subRemove(url); return "ok" }
-    function mode(m: string): string { v2raya.setMode(m); return "ok" }
-    function webui(): string { v2raya.openWebUi(); return "ok" }
+    function test(): string { xray.testNodes(root.visibleNodes); return "ok" }
+    function updateSubs(): string { xray.updateSubscriptions(); return "ok" }
+    function startCore(): string { xray.startCore(); return "ok" }
+    function stopCore(): string { xray.stopCore(); return "ok" }
+    function importUrl(url: string): string { xray.importUrl(url); return "ok" }
+    function subRemove(index: string): string { xray.subRemove(index); return "ok" }
+    function mode(m: string): string { xray.setMode(m); return "ok" }
+    function routing(p: string): string { xray.setRouting(p); return "ok" }
+    function adblock(on: string): string { xray.setAdblock(on === "on" || on === "true"); return "ok" }
+    function tunSetup(): string { xray.tunSetup(false); return "ok" }
+    function webui(): string { xray.openWebUi(); return "ok" }
   }
 
   BarIconButton {
@@ -165,9 +168,9 @@ Panel {
     iconComponent: Component {
       Item {
         readonly property string label: {
-          if (v2raya.barLabel === "node") return v2raya.connectedNodeName
-          if (v2raya.barLabel === "speed")
-            return v2raya.connected && v2raya.traffic !== null ? "↓" + V2rayA.formatSpeed(v2raya.traffic.downSpeed) : ""
+          if (xray.barLabel === "node") return xray.connectedNodeName
+          if (xray.barLabel === "speed")
+            return xray.connected && xray.traffic !== null ? "↓" + Model.formatSpeed(xray.traffic.downSpeed) : ""
           return ""
         }
         implicitWidth: row.implicitWidth
@@ -176,12 +179,12 @@ Panel {
           id: row
           anchors.centerIn: parent
           spacing: Style.space(5)
-          V2rayaIcon {
+          XrayIcon {
             id: iconGlyph
             anchors.verticalCenter: parent.verticalCenter
             iconSize: Style.space(11)
             color: root.barIconColor
-            warning: !v2raya.reachable
+            warning: !xray.reachable
           }
           Text {
             id: labelText
@@ -197,8 +200,8 @@ Panel {
       }
     }
     onPressed: function(buttonCode) {
-      if (buttonCode === Qt.RightButton) v2raya.toggleConnection(root.lastNodeKey)
-      else if (buttonCode === Qt.MiddleButton) v2raya.refresh()
+      if (buttonCode === Qt.RightButton) xray.toggleConnection(root.lastNodeKey)
+      else if (buttonCode === Qt.MiddleButton) xray.refresh()
       else root.toggle()
     }
   }
@@ -225,10 +228,10 @@ Panel {
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
-        if (t === "t" || t === "T") v2raya.testNodes(root.visibleNodes)
-        else if (t === "u" || t === "U") v2raya.updateSubscriptions()
-        else if (t === "c" || t === "C") v2raya.toggleConnection(root.lastNodeKey)
-        else if (t === "w" || t === "W") v2raya.openWebUi()
+        if (t === "t" || t === "T") xray.testNodes(root.visibleNodes)
+        else if (t === "u" || t === "U") xray.updateSubscriptions()
+        else if (t === "c" || t === "C") xray.toggleConnection(root.lastNodeKey)
+        else if (t === "w" || t === "W") xray.openWebUi()
         else if ((t === "j")) root.moveNodeCursor(1)
         else if ((t === "k")) root.moveNodeCursor(-1)
       }
@@ -253,45 +256,45 @@ Panel {
             id: hero
             width: parent.width
             title: "Xray"
-            meta: v2raya.actionStatus !== "" ? v2raya.actionStatus : v2raya.heroSummary
-            metaOpacity: v2raya.actionStatus !== "" ? 0.75 : 1.0
+            meta: xray.actionStatus !== "" ? xray.actionStatus : xray.heroSummary
+            metaOpacity: xray.actionStatus !== "" ? 0.75 : 1.0
             foreground: root.foreground
             fontFamily: root.fontFamily
-            iconOpacity: v2raya.connected ? 1.0 : 0.5
+            iconOpacity: xray.connected ? 1.0 : 0.5
             iconComponent: Component {
-              V2rayaIcon {
+              XrayIcon {
                 iconSize: Style.font.display
-                color: v2raya.connected ? root.vpnGreen : hero.foreground
-                opacity: v2raya.connected ? 1.0 : 0.55
+                color: xray.connected ? root.vpnGreen : hero.foreground
+                opacity: xray.connected ? 1.0 : 0.55
               }
             }
             trailingControl: Component {
               ToggleSwitch {
                 id: powerSwitch
-                checked: v2raya.connected
-                busy: v2raya.busy
+                checked: xray.connected
+                busy: xray.busy
                 hasCursor: false
                 foreground: hero.foreground
-                onToggled: v2raya.toggleConnection(root.lastNodeKey)
+                onToggled: xray.toggleConnection(root.lastNodeKey)
               }
             }
           }
 
           Text {
-            visible: v2raya.traffic !== null
+            visible: xray.traffic !== null
             width: parent.width
-            text: "↓ " + V2rayA.formatSpeed(v2raya.traffic ? v2raya.traffic.downSpeed : 0)
-                  + "   ↑ " + V2rayA.formatSpeed(v2raya.traffic ? v2raya.traffic.upSpeed : 0)
-                  + "   ·   " + V2rayA.formatBytes(v2raya.traffic ? v2raya.traffic.downTotal : 0)
+            text: "↓ " + Model.formatSpeed(xray.traffic ? xray.traffic.downSpeed : 0)
+                  + "   ↑ " + Model.formatSpeed(xray.traffic ? xray.traffic.upSpeed : 0)
+                  + "   ·   " + Model.formatBytes(xray.traffic ? xray.traffic.downTotal : 0)
             color: root.foreground
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
           }
 
           Text {
-            visible: v2raya.lastError !== "" && v2raya.actionStatus === ""
+            visible: xray.lastError !== "" && xray.actionStatus === ""
             width: parent.width
-            text: v2raya.lastError
+            text: xray.lastError
             color: root.urgent
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
@@ -299,7 +302,7 @@ Panel {
           }
 
           CursorSurface {
-            visible: !v2raya.reachable
+            visible: !xray.reachable
             width: parent.width
             implicitHeight: setupHint.implicitHeight + Style.spacing.rowPaddingX
             foreground: root.foreground
@@ -319,7 +322,7 @@ Panel {
           }
 
           RowLayout {
-            visible: v2raya.reachable
+            visible: xray.reachable
             width: parent.width
             spacing: Style.space(6)
 
@@ -333,12 +336,54 @@ Panel {
               Layout.fillWidth: true
               modeName: "tun"
               label: "TUN"
-              tooltip: "Route all system traffic through the tunnel (experimental)"
+              tooltip: xray.tunInstalled
+                       ? "Route all system traffic through the tunnel"
+                       : "Route all system traffic — needs a one-time setup (polkit prompt)"
             }
           }
 
+          RowLayout {
+            visible: xray.reachable
+            width: parent.width
+            spacing: Style.space(6)
+
+            ChoiceButton {
+              Layout.fillWidth: true
+              label: "GLOBAL"
+              current: xray.routing === "global"
+              tooltip: "Everything except private networks goes through the proxy"
+              onClicked: if (!current) xray.setRouting("global")
+            }
+            ChoiceButton {
+              Layout.fillWidth: true
+              label: "RU DIRECT"
+              current: xray.routing === "ru-direct"
+              tooltip: xray.geo ? "Russian sites and IPs (geosite/geoip) go direct"
+                                : ".ru/.su/.рф go direct (install xray geo data for full lists)"
+              onClicked: if (!current) xray.setRouting("ru-direct")
+            }
+            ChoiceButton {
+              Layout.fillWidth: true
+              label: "ADBLOCK"
+              current: xray.adblock
+              enabled: xray.geo || xray.adblock
+              tooltip: xray.geo ? "Block geosite:category-ads-all" : "Needs xray geo data (geosite.dat)"
+              onClicked: xray.setAdblock(!xray.adblock)
+            }
+          }
+
+          Text {
+            visible: xray.reachable && xray.skippedText !== ""
+            width: parent.width
+            text: xray.skippedText
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+
           Column {
-            visible: v2raya.reachable
+            visible: xray.reachable
             width: parent.width
             spacing: Style.space(4)
 
@@ -355,8 +400,8 @@ Panel {
 
               TextActionButton {
                 label: "Test"
-                enabled: root.visibleNodes.length > 0 && !v2raya.busy
-                onClicked: v2raya.testNodes(root.visibleNodes)
+                enabled: root.visibleNodes.length > 0 && !xray.busy
+                onClicked: xray.testNodes(root.visibleNodes)
               }
             }
 
@@ -442,7 +487,7 @@ Panel {
             Text {
               visible: root.visibleNodes.length === 0
               width: parent.width
-              text: v2raya.touch === null ? "Loading…" : "No nodes yet — add a subscription URL below."
+              text: xray.touch === null ? "Loading…" : "No nodes yet — add a subscription URL below."
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
@@ -451,7 +496,7 @@ Panel {
           }
 
           Column {
-            visible: v2raya.reachable
+            visible: xray.reachable
             width: parent.width
             spacing: Style.space(4)
 
@@ -467,15 +512,15 @@ Panel {
               }
 
               TextActionButton {
-                label: "Web"
-                tooltip: "Open the config folder"
-                onClicked: v2raya.openWebUi()
+                label: "Folder"
+                tooltip: "Open ~/.config/omarchy-xray (custom.json lives here)"
+                onClicked: xray.openWebUi()
               }
 
               TextActionButton {
                 label: "Update all"
-                enabled: !v2raya.busy
-                onClicked: v2raya.updateSubscriptions()
+                enabled: !xray.busy
+                onClicked: xray.updateSubscriptions()
               }
             }
 
@@ -489,9 +534,9 @@ Panel {
                 foreground: root.foreground
                 placeholderText: "Subscription URL — add or replace"
                 onAccepted: {
-                  if (text.trim() !== "") { v2raya.importUrl(text.trim()); text = "" }
+                  if (text.trim() !== "") { xray.importUrl(text.trim()); text = "" }
                 }
-                Keys.onEscapePressed: {
+                Keys.onEscapePressed: function(event) {
                   root.close()
                   event.accepted = true
                 }
@@ -499,20 +544,20 @@ Panel {
 
               TextActionButton {
                 label: "Add"
-                enabled: subUrlField.text.trim() !== "" && !v2raya.busy
+                enabled: subUrlField.text.trim() !== "" && !xray.busy
                 onClicked: {
-                  v2raya.importUrl(subUrlField.text.trim())
+                  xray.importUrl(subUrlField.text.trim())
                   subUrlField.text = ""
                 }
               }
             }
 
             Repeater {
-              model: v2raya.subs.length
+              model: xray.subs.length
               delegate: CursorSurface {
                 id: subRow
                 required property int index
-                readonly property var sub: v2raya.subs[index]
+                readonly property var sub: xray.subs[index]
                 width: parent.width
                 implicitHeight: subInner.implicitHeight + Style.spacing.rowPaddingX
                 foreground: root.foreground
@@ -534,25 +579,41 @@ Panel {
                     font.pixelSize: Style.font.caption
                   }
 
-                  Text {
+                  ColumnLayout {
                     Layout.fillWidth: true
-                    text: subRow.sub ? subRow.sub.host : ""
-                    color: root.foreground
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.body
-                    elide: Text.ElideRight
+                    spacing: Style.space(1)
+
+                    Text {
+                      Layout.fillWidth: true
+                      text: subRow.sub ? (subRow.sub.title || subRow.sub.host) : ""
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.body
+                      elide: Text.ElideRight
+                    }
+
+                    Text {
+                      Layout.fillWidth: true
+                      visible: text !== ""
+                      text: subRow.sub ? (subRow.sub.error ? "⚠ " + subRow.sub.error : Model.subInfoLabel(subRow.sub.info)) : ""
+                      color: subRow.sub && subRow.sub.error ? root.urgent : root.dim
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      elide: Text.ElideRight
+                    }
                   }
 
                   TextActionButton {
                     label: "Update"
-                    enabled: !v2raya.busy
-                    onClicked: v2raya.updateSubs()
+                    enabled: !xray.busy
+                    onClicked: xray.updateSub(subRow.sub.index)
                   }
 
                   TextActionButton {
                     label: "✕"
-                    enabled: !v2raya.busy
-                    onClicked: v2raya.subRemove(String(subRow.sub.index))
+                    tooltip: "Remove subscription"
+                    enabled: !xray.busy
+                    onClicked: xray.subRemove(subRow.sub.index)
                   }
                 }
               }
@@ -561,7 +622,7 @@ Panel {
 
           Text {
             width: parent.width
-            text: "j/k move · Enter connect · t test · u update subs · c connect/disconnect · w web UI"
+            text: "j/k move · Enter connect · t test · u update subs · c connect/disconnect · w config folder"
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
@@ -581,7 +642,7 @@ Panel {
     foreground: root.foreground
     fill: root.hoverFill
     currentFill: root.selectedFill
-    current: v2raya.mode === modeName
+    current: xray.mode === modeName
     hasCursor: modeMouse.containsMouse
     implicitHeight: modeLabel.implicitHeight + Style.spacing.rowPaddingX
 
@@ -589,9 +650,9 @@ Panel {
       id: modeMouse
       anchors.fill: parent
       hoverEnabled: true
-      cursorShape: v2raya.busy ? Qt.ArrowCursor : Qt.PointingHandCursor
-      enabled: !v2raya.busy
-      onClicked: if (v2raya.mode !== modeButton.modeName) v2raya.setMode(modeButton.modeName)
+      cursorShape: xray.busy ? Qt.ArrowCursor : Qt.PointingHandCursor
+      enabled: !xray.busy
+      onClicked: if (xray.mode !== modeButton.modeName) xray.setMode(modeButton.modeName)
     }
 
     Text {
@@ -607,6 +668,43 @@ Panel {
     PanelToolTip {
       visible: modeMouse.containsMouse && modeButton.tooltip !== ""
       text: modeButton.tooltip
+      fontFamily: root.fontFamily
+    }
+  }
+
+  component ChoiceButton: CursorSurface {
+    id: choice
+    property string label: ""
+    property string tooltip: ""
+    signal clicked()
+    foreground: root.foreground
+    fill: root.hoverFill
+    currentFill: root.selectedFill
+    hasCursor: choiceMouse.containsMouse
+    implicitHeight: choiceLabel.implicitHeight + Style.spacing.rowPaddingX
+
+    MouseArea {
+      id: choiceMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: xray.busy || !choice.enabled ? Qt.ArrowCursor : Qt.PointingHandCursor
+      enabled: !xray.busy && choice.enabled
+      onClicked: choice.clicked()
+    }
+
+    Text {
+      id: choiceLabel
+      anchors.centerIn: parent
+      text: choice.label
+      color: choice.current ? root.foreground : (choiceMouse.containsMouse ? root.foreground : root.dim)
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      font.bold: choice.current
+    }
+
+    PanelToolTip {
+      visible: choiceMouse.containsMouse && choice.tooltip !== ""
+      text: choice.tooltip
       fontFamily: root.fontFamily
     }
   }
@@ -659,9 +757,9 @@ Panel {
     }
     readonly property bool isNodeRow: true
     readonly property bool isConnected: node !== null && node.connected === true
-    readonly property string latencyText: node ? V2rayA.latencyLabel(node.latency) : ""
-    readonly property bool latencyOk: node ? V2rayA.latencyGood(latencyText) : false
-    readonly property bool latencyBadLat: node ? V2rayA.latencyBad(latencyText) : false
+    readonly property string latencyText: node ? Model.latencyLabel(node.latency) : ""
+    readonly property bool latencyOk: node ? Model.latencyGood(latencyText) : false
+    readonly property bool latencyBadLat: node ? Model.latencyBad(latencyText) : false
     readonly property string subtitle: {
       if (!node) return ""
       var parts = []
@@ -687,8 +785,8 @@ Panel {
       onEntered: root.setNodeCursor(nodeRow.globalIndex)
       onClicked: function(mouse) {
         if (!nodeRow.node) return
-        if (mouse.button === Qt.RightButton) v2raya.testNodes([nodeRow.node])
-        else v2raya.connectNode(nodeRow.node)
+        if (mouse.button === Qt.RightButton) xray.testNode(nodeRow.node)
+        else xray.connectNode(nodeRow.node)
       }
     }
 
@@ -746,7 +844,7 @@ Panel {
 
     PanelToolTip {
       visible: nodeMouse.containsMouse && nodeRow.node !== null && nodeRow.node.address !== ""
-      text: nodeRow.node ? nodeRow.node.address + " — left click to connect, right click to test" : ""
+      text: nodeRow.node ? nodeRow.node.address + " · " + nodeRow.node.net + " — left click to connect, right click to test" : ""
       fontFamily: root.fontFamily
     }
   }
