@@ -17,7 +17,8 @@ function loadModel() {
   src = src.replace(/^\.pragma library\s*/m, '')
   const api = ['groupsFromStatus', 'subInfoLabel', 'skippedLabel', 'parseMetrics',
     'latencyLabel', 'latencyGood', 'latencyBad', 'filterNodes', 'findNodeByKey',
-    'pickConnectTarget', 'autoPickName', 'formatSpeed', 'formatBytes', 'heroLine'].join(', ')
+    'pickConnectTarget', 'autoPickName', 'formatSpeed', 'formatBytes', 'heroLine',
+    'heroTitle', 'heroState'].join(', ')
   const sandbox = { module: { exports: {} }, exports: {}, JSON, Math, Date, Number, String, Object }
   vm.createContext(sandbox)
   vm.runInContext(src + '\nmodule.exports = { ' + api + ' }', sandbox, { filename: 'Xray.js' })

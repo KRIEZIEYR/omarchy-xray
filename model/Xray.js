@@ -215,22 +215,44 @@ function formatBytes(n) {
   return (b / 1073741824).toFixed(2) + " GB"
 }
 
+function connectedNode(touch) {
+  var keys = touch && touch.connectedKeys || {}
+  var nodes = touch && touch.nodes || []
+  for (var i = 0; i < nodes.length; i++)
+    if (keys[nodes[i].key] === true) return nodes[i]
+  return null
+}
+
+// One-line summary (IPC `status`, scripts): state and node together.
 function heroLine(state) {
   if (!state) return "…"
   if (state.unreachable) return "Xray manager unreachable"
   var t = state.touch
   if (!t) return "Checking…"
-  var keys = t.connectedKeys || {}
-  var connectedName = ""
-  var connectedKey = ""
-  for (var i = 0; i < t.nodes.length; i++) {
-    if (keys[t.nodes[i].key] === true) { connectedName = t.nodes[i].name; connectedKey = t.nodes[i].key; break }
-  }
+  var n = connectedNode(t)
   var mode = state.mode === "tun" ? " (TUN)" : ""
-  if (connectedName !== "") {
-    if (connectedKey === "auto") return "Connected" + mode + " · Auto" + (state.autoPick ? " → " + state.autoPick : "")
-    return "Connected" + mode + " · " + connectedName
+  if (n) {
+    if (n.key === "auto") return "Connected" + mode + " · Auto" + (state.autoPick ? " → " + state.autoPick : "")
+    return "Connected" + mode + " · " + n.name
   }
+  if (t.running) return "Core running · not connected"
+  return "Disconnected"
+}
+
+// Panel hero: the exit you are on leads; the state is a short caption.
+function heroTitle(state) {
+  var n = state ? connectedNode(state.touch) : null
+  if (!n) return "Xray"
+  if (n.key === "auto") return state.autoPick ? "Auto → " + state.autoPick : n.name
+  return n.name
+}
+
+function heroState(state) {
+  if (!state) return "…"
+  if (state.unreachable) return "Manager unreachable"
+  var t = state.touch
+  if (!t) return "Checking…"
+  if (connectedNode(t)) return "Connected · " + (state.mode === "tun" ? "TUN" : "proxy")
   if (t.running) return "Core running · not connected"
   return "Disconnected"
 }

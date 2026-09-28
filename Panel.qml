@@ -18,88 +18,219 @@ Panel {
   property int nodeIndex: 0
   property string filterQuery: ""
   property bool regionsOpen: false
+  property int regionHover: -1
+  property bool subsOpen: false
+  readonly property bool subsShown: subsOpen || xray.subs.length === 0
+  readonly property real settingLabelWidth: Style.space(52)
+  readonly property string lastRegion: settings ? String(settings.lastRegion || "") : ""
+  // BYPASS remembers its country, so ALL <-> BYPASS is one click.
+  readonly property var routeRegion: {
+    if (xray.region) return xray.region
+    for (var i = 0; i < xray.regions.length; i++)
+      if (xray.regions[i].code === lastRegion) return xray.regions[i]
+    return null
+  }
+
+  function pickRegion(code) {
+    regionsOpen = false
+    persistSetting("lastRegion", code)
+    if (xray.routing !== code + "-direct") xray.setRouting(code + "-direct")
+  }
+
+  function chooseMode(m) {
+    if (xray.busy) { xray.busyRefused(); return }
+    if (m !== xray.mode) xray.setMode(m)
+  }
+
+  function chooseRoute(v) {
+    if (xray.busy) { xray.busyRefused(); return }
+    if (v === "global") { if (xray.region) xray.setRouting("global") }
+    else if (!xray.region) {
+      if (routeRegion) xray.setRouting(routeRegion.code + "-direct")
+      else regionsOpen = true
+    }
+  }
+
+  // The cursor walks the settings rows above the nodes, as in Network:
+  // nodeIndex < 0 addresses a settings row (-1 = the last one), >= 0 a node.
+  // h/l pick a chip inside the row, Enter applies it.
+  readonly property var settingRows: regionsOpen ? ["mode", "route", "regions"] : ["mode", "route"]
+  property int chipIndex: 0
+  readonly property string cursorRow: cursorActive && nodeIndex < 0 ? (settingRows[settingRows.length + nodeIndex] || "") : ""
+
+  function chipCount(row) {
+    return row === "mode" ? 2 : row === "route" ? 4 : row === "regions" ? xray.regions.length : 0
+  }
+
+  function currentChip(row) {
+    if (row === "mode") return xray.mode === "tun" ? 1 : 0
+    if (row === "route") return xray.region ? 1 : 0
+    for (var i = 0; i < xray.regions.length; i++)
+      if (xray.routing === xray.regions[i].code + "-direct") return i
+    return 0
+  }
+
+  function moveChip(dx) {
+    if (cursorRow === "") return
+    pointerGate.reset()
+    chipIndex = Math.max(0, Math.min(chipCount(cursorRow) - 1, chipIndex + dx))
+  }
+
+  function activateChip() {
+    if (cursorRow === "mode") chooseMode(chipIndex === 1 ? "tun" : "proxy")
+    else if (cursorRow === "route") {
+      if (chipIndex < 2) chooseRoute(chipIndex === 1 ? "direct" : "global")
+      else if (chipIndex === 2) regionsOpen = !regionsOpen
+      else if (xray.geo || xray.adblock) xray.setAdblock(!xray.adblock)
+    } else if (cursorRow === "regions" && xray.regions[chipIndex]) pickRegion(xray.regions[chipIndex].code)
+  }
+
+  // Opening or closing the country grid adds or removes a row above the
+  // nodes; keep the cursor on the row it was on (a closed grid hands back
+  // to its COUNTRY chip).
+  onRegionsOpenChanged: {
+    if (nodeIndex >= 0) return
+    if (regionsOpen) nodeIndex -= 1
+    else if (nodeIndex === -1) chipIndex = 2
+    else nodeIndex += 1
+  }
   readonly property string lastNodeKey: settings ? String(settings.lastNodeKey || "") : ""
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color urgent: bar ? bar.urgent : Color.urgent
-  readonly property color dim: Qt.darker(foreground, 1.55)
+  readonly property color dim: Qt.darker(foreground, 1.4)   // the kit's secondary grey
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property color hoverFill: bar ? Style.hoverFillFor(bar.foreground, Color.accent) : "transparent"
   readonly property color selectedFill: bar ? Style.selectedFillFor(bar.foreground, Color.accent) : "transparent"
 
-  readonly property color vpnGreen: "#22c55e"
+  // "Connected" uses the theme's own green (colors.toml), so a monochrome
+  // theme stays monochrome; a theme without one falls back to its accent.
+  property color onColor: Color.accent
   readonly property color barIconColor: {
     if (!xray.reachable) return urgent
-    if (xray.connected) return vpnGreen
-    return Qt.darker(foreground, 1.55)
+    if (xray.connected) return onColor
+    return foreground            // "off" is carried by the button's kit dimming
   }
 
-  // Flat, filtered node list the cursor walks over.
+  readonly property string barLabelText: {
+    if (xray.barLabel === "node") return xray.connectedNodeName
+    if (xray.barLabel === "speed" && xray.connected)
+      return "󰁅" + (xray.traffic !== null ? Model.formatSpeed(xray.traffic.downSpeed) : "…")
+    return ""
+  }
+  // The speed label reserves its widest value so the bar never jitters;
+  // node names are capped and elided.
+  TextMetrics {
+    id: labelMetrics
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.caption
+    text: xray.barLabel === "speed" ? "󰁅1023.9 KB/s" : root.barLabelText
+  }
+  readonly property real barLabelWidth: barLabelText === "" ? 0 : Math.min(Math.ceil(labelMetrics.advanceWidth), Style.space(120))
+
+  FileView {
+    id: themeColors
+    path: Color.currentThemePath + "/colors.toml"
+    watchChanges: true
+    onFileChanged: reload()
+    onLoaded: {
+      var m = /^\s*green\s*=\s*["']?(#[0-9A-Fa-f]{6})/m.exec(text())
+      root.onColor = m ? m[1] : Color.accent
+    }
+  }
+
+  // Theme switches swap the directory behind the path; follow the shell.
+  Connections {
+    target: Color
+    function onAccentChanged() { themeColors.reload() }
+  }
+
+  // Flat, filtered node list the cursor walks over; the first row of each
+  // group carries the group's header text.
   readonly property var visibleGroups: Model.filterNodes(xray.touch ? xray.touch.groups : [], filterQuery)
-  readonly property var visibleNodes: {
+  readonly property var visibleRows: {
     var out = []
-    for (var g = 0; g < visibleGroups.length; g++)
-      for (var i = 0; i < visibleGroups[g].nodes.length; i++) out.push(visibleGroups[g].nodes[i])
+    for (var g = 0; g < visibleGroups.length; g++) {
+      var grp = visibleGroups[g]
+      var st = grp.status === undefined || grp.status === null ? "" : String(grp.status).trim()
+      var title = grp.title + (st === "" || st === "undefined" || st === "null" ? "" : "  ·  " + st)
+      for (var i = 0; i < grp.nodes.length; i++) out.push({ node: grp.nodes[i], title: i === 0 ? title : "" })
+    }
     return out
   }
+  readonly property var visibleNodes: visibleRows.map(function(r) { return r.node })
+
+  // One empty slot per visible row; delegates read root.visibleRows[index].
+  ListModel { id: rowSlots }
+  function syncRowSlots() {
+    var n = visibleRows.length
+    if (rowSlots.count > n) rowSlots.remove(n, rowSlots.count - n)
+    if (rowSlots.count < n) {
+      var add = []
+      for (var i = rowSlots.count; i < n; i++) add.push({ slot: i })
+      rowSlots.append(add)
+    }
+  }
+  onVisibleRowsChanged: syncRowSlots()
+  Component.onCompleted: syncRowSlots()
   function selectedNode() {
     if (visibleNodes.length === 0) return null
     return visibleNodes[Math.max(0, Math.min(nodeIndex, visibleNodes.length - 1))]
   }
 
   function ensureCursor() {
-    if (nodeIndex >= visibleNodes.length) nodeIndex = Math.max(0, visibleNodes.length - 1)
+    // Clamp only against real rows: an empty list at startup must not park
+    // the cursor on a settings row.
+    if (visibleNodes.length > 0 && nodeIndex >= visibleNodes.length) nodeIndex = visibleNodes.length - 1
   }
 
   function moveNodeCursor(delta) {
-    if (visibleNodes.length === 0) return
+    pointerGate.reset()
     cursorActive = true
-    nodeIndex = Math.max(0, Math.min(visibleNodes.length - 1, nodeIndex + delta))
-    scrollCursorIntoView()
+    var next = Math.max(-settingRows.length, Math.min(visibleNodes.length - 1, nodeIndex + delta))
+    if (next === nodeIndex) return
+    nodeIndex = next
+    if (nodeIndex < 0) {
+      chipIndex = currentChip(cursorRow)
+      nodeList.positionViewAtBeginning()
+    } else {
+      nodeList.positionViewAtIndex(nodeIndex, ListView.Contain)
+    }
   }
 
+  // Rows appearing or moving under a still pointer send synthetic hovers;
+  // only real pointer movement may take the cursor away from the keyboard.
+  PointerMoveGate { id: pointerGate; referenceItem: nodeList }
+
+  // Hover moves the cursor but never scrolls: a still pointer near an edge
+  // used to make the list creep.
   function setNodeCursor(index) {
     cursorActive = true
     nodeIndex = index
-    scrollCursorIntoView()
   }
 
   function activateCursor() {
+    if (nodeIndex < 0) { activateChip(); return }
     ensureCursor()
     var node = selectedNode()
     if (node) xray.connectNode(node)
   }
 
-  function scrollItemIntoView(item) {
-    if (!panelFlick || !item) return
-    Qt.callLater(function() {
-      if (!item) return
-      var margin = Style.space(6)
-      var point = item.mapToItem(panelFlick.contentItem, 0, 0)
-      var top = point.y
-      var bottom = top + item.height
-      var viewTop = panelFlick.contentY
-      var viewBottom = viewTop + panelFlick.height
-      var maxY = Math.max(0, panelFlick.contentHeight - panelFlick.height)
-      if (top < viewTop + margin) panelFlick.contentY = Math.max(0, top - margin)
-      else if (bottom > viewBottom - margin) panelFlick.contentY = Math.min(maxY, bottom + margin - panelFlick.height)
-    })
+  property real nowMs: Date.now()
+  Timer {
+    interval: 1000
+    repeat: true
+    running: xray.testing && root.opened
+    onTriggered: root.nowMs = Date.now()
+  }
+  readonly property string elapsedText: {
+    var sec = Math.max(0, Math.floor((nowMs - xray.longStartedMs) / 1000))
+    return Math.floor(sec / 60) + ":" + ("0" + sec % 60).slice(-2)
   }
 
-  function scrollCursorIntoView() {
-    var item = findNodeItem(column, root.nodeIndex)
-    if (item) scrollItemIntoView(item)
-  }
-
-  function findNodeItem(item, idx) {
-    if (!item || !item.children) return null
-    for (var i = 0; i < item.children.length; i++) {
-      var c = item.children[i]
-      if (c.isNodeRow === true && c.globalIndex === idx) return c
-      var found = findNodeItem(c, idx)
-      if (found) return found
-    }
-    return null
+  function importSub() {
+    var field = nodeList.footerItem ? nodeList.footerItem.subUrl : null
+    if (field) xray.importUrl(field.text.trim(), function(ok) { if (ok) field.text = "" })
   }
 
   function persistSetting(key, value) {
@@ -115,8 +246,10 @@ Panel {
 
   onOpenedChanged: if (opened) {
     cursorActive = false
+    nodeIndex = 0
+    pointerGate.reset()
     regionsOpen = false
-    if (panelFlick) panelFlick.contentY = 0
+    nodeList.positionViewAtBeginning()
     xray.panelOpen = true
     xray.refresh()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
@@ -167,14 +300,14 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
+    // The kit slot fits an icon only; widen it by exactly the label so the
+    // label no longer paints over the neighbouring widget.
+    fixedWidth: vertical ? -1 : slotSize + (root.barLabelWidth > 0 ? root.barLabelWidth + Style.space(5) : 0)
+    dimmed: xray.reachable && !xray.connected
+    tooltipText: xray.heroSummary
     iconComponent: Component {
       Item {
-        readonly property string label: {
-          if (xray.barLabel === "node") return xray.connectedNodeName
-          if (xray.barLabel === "speed")
-            return xray.connected && xray.traffic !== null ? "↓" + Model.formatSpeed(xray.traffic.downSpeed) : ""
-          return ""
-        }
+        readonly property string label: root.barLabelText
         implicitWidth: row.implicitWidth
         implicitHeight: Math.max(iconGlyph.implicitHeight, labelText.implicitHeight)
         Row {
@@ -186,12 +319,14 @@ Panel {
             anchors.verticalCenter: parent.verticalCenter
             iconSize: Style.space(11)
             color: root.barIconColor
+            filled: xray.connected
             warning: !xray.reachable
           }
           Text {
             id: labelText
             visible: row.parent.label !== ""
             text: row.parent.label
+            width: root.barLabelWidth
             color: root.barIconColor
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
@@ -216,15 +351,15 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(400))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(620))
+    contentHeight: panel.fittedContentHeight(nodeList.contentHeight, Style.space(620))
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
       onMoveRequested: function(dx, dy) {
         if (!root.cursorActive) { root.cursorActive = true; return }
-        if (dy > 0) root.moveNodeCursor(1)
-        else if (dy < 0) root.moveNodeCursor(-1)
+        if (dy !== 0) root.moveNodeCursor(dy > 0 ? 1 : -1)
+        else if (dx !== 0) root.moveChip(dx)
       }
       onActivateRequested: if (root.cursorActive) root.activateCursor()
       onCloseRequested: root.close()
@@ -234,47 +369,63 @@ Panel {
         else if (t === "u" || t === "U") xray.updateSubscriptions()
         else if (t === "c" || t === "C") xray.toggleConnection(root.lastNodeKey)
         else if (t === "w" || t === "W") xray.openWebUi()
-        else if ((t === "j")) root.moveNodeCursor(1)
-        else if ((t === "k")) root.moveNodeCursor(-1)
+        else if (t === "/" && nodeList.headerItem) nodeList.headerItem.search.forceActiveFocus()
       }
 
-      Flickable {
-        id: panelFlick
+      // One scroll view for the whole panel. Only the node rows are
+      // virtualized (1000 rows in a Column cost ~0.3 s per rebuild); the
+      // controls above and the subscriptions below ride along as header and
+      // footer so everything still scrolls together.
+      ListView {
+        id: nodeList
         anchors.fill: parent
-        contentWidth: width
-        contentHeight: column.implicitHeight
         clip: true
         boundsBehavior: Flickable.StopAtBounds
-        flickableDirection: Flickable.VerticalFlick
         interactive: contentHeight > height
+        reuseItems: true
+        spacing: Style.space(4)
+        currentIndex: -1                   // the panel keeps its own cursor (nodeIndex)
+        // The header grows upward (status line, country grid): a view resting
+        // at the top stays at the top instead of pushing the hero out of sight.
+        property real _prevOriginY: 0
+        onOriginYChanged: {
+          if (Math.abs(contentY - _prevOriginY) < 1) contentY = originY
+          _prevOriginY = originY
+        }
+        keyNavigationEnabled: false
         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+        // rowSlots only grows/shrinks at the tail: swapping the model would
+        // reset the view and rebuild header and footer, dropping focus and
+        // half-typed text in the filter and URL fields.
+        model: rowSlots
 
-        Column {
-          id: column
-          width: panelFlick.width
+        header: Column {
+          property alias search: searchField
+          width: nodeList.width
           spacing: Style.space(12)
+          bottomPadding: Style.space(6)
 
           PanelHero {
             id: hero
             width: parent.width
-            title: "Xray"
-            meta: xray.actionStatus !== "" ? xray.actionStatus : xray.heroSummary
-            metaOpacity: xray.actionStatus !== "" ? 0.75 : 1.0
+            title: xray.heroTitle
+            meta: xray.heroState
             foreground: root.foreground
             fontFamily: root.fontFamily
             iconOpacity: xray.connected ? 1.0 : 0.5
             iconComponent: Component {
               XrayIcon {
                 iconSize: Style.font.display
-                color: xray.connected ? root.vpnGreen : hero.foreground
-                opacity: xray.connected ? 1.0 : 0.55
+                color: xray.connected ? root.onColor : hero.foreground
+                filled: xray.connected
               }
             }
             trailingControl: Component {
               ToggleSwitch {
                 id: powerSwitch
                 checked: xray.connected
-                busy: xray.busy
+                busy: xray.toggleBusy
+                opacity: xray.toggleBusy ? 0.5 : 1.0
                 hasCursor: false
                 foreground: hero.foreground
                 onToggled: xray.toggleConnection(root.lastNodeKey)
@@ -282,136 +433,193 @@ Panel {
             }
           }
 
+          // Status line: what is running now (sentence case, wraps), else the
+          // last error with a glyph so it does not rely on colour alone.
           Text {
-            visible: xray.traffic !== null
+            visible: xray.actionStatus !== "" || xray.errorText !== ""
             width: parent.width
-            text: "↓ " + Model.formatSpeed(xray.traffic ? xray.traffic.downSpeed : 0)
-                  + "   ↑ " + Model.formatSpeed(xray.traffic ? xray.traffic.upSpeed : 0)
-                  + "   ·   " + Model.formatBytes(xray.traffic ? xray.traffic.downTotal : 0)
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-          }
-
-          Text {
-            visible: xray.lastError !== "" && xray.actionStatus === ""
-            width: parent.width
-            text: xray.lastError
-            color: root.urgent
+            text: xray.actionStatus !== "" ? xray.actionStatus : "󰀦 " + xray.errorText
+            color: xray.actionStatus !== "" ? root.dim : root.urgent
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
             wrapMode: Text.WordWrap
           }
 
-          CursorSurface {
-            visible: !xray.reachable
+          Text {
+            readonly property bool live: xray.connected && xray.traffic !== null
+            visible: xray.reachable
             width: parent.width
-            implicitHeight: setupHint.implicitHeight + Style.spacing.rowPaddingX
-            foreground: root.foreground
+            text: !live ? "󰁅 —   󰁝 —"
+                  : "󰁅 " + Model.formatSpeed(xray.traffic.downSpeed)
+                    + "   󰁝 " + Model.formatSpeed(xray.traffic.upSpeed)
+                    + "   ·   " + Model.formatBytes(xray.traffic.downTotal)
+            color: live ? root.foreground : root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+          }
+
+          PanelSeparator { visible: xray.reachable; foreground: root.foreground }
+
+          // Mode and route are set-and-forget: a compact label/chips form that
+          // stays quieter than the connect switch and the node list.
+          Column {
+            visible: xray.reachable
+            width: parent.width
+            spacing: Style.space(8)
+
+            RowLayout {
+              width: parent.width
+              spacing: Style.space(8)
+
+              PanelSectionHeader {
+                text: "MODE"
+                Layout.preferredWidth: root.settingLabelWidth
+                Layout.alignment: Qt.AlignVCenter
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+
+              ButtonGroup {
+                options: [
+                  { value: "proxy", label: "PROXY",
+                    tooltip: "Apps that use the system proxy go through the VPN (socks 127.0.0.1:20170, http :20171)" },
+                  { value: "tun", label: "TUN",
+                    tooltip: xray.tunInstalled ? "All system traffic goes through the VPN"
+                           : "All system traffic goes through the VPN. The first switch asks for your password once" }
+                ]
+                value: xray.mode
+                cursorIndex: root.cursorRow === "mode" ? root.chipIndex : -1
+                focusable: false
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.caption
+                opacity: xray.busy ? 0.45 : 1.0
+                onChanged: function(v) { root.chooseMode(v) }
+              }
+
+              Item { Layout.fillWidth: true }
+            }
+
+            RowLayout {
+              width: parent.width
+              spacing: Style.space(8)
+
+              PanelSectionHeader {
+                text: "ROUTE"
+                Layout.preferredWidth: root.settingLabelWidth
+                Layout.alignment: Qt.AlignVCenter
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+
+              ButtonGroup {
+                options: [
+                  { value: "global", label: "ALL",
+                    tooltip: "Everything goes through the VPN, except your local network" },
+                  { value: "direct", label: "BYPASS",
+                    tooltip: root.routeRegion ? root.routeRegion.name + ": its sites and IPs bypass the VPN"
+                                              : "Let one country's sites and IPs bypass the VPN" }
+                ]
+                value: xray.region ? "direct" : "global"
+                cursorIndex: root.cursorRow === "route" && root.chipIndex < 2 ? root.chipIndex : -1
+                focusable: false
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.caption
+                opacity: xray.busy ? 0.45 : 1.0
+                onChanged: function(v) { root.chooseRoute(v) }
+              }
+
+              Button {
+                text: (root.routeRegion ? root.routeRegion.code.toUpperCase() : "COUNTRY") + (root.regionsOpen ? " 󰅃" : " 󰅀")
+                tooltipText: "Choose the country that bypasses the VPN"
+                bordered: true
+                foreground: xray.region ? root.foreground : root.dim
+                hasCursor: root.cursorRow === "route" && root.chipIndex === 2
+                enabled: xray.regions.length > 0
+                fontFamily: root.fontFamily
+                fontSize: Style.font.caption
+                onClicked: root.regionsOpen = !root.regionsOpen
+              }
+
+              Item { Layout.fillWidth: true }
+
+              PanelSectionHeader {
+                id: adblockLabel
+                text: "ADBLOCK"
+                Layout.alignment: Qt.AlignVCenter
+                opacity: xray.geo || xray.adblock ? 1.0 : 0.45
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+
+              ToggleSwitch {
+                id: adblockSwitch
+                trackHeight: Math.round(adblockLabel.font.pixelSize * 1.2)
+                cursorPad: Style.space(3)
+                Layout.alignment: Qt.AlignVCenter
+                checked: xray.adblock
+                busy: xray.busy
+                hasCursor: root.cursorRow === "route" && root.chipIndex === 3
+                opacity: xray.busy || !(xray.geo || xray.adblock) ? 0.45 : 1.0
+                foreground: root.foreground
+                onToggled: if (xray.geo || xray.adblock) xray.setAdblock(!xray.adblock)
+
+                PanelToolTip {
+                  visible: adblockSwitch.containsMouse
+                  text: xray.geo ? "Block ads and trackers (geosite:category-ads-all)"
+                                 : "Needs Xray geo data (geosite.dat). Run omarchy-xray doctor to see what is missing"
+                  fontFamily: root.fontFamily
+                }
+              }
+            }
+
+            Flow {
+              visible: root.regionsOpen
+              width: parent.width
+              spacing: Style.space(4)
+
+              Repeater {
+                model: xray.regions
+                delegate: Button {
+                  required property var modelData
+                  required property int index
+                  text: modelData.code.toUpperCase()
+                  hasCursor: root.cursorRow === "regions" && root.chipIndex === index
+                  tooltipText: modelData.name + ": sites and IPs bypass the VPN"
+                               + (xray.geo ? "" : " (domains only: no geo data installed)")
+                  bordered: true
+                  selected: xray.routing === modelData.code + "-direct"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.caption
+                  onClicked: root.pickRegion(modelData.code)
+                  onHovered: function(h) { root.regionHover = h ? index : (root.regionHover === index ? -1 : root.regionHover) }
+                }
+              }
+            }
 
             Text {
-              id: setupHint
-              anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              anchors.margins: Style.space(12)
-              text: "Xray manager not found. Reinstall the widget: ./install.sh"
+              visible: root.regionsOpen
+              width: parent.width
+              text: {
+                var i = root.cursorRow === "regions" ? root.chipIndex : root.regionHover
+                var r = i >= 0 ? xray.regions[i] : null
+                if (r) return r.name + ": its sites and IPs bypass the VPN" + (xray.geo ? "" : " (domains only, no geo data)")
+                return root.routeRegion ? "Bypassing now: " + root.routeRegion.name : "Pick a country to bypass the VPN"
+              }
               color: root.dim
               font.family: root.fontFamily
-              font.pixelSize: Style.font.body
+              font.pixelSize: Style.font.caption
               wrapMode: Text.WordWrap
             }
           }
 
-          RowLayout {
-            visible: xray.reachable
-            width: parent.width
-            spacing: Style.space(6)
-
-            ModeButton {
-              Layout.fillWidth: true
-              modeName: "proxy"
-              label: "PROXY"
-              tooltip: "Apps connect through the local socks/http proxy"
-            }
-            ModeButton {
-              Layout.fillWidth: true
-              modeName: "tun"
-              label: "TUN"
-              tooltip: xray.tunInstalled
-                       ? "Route all system traffic through the tunnel"
-                       : "Route all system traffic — needs a one-time setup (polkit prompt)"
-            }
-          }
-
-          RowLayout {
-            visible: xray.reachable
-            width: parent.width
-            spacing: Style.space(6)
-
-            ChoiceButton {
-              Layout.fillWidth: true
-              label: "GLOBAL"
-              current: xray.routing === "global"
-              tooltip: "Everything except private networks goes through the proxy"
-              onClicked: if (!current) xray.setRouting("global")
-            }
-            ChoiceButton {
-              Layout.fillWidth: true
-              label: (xray.region ? "DIRECT " + xray.region.flag + " " + xray.region.code.toUpperCase() : "DIRECT")
-                     + (root.regionsOpen ? " ▲" : " ▼")
-              current: xray.region !== null
-              enabled: xray.regions.length > 0
-              tooltip: "Pick a country: its sites and IPs go direct, the rest through the proxy"
-              onClicked: root.regionsOpen = !root.regionsOpen
-            }
-            ChoiceButton {
-              Layout.fillWidth: true
-              label: "ADBLOCK"
-              current: xray.adblock
-              enabled: xray.geo || xray.adblock
-              tooltip: xray.geo ? "Block geosite:category-ads-all" : "Needs xray geo data (geosite.dat)"
-              onClicked: xray.setAdblock(!xray.adblock)
-            }
-          }
-
-          GridLayout {
-            visible: xray.reachable && root.regionsOpen
-            width: parent.width
-            columns: 7
-            columnSpacing: Style.space(4)
-            rowSpacing: Style.space(4)
-
-            Repeater {
-              model: xray.regions
-              delegate: ChoiceButton {
-                required property var modelData
-                Layout.fillWidth: true
-                label: modelData.flag + " " + modelData.code.toUpperCase()
-                current: xray.routing === modelData.code + "-direct"
-                tooltip: modelData.name + (xray.geo ? "" : " — domains only (install xray geo data for IPs)")
-                onClicked: {
-                  root.regionsOpen = false
-                  if (!current) xray.setRouting(modelData.code + "-direct")
-                }
-              }
-            }
-          }
-
-          Text {
-            visible: xray.reachable && xray.skippedText !== ""
-            width: parent.width
-            text: xray.skippedText
-            color: root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            wrapMode: Text.WordWrap
-          }
-
+          PanelSeparator { visible: xray.reachable; foreground: root.foreground }
           Column {
             visible: xray.reachable
             width: parent.width
-            spacing: Style.space(4)
+            spacing: Style.space(6)
 
             RowLayout {
               width: parent.width
@@ -425,10 +633,22 @@ Panel {
               }
 
               TextActionButton {
-                label: "Test"
-                enabled: root.visibleNodes.length > 0 && !xray.busy
+                label: xray.testing ? "Stop · " + root.elapsedText : "Test"
+                tooltip: xray.testing ? "Stop the latency test (finished results are kept)"
+                         : root.filterQuery !== "" ? "Latency-test the filtered nodes" : "Latency-test all nodes"
+                enabled: xray.testing || (root.visibleNodes.length > 0 && !xray.busy)
                 onClicked: xray.testNodes(root.visibleNodes)
               }
+            }
+
+            Text {
+              visible: xray.skippedText !== ""
+              width: parent.width
+              text: xray.skippedText
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
             }
 
             RowLayout {
@@ -439,7 +659,7 @@ Panel {
                 id: searchField
                 Layout.fillWidth: true
                 foreground: root.foreground
-                placeholderText: "Filter nodes…"
+                placeholderText: "Filter nodes…  ( / )"
                 text: root.filterQuery
                 onTextChanged: {
                   root.filterQuery = text
@@ -447,16 +667,17 @@ Panel {
                 }
                 Keys.onPressed: function(event) {
                   if (event.key === Qt.Key_Escape) {
-                    root.close()
+                    if (text !== "") text = ""
+                    else root.close()
                     event.accepted = true
                     return
                   }
-                  if (event.key === Qt.Key_Down || event.text === "j") {
+                  if (event.key === Qt.Key_Down) {
                     root.moveNodeCursor(1)
                     event.accepted = true
                     return
                   }
-                  if (event.key === Qt.Key_Up || event.text === "k") {
+                  if (event.key === Qt.Key_Up) {
                     root.moveNodeCursor(-1)
                     event.accepted = true
                     return
@@ -469,51 +690,20 @@ Panel {
               }
 
               TextActionButton {
-                label: "✕"
+                label: "󰅖"
                 tooltip: "Clear filter"
                 enabled: root.filterQuery !== ""
                 onClicked: { root.filterQuery = ""; searchField.text = ""; keyCatcher.forceActiveFocus() }
               }
             }
 
-            Repeater {
-              model: root.visibleGroups.length
-              delegate: Column {
-                id: groupCol
-                required property int index
-                readonly property var group: root.visibleGroups[index]
-                readonly property int baseIndex: {
-                  var n = 0
-                  for (var g = 0; g < index; g++) n += root.visibleGroups[g].nodes.length
-                  return n
-                }
-                readonly property string groupSubtitle: {
-                  var st = groupCol.group ? groupCol.group.status : null
-                  if (st === null || st === undefined) return ""
-                  var str = String(st).trim()
-                  if (str === "" || str === "undefined" || str === "null") return ""
-                  return "  ·  " + str
-                }
-                width: parent.width
-                spacing: Style.space(4)
-
-                PanelSectionHeader {
-                  text: groupCol.group.title + groupCol.groupSubtitle
-                  foreground: root.foreground
-                  fontFamily: root.fontFamily
-                }
-
-                Repeater {
-                  model: groupCol.group.nodes.length
-                  delegate: NodeRow { globalIndex: groupCol.baseIndex + index }
-                }
-              }
-            }
-
             Text {
               visible: root.visibleNodes.length === 0
               width: parent.width
-              text: xray.touch === null ? "Loading…" : "No nodes yet — add a subscription URL below."
+              text: xray.touch === null ? "Loading…"
+                    : root.filterQuery !== "" ? "No nodes match “" + root.filterQuery + "” — Esc clears the filter"
+                    : "No nodes yet — add a subscription URL below."
+              wrapMode: Text.WordWrap
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
@@ -521,10 +711,40 @@ Panel {
             }
           }
 
+        }
+
+        delegate: Column {
+          id: rowCol
+          required property int index
+          readonly property string groupTitle: index < root.visibleRows.length ? root.visibleRows[index].title : ""
+          width: nodeList.width
+          spacing: Style.space(4)
+          topPadding: groupTitle !== "" && index > 0 ? Style.space(6) : 0
+
+          PanelSectionHeader {
+            visible: rowCol.groupTitle !== ""
+            width: parent.width
+            elide: Text.ElideRight
+            text: rowCol.groupTitle
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+          }
+
+          NodeRow { globalIndex: rowCol.index }
+        }
+
+        footer: Column {
+          property alias subUrl: subUrlField
+          width: nodeList.width
+          spacing: Style.space(12)
+          topPadding: Style.space(12)
+
+          PanelSeparator { visible: xray.reachable; foreground: root.foreground }
+
           Column {
             visible: xray.reachable
             width: parent.width
-            spacing: Style.space(4)
+            spacing: Style.space(6)
 
             RowLayout {
               width: parent.width
@@ -532,14 +752,24 @@ Panel {
 
               PanelSectionHeader {
                 Layout.fillWidth: true
-                text: "SUBSCRIPTIONS"
+                text: "SUBSCRIPTIONS" + (xray.subs.length > 0 ? " · " + xray.subs.length + (root.subsShown ? " 󰅃" : " 󰅀") : "")
                 foreground: root.foreground
                 fontFamily: root.fontFamily
+
+                MouseArea {
+                  anchors.fill: parent
+                  enabled: xray.subs.length > 0
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.subsOpen = !root.subsOpen
+                  Accessible.role: Accessible.Button
+                  Accessible.name: (root.subsShown ? "Collapse" : "Expand") + " subscriptions"
+                  Accessible.onPressAction: root.subsOpen = !root.subsOpen
+                }
               }
 
               TextActionButton {
-                label: "Folder"
-                tooltip: "Open ~/.config/omarchy-xray (custom.json lives here)"
+                label: "Config"
+                tooltip: "Open the config folder (~/.config/omarchy-xray, where custom.json lives)"
                 onClicked: xray.openWebUi()
               }
 
@@ -551,6 +781,7 @@ Panel {
             }
 
             RowLayout {
+              visible: root.subsShown
               width: parent.width
               spacing: Style.space(6)
 
@@ -558,10 +789,8 @@ Panel {
                 id: subUrlField
                 Layout.fillWidth: true
                 foreground: root.foreground
-                placeholderText: "Subscription URL — add or replace"
-                onAccepted: {
-                  if (text.trim() !== "") { xray.importUrl(text.trim()); text = "" }
-                }
+                placeholderText: "Paste a subscription URL (https://…)"
+                onAccepted: if (text.trim() !== "") root.importSub()
                 Keys.onEscapePressed: function(event) {
                   root.close()
                   event.accepted = true
@@ -571,12 +800,14 @@ Panel {
               TextActionButton {
                 label: "Add"
                 enabled: subUrlField.text.trim() !== "" && !xray.busy
-                onClicked: {
-                  xray.importUrl(subUrlField.text.trim())
-                  subUrlField.text = ""
-                }
+                onClicked: root.importSub()
               }
             }
+
+            Column {
+              visible: root.subsShown
+              width: parent.width
+              spacing: Style.space(4)
 
             Repeater {
               model: xray.subs.length
@@ -599,7 +830,7 @@ Panel {
                   spacing: Style.space(8)
 
                   Text {
-                    text: "●"
+                    text: "󰌹"
                     color: root.dim
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
@@ -631,168 +862,78 @@ Panel {
 
                   TextActionButton {
                     label: "Update"
+                    tooltip: "Download this subscription again"
                     enabled: !xray.busy
                     onClicked: xray.updateSub(subRow.sub.index)
                   }
 
+                  // Removal can't be undone (the URL is a secret the user would have
+                  // to find again), so it takes a second click on the same spot.
                   TextActionButton {
-                    label: "✕"
-                    tooltip: "Remove subscription"
+                    id: removeButton
+                    property bool armed: false
+                    label: armed ? "Confirm remove" : "Remove"
+                    tint: armed ? root.urgent : root.foreground
+                    tooltip: armed ? "Click again to remove " + (subRow.sub.title || subRow.sub.host) + " and its nodes"
+                                   : "Remove this subscription and its nodes"
                     enabled: !xray.busy
-                    onClicked: xray.subRemove(subRow.sub.index)
+                    onClicked: {
+                      if (!armed) { armed = true; disarm.restart(); return }
+                      armed = false
+                      xray.subRemove(subRow.sub.index)
+                    }
+                    Timer { id: disarm; interval: 4000; onTriggered: removeButton.armed = false }
                   }
                 }
               }
+            }
             }
           }
 
           Text {
             width: parent.width
-            text: "j/k move · Enter connect · t test · u update subs · c connect/disconnect · w config folder"
+            text: "j/k move · h/l choose · Enter apply · / filter · t test/stop · u update subs · c connect/disconnect · w config folder"
+            wrapMode: Text.WordWrap
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
             horizontalAlignment: Text.AlignHCenter
-            opacity: 0.8
           }
         }
       }
     }
   }
 
-  component ModeButton: CursorSurface {
-    id: modeButton
-    property string modeName: ""
+  // Text action on the kit's Button (hover, cursor, tooltip), plus a tint
+  // for destructive confirmation and a dimmed disabled state.
+  component TextActionButton: Button {
     property string label: ""
     property string tooltip: ""
-    foreground: root.foreground
-    fill: root.hoverFill
-    currentFill: root.selectedFill
-    current: xray.mode === modeName
-    hasCursor: modeMouse.containsMouse
-    implicitHeight: modeLabel.implicitHeight + Style.spacing.rowPaddingX
-
-    MouseArea {
-      id: modeMouse
-      anchors.fill: parent
-      hoverEnabled: true
-      cursorShape: xray.busy ? Qt.ArrowCursor : Qt.PointingHandCursor
-      enabled: !xray.busy
-      onClicked: if (xray.mode !== modeButton.modeName) xray.setMode(modeButton.modeName)
-    }
-
-    Text {
-      id: modeLabel
-      anchors.centerIn: parent
-      text: modeButton.label
-      color: modeButton.current ? root.foreground : (modeMouse.containsMouse ? root.foreground : root.dim)
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.body
-      font.bold: modeButton.current
-    }
-
-    PanelToolTip {
-      visible: modeMouse.containsMouse && modeButton.tooltip !== ""
-      text: modeButton.tooltip
-      fontFamily: root.fontFamily
-    }
-  }
-
-  component ChoiceButton: CursorSurface {
-    id: choice
-    property string label: ""
-    property string tooltip: ""
-    signal clicked()
-    foreground: root.foreground
-    fill: root.hoverFill
-    currentFill: root.selectedFill
-    hasCursor: choiceMouse.containsMouse
-    implicitHeight: choiceLabel.implicitHeight + Style.spacing.rowPaddingX
-
-    MouseArea {
-      id: choiceMouse
-      anchors.fill: parent
-      hoverEnabled: true
-      cursorShape: xray.busy || !choice.enabled ? Qt.ArrowCursor : Qt.PointingHandCursor
-      enabled: !xray.busy && choice.enabled
-      onClicked: choice.clicked()
-    }
-
-    Text {
-      id: choiceLabel
-      anchors.centerIn: parent
-      text: choice.label
-      color: choice.current ? root.foreground : (choiceMouse.containsMouse ? root.foreground : root.dim)
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.caption
-      font.bold: choice.current
-    }
-
-    PanelToolTip {
-      visible: choiceMouse.containsMouse && choice.tooltip !== ""
-      text: choice.tooltip
-      fontFamily: root.fontFamily
-    }
-  }
-
-  component TextActionButton: CursorSurface {
-    id: textAction
-    property string label: ""
-    property string tooltip: ""
-    signal clicked()
-    foreground: root.foreground
-    fill: root.hoverFill
-    currentFill: root.selectedFill
-    hasCursor: textActionMouse.containsMouse
-    implicitHeight: textActionLabel.implicitHeight + Style.spacing.rowPaddingX
-    implicitWidth: textActionLabel.implicitWidth + Style.space(16)
-
-    MouseArea {
-      id: textActionMouse
-      anchors.fill: parent
-      hoverEnabled: true
-      cursorShape: textAction.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-      enabled: textAction.enabled
-      onClicked: textAction.clicked()
-    }
-
-    Text {
-      id: textActionLabel
-      anchors.centerIn: parent
-      text: textAction.label
-      color: textAction.enabled ? root.foreground : root.dim
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.body
-    }
-
-    PanelToolTip {
-      visible: textActionMouse.containsMouse && textAction.tooltip !== ""
-      text: textAction.tooltip
-      fontFamily: root.fontFamily
-    }
+    property color tint: root.foreground
+    text: label
+    tooltipText: tooltip
+    foreground: enabled ? tint : root.dim
+    fontFamily: root.fontFamily
+    Accessible.role: Accessible.Button
+    Accessible.name: label
+    Accessible.description: tooltip
+    Accessible.onPressAction: if (enabled) clicked()
   }
 
   component NodeRow: CursorSurface {
     id: nodeRow
-    required property int index
-    property int globalIndex: index
+    property int globalIndex: 0
     readonly property var node: {
       // Index into the already-flattened cursor list (same order the cursor walks).
       var flat = root.visibleNodes
       return globalIndex < flat.length ? flat[globalIndex] : null
     }
-    readonly property bool isNodeRow: true
     readonly property bool isConnected: node !== null && node.connected === true
     readonly property string latencyText: node ? Model.latencyLabel(node.latency) : ""
     readonly property bool latencyOk: node ? Model.latencyGood(latencyText) : false
     readonly property bool latencyBadLat: node ? Model.latencyBad(latencyText) : false
-    readonly property string subtitle: {
-      if (!node) return ""
-      var parts = []
-      if (node.address !== "") parts.push(node.address)
-      if (node.net !== "") parts.push(node.net)
-      return parts.join(" · ")
-    }
+    // Auto's "address" is its member count, which says more than "balancer".
+    readonly property string transport: !node ? "" : node.key === "auto" ? node.address : node.net
 
     hasCursor: root.cursorActive && root.nodeIndex === globalIndex
     current: isConnected
@@ -801,6 +942,9 @@ Panel {
     currentFill: root.selectedFill
     width: parent ? parent.width : 0
     implicitHeight: rowInner.implicitHeight + Style.spacing.rowPaddingX
+    Accessible.role: Accessible.Button
+    Accessible.name: node ? node.name + (isConnected ? ", connected" : "") + (latencyText !== "" ? ", " + latencyText : "") : ""
+    Accessible.onPressAction: if (node) xray.connectNode(node)
 
     MouseArea {
       id: nodeMouse
@@ -808,7 +952,9 @@ Panel {
       acceptedButtons: Qt.LeftButton | Qt.RightButton
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
-      onEntered: root.setNodeCursor(nodeRow.globalIndex)
+      onPositionChanged: function(mouse) {
+        if (pointerGate.moved(nodeMouse, mouse)) root.setNodeCursor(nodeRow.globalIndex)
+      }
       onClicked: function(mouse) {
         if (!nodeRow.node) return
         if (mouse.button === Qt.RightButton) xray.testNode(nodeRow.node)
@@ -826,42 +972,38 @@ Panel {
       spacing: Style.space(8)
 
       Text {
-        text: nodeRow.isConnected ? "●" : "○"
+        text: nodeRow.isConnected ? "󰐾" : "󰐽"
         color: nodeRow.isConnected ? root.foreground : root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
         Layout.alignment: Qt.AlignVCenter
       }
 
-      ColumnLayout {
+      Text {
         Layout.fillWidth: true
-        spacing: Style.space(1)
+        text: nodeRow.node ? nodeRow.node.name : ""
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        font.bold: nodeRow.isConnected
+        elide: Text.ElideRight
+      }
 
-        Text {
-          Layout.fillWidth: true
-          text: nodeRow.node ? nodeRow.node.name : ""
-          color: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          font.bold: nodeRow.isConnected
-          elide: Text.ElideRight
-        }
-
-        Text {
-          Layout.fillWidth: true
-          visible: nodeRow.subtitle !== ""
-          text: nodeRow.subtitle
-          color: root.dim
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          elide: Text.ElideRight
-        }
+      Text {
+        visible: nodeRow.transport !== ""
+        Layout.maximumWidth: rowInner.width * 0.4
+        text: nodeRow.transport
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        elide: Text.ElideLeft
+        Layout.alignment: Qt.AlignVCenter
       }
 
       Text {
         visible: nodeRow.latencyText !== ""
         text: nodeRow.latencyText
-        color: nodeRow.latencyBadLat ? root.urgent : (nodeRow.latencyOk ? root.dim : root.foreground)
+        color: nodeRow.latencyBadLat ? root.urgent : (nodeRow.latencyOk ? root.foreground : root.dim)
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
         Layout.alignment: Qt.AlignVCenter
@@ -869,8 +1011,9 @@ Panel {
     }
 
     PanelToolTip {
-      visible: nodeMouse.containsMouse && nodeRow.node !== null && nodeRow.node.address !== ""
-      text: nodeRow.node ? nodeRow.node.address + " · " + nodeRow.node.net + " — left click to connect, right click to test" : ""
+      visible: nodeMouse.containsMouse && nodeRow.node !== null
+      text: (nodeRow.node && nodeRow.node.key !== "auto" && nodeRow.node.address ? nodeRow.node.address + " · " : "")
+            + (nodeRow.isConnected ? "Connected · right-click to test latency" : "Click to connect · right-click to test latency")
       fontFamily: root.fontFamily
     }
   }

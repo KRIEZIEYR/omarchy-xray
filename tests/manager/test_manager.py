@@ -8,6 +8,8 @@ suite proves the core accepts what the parsers produce. Geo presets are
 exercised when geoip.dat/geosite.dat sit next to that binary.
 """
 import base64
+import contextlib
+import io
 import importlib.machinery
 import importlib.util
 import json
@@ -570,6 +572,33 @@ class TunInstall(Base):
         finally:
             os.chmod(rules, 0o755)
             M.SYS_UNIT, M.POLKIT_RULE = saved
+
+
+class LatencyTest(Base):
+    def test_stop_keeps_finished_results(self):
+        ns = [self.node(k) for k in LINKS][:3]
+        M.CFG.mkdir(parents=True, exist_ok=True)
+        M.STATE.write_text(json.dumps(self.state(ns)))
+        calls = []
+
+        def fake_probe(batch, iface, rundir):
+            calls.append(batch)
+            if len(calls) == 2:
+                M._on_term(15, None)             # Stop pressed while batch 2 runs
+            return ["%dms" % (100 + len(calls))] * len(batch)
+
+        saved = M._probe_batch, M.TEST_BATCH, M.CURL, M.tun_active
+        M._probe_batch, M.TEST_BATCH, M.CURL, M.tun_active = fake_probe, 1, "/bin/sh", lambda: False
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                M.cmd_test([])
+        finally:
+            M._probe_batch, M.TEST_BATCH, M.CURL, M.tun_active = saved
+            M._STOP.clear()
+        self.assertEqual(len(calls), 2)                              # batch 3 never started
+        self.assertEqual(json.loads(M.LAT.read_text()), {ns[0]["id"]: "101ms"})
+        self.assertTrue(json.loads(buf.getvalue())["stopped"])
 
 
 class StatusShape(Base):

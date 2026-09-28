@@ -12,6 +12,9 @@ Item {
   property real iconSize: Style.font.icon
   property color color: Color.foreground
   property bool warning: false
+  // Connected state by shape, not hue: a solid shield with the V cut out
+  // stays distinct in monochrome themes where "on" and "off" share a grey.
+  property bool filled: false
   property color badgeColor: Color.urgent
 
   width: iconSize
@@ -45,6 +48,11 @@ Item {
       ctx.quadraticCurveTo(0.16 * w, 0.72 * h, 0.16 * w, 0.46 * h)
       ctx.closePath()
       ctx.stroke()
+      if (root.filled) {
+        ctx.fillStyle = root.color
+        ctx.fill()
+        ctx.globalCompositeOperation = "destination-out"
+      }
 
       // The V
       ctx.beginPath()
@@ -52,6 +60,7 @@ Item {
       ctx.lineTo(0.5 * w, 0.64 * h)
       ctx.lineTo(0.65 * w, 0.34 * h)
       ctx.stroke()
+      ctx.globalCompositeOperation = "source-over"
     }
 
     onWidthChanged: canvas.requestPaint()
@@ -61,6 +70,7 @@ Item {
   Connections {
     target: root
     function onColorChanged() { canvas.requestPaint() }
+    function onFilledChanged() { canvas.requestPaint() }
   }
 
   BorderSurface {

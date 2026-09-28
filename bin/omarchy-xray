@@ -1868,9 +1868,14 @@ def _kill_all():
                 pass
 
 
+_STOP = []
+
+
 def _on_term(signum, frame):
+    # Stop (widget SIGTERM / Ctrl-C): kill the probes, drop the in-flight
+    # batch, keep and save what already finished.
+    _STOP.append(signum)
     _kill_all()
-    sys.exit(128 + signum)
 
 
 def _free_ports(n):
@@ -1983,12 +1988,14 @@ def cmd_test(keys):
     signal.signal(signal.SIGINT, _on_term)
     try:
         queue = [nodes[i:i + TEST_BATCH] for i in range(0, len(nodes), TEST_BATCH)]
-        while queue:
+        while queue and not _STOP:
             if time.time() > deadline:
                 print("warn: test deadline reached — rest skipped", file=sys.stderr)
                 break
             batch = queue.pop(0)
             res = _probe_batch(batch, iface, rundir)
+            if _STOP:
+                break
             if res is None:
                 if len(batch) > 1:                 # isolate the node xray refused
                     queue = [[n] for n in batch] + queue
@@ -2003,7 +2010,7 @@ def cmd_test(keys):
         _kill_all()
     _cfg_dir()
     atomic_write(LAT, json.dumps({k: str(v)[:32] for k, v in lat.items()}), 0o600)
-    out({"ok": True, "latency": lat})
+    out({"ok": True, "latency": lat, "stopped": bool(_STOP)})
 
 
 # --- stats / status ----------------------------------------------------------
@@ -2405,14 +2412,16 @@ def cmd_tun_setup():
         die("xray %s is too old for TUN mode (needs >= %s) — update xray first"
             % (ver_str(cv), ver_str(MIN_TUN_CORE)))
     rc, so, se = _escalate("tun-install")
+    if rc == 126:
+        die("TUN setup cancelled: nothing was changed")
     if rc != 0:
-        reason = {126: "authorization dismissed", 127: "not authorized / no polkit agent"}.get(rc, "")
+        reason = {127: "not authorized, or no password prompt available"}.get(rc, "")
         msg = ""
         try:
             msg = json.loads(so.strip().splitlines()[-1]).get("error", "")
         except Exception:
             msg = _last_lines(se, n=2)
-        die("TUN setup failed (%s) — run manually: sudo %s tun-install"
+        die("TUN setup failed (%s). Run it in a terminal instead: sudo %s tun-install"
             % (msg or reason or "exit %d" % rc, SELF))
     write_user_units()
     out({"ok": True, "tunInstalled": tun_installed()})

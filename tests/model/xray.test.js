@@ -107,6 +107,23 @@ module.exports = function ({ Xray, assert, eq }) {
   eq('hero unreachable', Xray.heroLine({ unreachable: true }), 'Xray manager unreachable')
   eq('hero checking', Xray.heroLine({}), 'Checking…')
 
+  /* ---- heroTitle / heroState: the node leads, the state is a short caption ---- */
+  {
+    const t = Xray.groupsFromStatus(status, 1000, NOW)
+    eq('title connected', Xray.heroTitle({ touch: t }), 'US LA')
+    eq('state proxy', Xray.heroState({ touch: t }), 'Connected · proxy')
+    eq('state tun', Xray.heroState({ touch: t, mode: 'tun' }), 'Connected · TUN')
+    const ta = Xray.groupsFromStatus(Object.assign({}, status, { connectedKey: 'auto' }), 1000, NOW)
+    eq('title auto pick', Xray.heroTitle({ touch: ta, autoPick: 'DE' }), 'Auto → DE')
+    eq('title auto', Xray.heroTitle({ touch: ta }), 'Auto — best ping')
+    const off = Xray.groupsFromStatus(Object.assign({}, status, { running: false }), 1000, NOW)
+    eq('title off', Xray.heroTitle({ touch: off }), 'Xray')
+    eq('state off', Xray.heroState({ touch: off }), 'Disconnected')
+  }
+  eq('state unreachable', Xray.heroState({ unreachable: true }), 'Manager unreachable')
+  eq('state checking', Xray.heroState({}), 'Checking…')
+  eq('title checking', Xray.heroTitle({}), 'Xray')
+
   /* ---- formatSpeed / formatBytes ---- */
   eq('speed zero', Xray.formatSpeed(0), '0 B/s')
   eq('speed bytes', Xray.formatSpeed(1023), '1023 B/s')

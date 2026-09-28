@@ -19,7 +19,9 @@ Item {
   // --- observable state ---------------------------------------------------
   property bool reachable: false        // manager answered
   property bool installed: true         // manager found
-  property string lastError: ""
+  property string lastError: ""         // last failed user action; sticky until the next one
+  property string serviceError: ""      // from status: manager/core/unit health
+  readonly property string errorText: lastError !== "" ? lastError : serviceError
   property string actionStatus: ""
   property var touch: null              // {running, groups, nodes, connectedKeys}
   property var traffic: null            // {upTotal, downTotal, upSpeed, downSpeed, autoPick}
@@ -40,6 +42,8 @@ Item {
   property string metricsUrl: "http://127.0.0.1:15491/debug/vars"
   property string _statusRaw: ""
   property real _lastAutoUpdate: 0
+  property string _busyText: ""
+  property real longStartedMs: 0         // a flash over a long job falls back to this
 
   readonly property int connectedCount: touch !== null ? Object.keys(touch.connectedKeys || {}).length : 0
   readonly property bool connected: connectedCount > 0
@@ -54,12 +58,15 @@ Item {
     return ""
   }
 
-  readonly property string heroSummary: Model.heroLine({
+  readonly property var _heroInput: ({
     unreachable: !reachable,
     touch: touch,
     mode: mode,
     autoPick: autoPickName
   })
+  readonly property string heroSummary: Model.heroLine(_heroInput)
+  readonly property string heroTitle: Model.heroTitle(_heroInput)
+  readonly property string heroState: Model.heroState(_heroInput)
 
   readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 20, 10, 600)
   readonly property string barLabel: strSetting("barLabel", "speed")
@@ -96,6 +103,11 @@ Item {
   }
 
   readonly property bool busy: _action.running || _long.running
+  readonly property bool testing: _long.running && _long._label === "latency test"
+  // The connect toggle only waits for short commands: a latency test (up to
+  // 11 min) must not swallow disconnect. Other long jobs rewrite state and
+  // would race a node switch, so they still hold it.
+  readonly property bool toggleBusy: _action.running || (_long.running && !testing)
 
   // --- plumbing -----------------------------------------------------------
 
@@ -154,6 +166,7 @@ Item {
     var env = {}
     for (var k in baseEnv) env[k] = null
     if (extraEnv) for (var x in extraEnv) env[x] = extraEnv[x]
+    if (slot === _action || slot === _long) lastError = ""
     slot._done = done
     slot.environment = env
     slot.command = bounded
@@ -197,7 +210,9 @@ Item {
     try { slot.signal(9) } catch (e) {}
     slot.running = false
     try { slot.environment = ({}) } catch (e2) {}
-    lastError = scrub(String(slot._label || "omarchy-xray") + " timed out — killed")
+    var msg = scrub(opName(slot._label) + " took too long and was stopped. Try again")
+    if (slot === _action || slot === _long) lastError = msg
+    else serviceError = msg
     actionStatus = ""
     refresh()
   }
@@ -205,7 +220,7 @@ Item {
   function managerFail(message) {
     reachable = false
     installed = false
-    lastError = message !== "" ? message : "Xray manager not found — reinstall the widget (./install.sh)"
+    serviceError = message !== "" ? message : "Xray manager not found — reinstall the widget (./install.sh)"
   }
 
   function flash(text) {
@@ -213,7 +228,20 @@ Item {
     actionStatusTimer.restart()
   }
 
-  function busyRefused() { flash("Previous command still running…") }
+  // What a running command is doing, for "wait" and "took too long" copy.
+  function opName(label) {
+    var names = { "select": "Switching nodes", "start": "Connecting", "disconnect": "Disconnecting",
+                  "latency test": "The latency test", "update": "The subscription update",
+                  "import": "Adding the subscription", "remove": "Removing the subscription",
+                  "mode switch": "Switching mode", "TUN setup": "TUN setup", "routing": "Applying routing",
+                  "adblock": "Applying ad blocking", "status": "Reading status", "stats": "Reading traffic" }
+    return names[label] || "The last command"
+  }
+
+  function busyRefused() {
+    var slot = _long.running ? _long : _action
+    flash(opName(slot._label) + " is still running. Try again in a moment")
+  }
 
   // --- status -------------------------------------------------------------
 
@@ -236,7 +264,7 @@ Item {
 
   function applyStatus(resp) {
     if (!resp.ok || !resp.data || !resp.data.nodes) {
-      if (resp.message !== "") lastError = scrub(resp.message)
+      if (resp.message !== "") serviceError = scrub(resp.message)
       return
     }
     var d = resp.data
@@ -251,7 +279,7 @@ Item {
     skippedText = Model.skippedLabel(d.skipped)
     autoMembers = d.autoMembers || []
     if (d.metricsUrl && /^http:\/\/127\.0\.0\.1:\d+\/debug\/vars$/.test(d.metricsUrl)) metricsUrl = d.metricsUrl
-    lastError = d.lastError ? "Service failed: " + scrub(d.lastError) : (d.xray === false ? "xray core not found — install it (omarchy pkg aur add xray)" : "")
+    serviceError = d.lastError ? "Xray stopped with an error: " + scrub(d.lastError) : (d.xray === false ? "xray core not found — install it (omarchy pkg aur add xray)" : "")
     var rawSubs = d.subs || []
     subs = rawSubs.slice ? rawSubs.slice(0, 64) : []
     // Rebuild the node model only when something changed: reassigning `touch`
@@ -261,7 +289,7 @@ Item {
       _statusRaw = raw
       touch = Model.groupsFromStatus(d, maxNodes, Math.floor(Date.now() / 1000))
     }
-    if (d.updateDue === true && !busy && Date.now() - _lastAutoUpdate > 600000) {
+    if (d.updateDue === true && !busy && !panelOpen && Date.now() - _lastAutoUpdate > 600000) {
       _lastAutoUpdate = Date.now()
       updateSubscriptions()
     }
@@ -274,7 +302,7 @@ Item {
     if (String(node.key).length > 64) { lastError = "Bad node key — refused"; return }
     if (!run(_action, [manager, "select", node.key], function(resp) {
       _actionDeadline.stop()
-      if (!resp.ok) { lastError = "Select failed: " + (resp.message || "?"); refresh(); return }
+      if (!resp.ok) { lastError = "Couldn't switch to " + scrub(node.name) + ": " + (resp.message || "no details"); refresh(); return }
       flash("Switched to " + scrub(node.name))
       persistLastNode(node.key)
       if (!coreRunning) cmdOn()
@@ -287,7 +315,7 @@ Item {
     if (!run(_action, [manager, "off"], function(resp) {
       _actionDeadline.stop()
       if (resp.ok) flash("Disconnected")
-      else lastError = "Disconnect failed: " + (resp.message || "?")
+      else lastError = "Couldn't disconnect: " + (resp.message || "no details")
       traffic = null
       refresh()
     })) { busyRefused(); return }
@@ -297,7 +325,7 @@ Item {
   function cmdOn() {
     if (!run(_action, [manager, "on"], function(resp) {
       _actionDeadline.stop()
-      if (!resp.ok) lastError = "Start failed: " + (resp.message || "?")
+      if (!resp.ok) lastError = "Couldn't connect: " + (resp.message || "no details")
       else flash(mode === "tun" ? "Connected (TUN)" : "Connected")
       refresh()
     })) { busyRefused(); return }
@@ -307,7 +335,7 @@ Item {
   function toggleConnection(lastKey) {
     if (connected) { disconnect(); return }
     var target = Model.pickConnectTarget(touch || {}, lastKey)
-    if (target === null) { lastError = "No nodes yet — add a subscription URL in the panel"; return }
+    if (target === null) { lastError = "No nodes yet. Add a subscription URL in the panel first"; return }
     connectNode(target)
   }
 
@@ -319,55 +347,90 @@ Item {
     if (!installed && label !== "import") return
     if (!run(_long, args, function(resp) {
       _longDeadline.stop()
-      if (resp.ok) flash(okText)
-      else { actionStatus = ""; lastError = label.charAt(0).toUpperCase() + label.substring(1) + " failed: " + (resp.message || "?") }
+      var what = label.charAt(0).toUpperCase() + label.substring(1)
+      var msg = resp.message || "no details"
+      if (resp.ok) flash(typeof okText === "function" ? okText(resp.data || {}) : okText)
+      else { actionStatus = ""; lastError = msg.indexOf(what) === 0 ? msg : what + " failed: " + msg }
       if (after) after(resp)
       refresh()
     }, extraEnv)) { busyRefused(); return }
+    actionStatusTimer.stop()
+    longStartedMs = Date.now()
+    _busyText = busyText
     actionStatus = busyText
     armDeadline(_long, _longDeadline, deadlineMs, label)
   }
 
+  // Tests what the list shows: one row, the filtered subset, or everything
+  // (Auto or an unfiltered list). A second call while testing stops it.
   function testNodes(nodes) {
+    if (testing) { stopTest(); return }
     var list = nodes || []
-    var args = [manager, "test"]
-    if (list.length === 1 && list[0].key && list[0].key !== "auto") args.push(list[0].key)
-    runLong(args, "latency test", 660000, "Latency test done",
-            args.length > 2 ? "Testing " + scrub(list[0].name) + "…" : "Testing nodes (batched, 10 min cap)…")
+    var keys = [], total = 0, first = ""
+    for (var i = 0; i < list.length && keys.length < 200; i++) {
+      if (!list[i].key || list[i].key === "auto") continue
+      if (first === "") first = list[i].name
+      keys.push(String(list[i].key))
+    }
+    var all = touch ? touch.nodes : []
+    for (var j = 0; j < all.length; j++) if (all[j].key !== "auto") total++
+    var subset = keys.length > 0 && keys.length < total
+    var label = !subset ? "Testing nodes (batched, 10 min cap)…"
+              : keys.length === 1 ? "Testing " + scrub(first) + "…"
+              : "Testing " + keys.length + " nodes…"
+    runLong([manager, "test"].concat(subset ? keys : []), "latency test", 660000,
+            function(d) { return "Latency test done: " + Object.keys(d.latency || {}).length + " nodes" },
+            label, undefined, function(resp) {
+      if (resp.ok && resp.data && resp.data.stopped === true) flash("Latency test stopped — partial results kept")
+    })
+  }
+
+  function stopTest() {
+    if (!testing) return
+    actionStatus = "Stopping test…"
+    try { _long.signal(15) } catch (e) {}
   }
 
   function testNode(node) { if (node) testNodes([node]) }
 
   function updateSubscriptions() {
-    runLong([manager, "update"], "update", 240000, "Subscriptions updated", "Updating subscriptions…")
+    runLong([manager, "update"], "update", 240000,
+            function(d) { return "Subscriptions updated: " + (d.nodes || 0) + " nodes" }, "Updating subscriptions…")
   }
 
   function updateSub(index) {
     var i = parseInt(index, 10)
     if (!isFinite(i) || i < 0 || i > 63) return
-    runLong([manager, "update", String(i)], "update", 180000, "Subscription updated", "Updating subscription…")
+    runLong([manager, "update", String(i)], "update", 180000,
+            function(d) { return "Subscription updated: " + (d.nodes || 0) + " nodes in total" }, "Updating subscription…")
   }
 
-  function importUrl(url) {
+  function importUrl(url, onDone) {
     // The URL is a secret: bounded, https-only, passed via the environment
     // (never argv — argv is world-visible via ps).
     var u = String(url || "").trim()
     if (u === "") return
-    if (u.length > maxInput) { lastError = "URL too long — refused"; return }
-    if (!/^https:\/\//i.test(u)) { lastError = "Subscription URL must be https://…"; return }
-    runLong([manager, "import", "-"], "import", 240000, "Imported", "Importing…", { OMARCHY_XRAY_SUB_URL: u })
+    if (u.length > maxInput) { lastError = "That URL is too long (over " + maxInput + " characters)"; return }
+    if (!/^https:\/\//i.test(u)) { lastError = "Subscription URL must start with https://"; return }
+    runLong([manager, "import", "-"], "import", 240000,
+            function(d) { return "Subscription added: " + (d.nodes || 0) + " nodes available" },
+            "Downloading the subscription…", { OMARCHY_XRAY_SUB_URL: u },
+            function(resp) { if (onDone) onDone(resp.ok) })
   }
 
   function subRemove(index) {
     var i = parseInt(index, 10)
     if (!isFinite(i) || i < 0 || i > 63) return
-    runLong([manager, "subremove", String(i)], "remove", 120000, "Subscription removed", "Removing…")
+    runLong([manager, "subremove", String(i)], "remove", 120000, "Subscription removed", "Removing the subscription…")
   }
 
   function setMode(newMode) {
     if (newMode !== "proxy" && newMode !== "tun") { lastError = "Bad mode — refused"; return }
     if (newMode === "tun" && !tunInstalled) { tunSetup(true); return }
-    runLong([manager, "mode", newMode], "mode switch", 180000, "Mode: " + newMode,
+    runLong([manager, "mode", newMode], "mode switch", 180000, function(d) {
+              var name = newMode === "tun" ? "TUN" : "proxy"
+              return d.running ? "Switched to " + name + " mode" : name.charAt(0).toUpperCase() + name.substring(1) + " mode set. Connect to start"
+            },
             newMode === "tun" ? "Switching to TUN…" : "Switching to proxy…")
   }
 
@@ -375,7 +438,7 @@ Item {
   // TUN unit starts/stops without further prompts.
   function tunSetup(thenSwitch) {
     runLong([manager, "tun-setup"], "TUN setup", 330000, "TUN mode ready",
-            "TUN setup — confirm the polkit prompt…", undefined, function(resp) {
+            "Setting up TUN: enter your password in the system prompt…", undefined, function(resp) {
       if (resp.ok) {
         tunInstalled = true
         if (thenSwitch) Qt.callLater(function() { setMode("tun") })
@@ -386,32 +449,51 @@ Item {
   function setRouting(preset) {
     if (preset !== "global" && !/^[a-z]{2}-direct$/.test(preset)) return
     runLong([manager, "routing", preset], "routing", 120000,
-            preset === "global" ? "Routing: global" : "Direct: " + preset.substring(0, 2).toUpperCase(),
+            preset === "global" ? "Everything goes through the VPN" : regionName(preset) + " sites now bypass the VPN",
             "Applying routing…")
+  }
+
+  function regionName(preset) {
+    for (var i = 0; i < regions.length; i++)
+      if (preset === regions[i].code + "-direct") return regions[i].name
+    return preset.substring(0, 2).toUpperCase()
   }
 
   function setAdblock(on) {
     runLong([manager, "adblock", on ? "on" : "off"], "adblock", 120000,
-            on ? "Ad blocking on" : "Ad blocking off", "Applying…")
+            on ? "Ad blocking on" : "Ad blocking off", on ? "Turning ad blocking on…" : "Turning ad blocking off…")
   }
 
   function openWebUi() {
     Quickshell.execDetached(["xdg-open", Quickshell.env("HOME") + "/.config/omarchy-xray"])
   }
 
-  // Traffic straight from xray's loopback metrics — no python, no extra xray
-  // process per poll; speeds are derived here from consecutive samples.
+  // Traffic straight from xray's loopback metrics, fetched by the QML engine
+  // itself (a curl process every 2 s added up to 30 spawns a minute while
+  // connected); speeds are derived here from consecutive samples.
+  property var _statsXhr: null
+
   function pollStats() {
-    if (!installed || _stats.running || !coreRunning) {
+    if (!installed || !coreRunning) {
       if (!coreRunning) traffic = null
       return
     }
-    run(_stats, ["/usr/bin/curl", "-s", "--max-time", "2", "--noproxy", "*", metricsUrl], function(resp) {
+    if (_statsXhr !== null) return
+    var xhr = new XMLHttpRequest()
+    _statsXhr = xhr
+    xhr.onreadystatechange = function() {
+      if (xhr.readyState !== XMLHttpRequest.DONE || _statsXhr !== xhr) return
+      _statsXhr = null
       _statsDeadline.stop()
-      var next = resp.data ? Model.parseMetrics(resp.data, traffic, Date.now()) : null
-      traffic = next
-    })
-    armDeadline(_stats, _statsDeadline, 10000, "stats")
+      var data = null
+      if (xhr.status === 200 && xhr.responseText.length <= outCap) {
+        try { data = JSON.parse(xhr.responseText) } catch (e) {}
+      }
+      traffic = data ? Model.parseMetrics(data, traffic, Date.now()) : null
+    }
+    xhr.open("GET", metricsUrl)
+    xhr.send()
+    _statsDeadline.restart()
   }
 
   function persistLastNode(key) {
@@ -449,7 +531,7 @@ Item {
     id: actionStatusTimer
     interval: 2400
     repeat: false
-    onTriggered: root.actionStatus = ""
+    onTriggered: root.actionStatus = _long.running ? root._busyText : ""
   }
 
   Timer {
@@ -470,7 +552,7 @@ Item {
     id: _statsDeadline
     interval: 10000
     repeat: false
-    onTriggered: root.onDeadline(_stats, _statsDeadline)
+    onTriggered: if (root._statsXhr !== null) { root._statsXhr.abort(); root._statsXhr = null }
   }
 
   Timer {
@@ -505,23 +587,6 @@ Item {
     stderr: StdioCollector { id: statusStderr; waitForEnd: true }
     onExited: function(exitCode) {
       root.finish(_status, String(statusStdout.text || ""), String(statusStderr.text || ""), exitCode)
-    }
-  }
-
-  Process {
-    id: _stats
-    property var _done: null
-    property string _label: ""
-    clearEnvironment: true
-    running: false
-    command: []
-    stdout: StdioCollector { id: statsStdout; waitForEnd: true }
-    stderr: StdioCollector { waitForEnd: true }
-    onExited: function(exitCode) {
-      var done = _stats._done
-      _stats._done = null
-      var data = exitCode === 0 ? root.extractJson(String(statsStdout.text || "")) : null
-      if (done) done({ ok: data !== null, data: data, message: "" })
     }
   }
 
