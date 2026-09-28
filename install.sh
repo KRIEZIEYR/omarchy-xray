@@ -174,6 +174,7 @@ PYPROBE
 fi
 
 # --- copy plugin --------------------------------------------------------------
+UPGRADE=0; [[ -d "$DEST" ]] && UPGRADE=1
 mkdir -p "$(dirname "$DEST")"
 if command -v rsync >/dev/null 2>&1; then
   mkdir -p "$DEST"
@@ -187,13 +188,21 @@ say "Plugin copied to $DEST"
 omarchy plugin validate "$DEST" || die "plugin validation failed"
 say "Manifest validated"
 
-if pgrep -x omarchy-shell >/dev/null 2>&1; then
+if omarchy-shell shell ping >/dev/null 2>&1; then
   say "Rescanning plugins in the running shell"
   omarchy-shell shell rescanPlugins || warn "live rescan failed; restart the shell once"
 fi
 
 omarchy plugin enable "$PLUGIN_ID" right || die "failed to enable ${PLUGIN_ID}"
 say "Widget enabled in the right bar section"
+
+# A live rescan keeps serving the QML the shell already loaded for this plugin
+# (the old widget then ignores the new manager's status: endless "Loading…"),
+# so an upgrade only takes effect after a full shell restart.
+if [[ $UPGRADE -eq 1 ]] && omarchy-shell shell ping >/dev/null 2>&1; then
+  say "Restarting the shell to load the new widget code"
+  omarchy-restart-shell >/dev/null || warn "shell restart failed — run: omarchy restart shell"
+fi
 
 # --- retire the pre-rename plugin ids (krieziey.xray, krieziey.v2raya) --------
 for OLD_ID in krieziey.xray krieziey.v2raya; do

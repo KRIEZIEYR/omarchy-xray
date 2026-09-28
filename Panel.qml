@@ -17,6 +17,7 @@ Panel {
   property bool cursorActive: false
   property int nodeIndex: 0
   property string filterQuery: ""
+  property bool regionsOpen: false
   readonly property string lastNodeKey: settings ? String(settings.lastNodeKey || "") : ""
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
@@ -114,6 +115,7 @@ Panel {
 
   onOpenedChanged: if (opened) {
     cursorActive = false
+    regionsOpen = false
     if (panelFlick) panelFlick.contentY = 0
     xray.panelOpen = true
     xray.refresh()
@@ -356,11 +358,12 @@ Panel {
             }
             ChoiceButton {
               Layout.fillWidth: true
-              label: "RU DIRECT"
-              current: xray.routing === "ru-direct"
-              tooltip: xray.geo ? "Russian sites and IPs (geosite/geoip) go direct"
-                                : ".ru/.su/.рф go direct (install xray geo data for full lists)"
-              onClicked: if (!current) xray.setRouting("ru-direct")
+              label: (xray.region ? "DIRECT " + xray.region.flag + " " + xray.region.code.toUpperCase() : "DIRECT")
+                     + (root.regionsOpen ? " ▲" : " ▼")
+              current: xray.region !== null
+              enabled: xray.regions.length > 0
+              tooltip: "Pick a country: its sites and IPs go direct, the rest through the proxy"
+              onClicked: root.regionsOpen = !root.regionsOpen
             }
             ChoiceButton {
               Layout.fillWidth: true
@@ -369,6 +372,29 @@ Panel {
               enabled: xray.geo || xray.adblock
               tooltip: xray.geo ? "Block geosite:category-ads-all" : "Needs xray geo data (geosite.dat)"
               onClicked: xray.setAdblock(!xray.adblock)
+            }
+          }
+
+          GridLayout {
+            visible: xray.reachable && root.regionsOpen
+            width: parent.width
+            columns: 7
+            columnSpacing: Style.space(4)
+            rowSpacing: Style.space(4)
+
+            Repeater {
+              model: xray.regions
+              delegate: ChoiceButton {
+                required property var modelData
+                Layout.fillWidth: true
+                label: modelData.flag + " " + modelData.code.toUpperCase()
+                current: xray.routing === modelData.code + "-direct"
+                tooltip: modelData.name + (xray.geo ? "" : " — domains only (install xray geo data for IPs)")
+                onClicked: {
+                  root.regionsOpen = false
+                  if (!current) xray.setRouting(modelData.code + "-direct")
+                }
+              }
             }
           }
 

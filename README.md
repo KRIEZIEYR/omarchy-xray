@@ -24,7 +24,7 @@ commands and reads JSON back.
 - **every transport the current Xray core supports** (see the table below)
 - **Auto** node: Xray's observatory + `leastPing` balancer picks the best live node
 - **proxy mode** (no privileges) and **TUN mode** (whole system, one-time setup)
-- routing presets: **Global** / **RU direct**, optional **Adblock**
+- routing presets: **Global** / **Direct** for one region (RU, BY, KZ, UZ, TM, CN, IR, TR, AE, SA, EG, PK, VN, MM), optional **Adblock**
 - `custom.json` for anything else the core can do (rules, DNS, mux, fragment…)
 - subscription info: traffic used/total and expiry (`subscription-userinfo`),
   `profile-title`, automatic refresh (`profile-update-interval`, default 24 h)
@@ -105,7 +105,7 @@ omarchy-xray status                 # JSON state (what the widget reads; URLs re
 omarchy-xray select Finland         # switch by name substring, key (k…), n<index> or "auto"
 omarchy-xray on | off | restart
 omarchy-xray mode proxy|tun
-omarchy-xray routing global|ru-direct
+omarchy-xray routing global|<region>-direct   # e.g. kz-direct
 omarchy-xray adblock on|off
 omarchy-xray update [index]         # refresh all subscriptions or one
 omarchy-xray test [key…]            # latency (first 200 nodes or the given keys, 10 min cap)
@@ -177,8 +177,11 @@ curl -s https://ifconfig.me        # the server's IP
 ## Routing presets and Auto
 
 - **Global** — everything except private networks through the proxy.
-- **RU direct** — `.ru`, `.su`, `.рф` (and `geosite:category-ru` +
-  `geoip:ru` when geo data is installed) go direct.
+- **Direct: region** — pick one country with heavy censorship (panel: `DIRECT ▾`):
+  its ccTLDs and `geoip:<code>` go direct, plus a geosite list where one exists
+  (RU: `.ru/.su/.рф` + `geosite:category-ru`, CN: `geosite:cn`, IR:
+  `geosite:category-ir`). Regions: RU BY KZ UZ TM CN IR TR AE SA EG PK VN MM.
+  Without geo data only the ccTLDs apply.
 - **Adblock** — `geosite:category-ads-all` → blackhole (needs geo data).
 - **Auto** (first row in the node list) — up to 32 nodes (best tested latency
   first) behind a `leastPing` balancer fed by Xray's observatory
@@ -266,7 +269,7 @@ Run `omarchy-xray restart` after editing.
 | `importUrl <url>` | Add a subscription (https-only) and fetch |
 | `subRemove <index>` | Remove a subscription |
 | `mode <proxy\|tun>` | Switch mode (TUN runs the one-time setup first if needed) |
-| `routing <global\|ru-direct>` | Routing preset |
+| `routing <global\|<region>-direct>` | Routing preset (`ru-direct`, `kz-direct`, …) |
 | `adblock <on\|off>` | Ad blocking |
 | `tunSetup` | Run the one-time TUN setup |
 | `webui` | Open the omarchy-xray config folder |
@@ -295,7 +298,7 @@ OMARCHY_XRAY_TEST_BIN=/path/to/xray python3 -m unittest discover -s tests/manage
                                                     # …plus `xray run -test` on every generated config
 python3 -m py_compile bin/omarchy-xray
 omarchy plugin validate .
-./install.sh --no-deps --yes   # re-copy; the shell hot-reloads plugin code
+./install.sh --no-deps --yes   # re-copy; restarts the shell (live rescan keeps old QML)
 ```
 
 Manager internals: state in `~/.config/omarchy-xray/state.json` (subscriptions

@@ -25,6 +25,12 @@ Item {
   property var traffic: null            // {upTotal, downTotal, upSpeed, downSpeed, autoPick}
   property string mode: "proxy"
   property string routing: "global"
+  property var regions: []              // [{code, name, flag}] from the manager
+  readonly property var region: {
+    for (var i = 0; i < regions.length; i++)
+      if (routing === regions[i].code + "-direct") return regions[i]
+    return null
+  }
   property bool adblock: false
   property bool geo: false
   property bool tunInstalled: false
@@ -211,14 +217,21 @@ Item {
 
   // --- status -------------------------------------------------------------
 
+  // Status polls get their own slot: sharing _action made `busy` blink every
+  // poll and dropped clicks that landed on one. A refresh asked for mid-poll
+  // runs right after it, so the UI never settles on pre-action state.
+  property bool _refreshAgain: false
+
   function refresh() {
-    if (!run(_action, [manager, "status"], applyStatusAndStop)) return
-    armDeadline(_action, _actionDeadline, 30000, "status")
+    if (_status.running) { _refreshAgain = true; return }
+    if (!run(_status, [manager, "status"], applyStatusAndStop)) return
+    armDeadline(_status, _statusDeadline, 30000, "status")
   }
 
   function applyStatusAndStop(resp) {
-    _actionDeadline.stop()
+    _statusDeadline.stop()
     applyStatus(resp)
+    if (_refreshAgain) { _refreshAgain = false; refresh() }
   }
 
   function applyStatus(resp) {
@@ -231,6 +244,7 @@ Item {
     installed = true
     mode = String(d.mode || "proxy")
     routing = String(d.routing || "global")
+    if (regions.length === 0 && d.regions && d.regions.slice) regions = d.regions.slice(0, 32)   // static list
     adblock = d.adblock === true
     geo = d.geo === true
     tunInstalled = d.tunInstalled === true
@@ -370,8 +384,10 @@ Item {
   }
 
   function setRouting(preset) {
-    if (preset !== "global" && preset !== "ru-direct") return
-    runLong([manager, "routing", preset], "routing", 120000, "Routing: " + preset, "Applying routing…")
+    if (preset !== "global" && !/^[a-z]{2}-direct$/.test(preset)) return
+    runLong([manager, "routing", preset], "routing", 120000,
+            preset === "global" ? "Routing: global" : "Direct: " + preset.substring(0, 2).toUpperCase(),
+            "Applying routing…")
   }
 
   function setAdblock(on) {
@@ -444,6 +460,13 @@ Item {
   }
 
   Timer {
+    id: _statusDeadline
+    interval: 30000
+    repeat: false
+    onTriggered: root.onDeadline(_status, _statusDeadline)
+  }
+
+  Timer {
     id: _statsDeadline
     interval: 10000
     repeat: false
@@ -468,6 +491,20 @@ Item {
     stderr: StdioCollector { id: actionStderr; waitForEnd: true }
     onExited: function(exitCode) {
       root.finish(_action, String(actionStdout.text || ""), String(actionStderr.text || ""), exitCode)
+    }
+  }
+
+  Process {
+    id: _status
+    property var _done: null
+    property string _label: ""
+    clearEnvironment: true
+    running: false
+    command: []
+    stdout: StdioCollector { id: statusStdout; waitForEnd: true }
+    stderr: StdioCollector { id: statusStderr; waitForEnd: true }
+    onExited: function(exitCode) {
+      root.finish(_status, String(statusStdout.text || ""), String(statusStderr.text || ""), exitCode)
     }
   }
 

@@ -443,15 +443,32 @@ class ConfigBuilding(Base):
 
     def test_routing_presets(self):
         ns = self.nodes()
-        st = self.state(ns, routing="ru-direct", adblock=True)
-        conf = M.build_config(st)
-        flat = json.dumps(conf["routing"]["rules"])
-        self.assertIn("domain:ru", flat)
-        if M.asset_dir():
-            self.assertIn("geosite:category-ads-all", flat)
-            self.assertIn("geoip:ru", flat)
-            self.assertEqual(conf["routing"]["domainStrategy"], "IPIfNonMatch")
-        self.assertCoreAccepts(conf)
+        for cc, (_, tlds, site) in M.REGIONS.items():
+            conf = M.build_config(self.state(ns, routing=cc + "-direct", adblock=True))
+            flat = json.dumps(conf["routing"]["rules"])
+            for t in tlds:
+                self.assertIn("domain:" + t, flat)
+            if M.asset_dir():
+                self.assertIn("geosite:category-ads-all", flat)
+                self.assertIn("geoip:" + cc, flat)
+                if site:
+                    self.assertIn("geosite:" + site, flat)
+                self.assertEqual(conf["routing"]["domainStrategy"], "IPIfNonMatch")
+            self.assertCoreAccepts(conf)
+        conf = M.build_config(self.state(ns, routing="global"))
+        self.assertNotIn("geoip:ru", json.dumps(conf["routing"]["rules"]))
+
+    def test_region_validation(self):
+        self.assertEqual(M.region_of("kz-direct"), "kz")
+        for bad in ("global", "xx-direct", "de-direct", "ru", "RU-direct", "", None):
+            self.assertIsNone(M.region_of(bad), bad)
+        with self.assertRaises(SystemExit):
+            M.cmd_routing("xx-direct")
+        M.CFG.mkdir(parents=True, exist_ok=True)
+        for routing, want in (("kz-direct", "kz-direct"), ("ru-direct", "ru-direct"),
+                              ("xx-direct", "global")):
+            M.STATE.write_text(json.dumps(self.state(self.nodes(), routing=routing)))
+            self.assertEqual(M.load_state()["routing"], want)
 
     def test_custom_json(self):
         ns = self.nodes()
@@ -536,6 +553,23 @@ class TunInstall(Base):
         if os.geteuid() == 0:
             os.chown(p, 1000, 1000)
         self.assertFalse(M._root_owned_ok(str(p)))
+
+    def test_installed_with_unreadable_polkit_dir(self):
+        # /etc/polkit-1/rules.d is root:polkitd 0750: users cannot stat the rule
+        if os.geteuid() == 0:
+            self.skipTest("running as root")
+        saved = M.SYS_UNIT, M.POLKIT_RULE
+        rules = self.tmp / "rules.d"
+        rules.mkdir()
+        (rules / "49-omarchy-xray.rules").write_text("//\n")
+        os.chmod(rules, 0o000)
+        M.SYS_UNIT, M.POLKIT_RULE = self.tmp / "unit.service", rules / "49-omarchy-xray.rules"
+        M.SYS_UNIT.write_text("[Unit]\n")
+        try:
+            self.assertTrue(M.tun_installed())
+        finally:
+            os.chmod(rules, 0o755)
+            M.SYS_UNIT, M.POLKIT_RULE = saved
 
 
 class StatusShape(Base):

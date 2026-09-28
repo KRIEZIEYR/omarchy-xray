@@ -11,7 +11,7 @@ the two explicit TUN install steps):
   select <key>       switch node: node key (k…), n<index>, "auto" or a name
                      substring; restarts the service when it is running
   mode <proxy|tun>   switch mode (TUN needs the one-time `tun-setup`)
-  routing <preset>   global | ru-direct
+  routing <preset>   global | <region>-direct (ru by kz uz tm cn ir tr ae sa eg pk vn mm)
   adblock <on|off>   block geosite:category-ads-all
   on | off | restart start / stop / restart the tunnel
   test [key…]        latency-test nodes (batched, parallel, bounded)
@@ -113,6 +113,24 @@ PROBE = "https://www.gstatic.com/generate_204"
 REMOTE_DNS = "https://1.1.1.1/dns-query"
 PRIVATE = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16",
            "127.0.0.0/8", "::1/128", "fc00::/7", "fe80::/10"]
+# Direct-routing regions (countries with heavy censorship): the chosen one's
+# ccTLDs, geoip and — where the geo data has a list — geosite go direct.
+REGIONS = {
+    "ru": ("Russia", ["ru", "su", "xn--p1ai"], "category-ru"),
+    "by": ("Belarus", ["by"], None),
+    "kz": ("Kazakhstan", ["kz"], None),
+    "uz": ("Uzbekistan", ["uz"], None),
+    "tm": ("Turkmenistan", ["tm"], None),
+    "cn": ("China", ["cn"], "cn"),
+    "ir": ("Iran", ["ir"], "category-ir"),
+    "tr": ("Turkey", ["tr"], None),
+    "ae": ("UAE", ["ae"], None),
+    "sa": ("Saudi Arabia", ["sa"], None),
+    "eg": ("Egypt", ["eg"], None),
+    "pk": ("Pakistan", ["pk"], None),
+    "vn": ("Vietnam", ["vn"], None),
+    "mm": ("Myanmar", ["mm"], None),
+}
 ASSET_DIRS = ("/usr/share/xray", "/usr/local/share/xray", "/usr/share/v2ray",
               "/usr/local/share/v2ray", "/opt/xray")
 
@@ -346,7 +364,10 @@ def user_active():
 
 
 def tun_installed():
-    return SYS_UNIT.is_file() and POLKIT_RULE.is_file()
+    # tun-install writes the unit and the polkit rule together; the rule can't
+    # be checked as a user (rules.d is root:polkitd 0750). A missing rule
+    # surfaces as "denied" from systemctl in start_service.
+    return SYS_UNIT.is_file()
 
 
 def tun_active():
@@ -450,7 +471,7 @@ def load_state():
     st["selected"] = sel
     if st.get("mode") not in ("proxy", "tun"):
         st["mode"] = "proxy"
-    if st.get("routing") not in ("global", "ru-direct"):
+    if st.get("routing") != "global" and not region_of(st.get("routing")):
         st["routing"] = "global"
     st["adblock"] = st.get("adblock") is True
     if not isinstance(st.get("skipped"), dict):
@@ -1431,14 +1452,15 @@ def build_config(st, custom=None):
     if st["adblock"] and geo:
         rules.append({"domain": ["geosite:category-ads-all"], "outboundTag": "block"})
     rules.append({"ip": ["geoip:private"] if geo else PRIVATE, "outboundTag": "direct"})
-    ru = st["routing"] == "ru-direct"
-    if ru:
-        rules.append({"domain": ["domain:ru", "domain:su", "domain:xn--p1ai"]
-                      + (["geosite:category-ru"] if geo else []), "outboundTag": "direct"})
+    cc = region_of(st["routing"])
+    if cc:
+        _, tlds, site = REGIONS[cc]
+        rules.append({"domain": ["domain:" + t for t in tlds]
+                      + (["geosite:" + site] if geo and site else []), "outboundTag": "direct"})
         if geo:
-            rules.append({"ip": ["geoip:ru"], "outboundTag": "direct"})
+            rules.append({"ip": ["geoip:" + cc], "outboundTag": "direct"})
     rules.append(dict({"network": "tcp,udp"}, **target))
-    routing = {"domainStrategy": "IPIfNonMatch" if ru and geo else "AsIs", "rules": rules}
+    routing = {"domainStrategy": "IPIfNonMatch" if cc and geo else "AsIs", "rules": rules}
     if auto:
         routing["balancers"] = [{"tag": "auto", "selector": ["node-"],
                                  "strategy": {"type": "leastPing"}, "fallbackTag": "node-0"}]
@@ -1798,9 +1820,14 @@ def cmd_mode(mode):
     out({"ok": True, "mode": mode, "running": was_running})
 
 
+def region_of(routing):
+    m = re.match(r"^([a-z]{2})-direct$", routing if isinstance(routing, str) else "")
+    return m.group(1) if m and m.group(1) in REGIONS else None
+
+
 def cmd_routing(preset):
-    if preset not in ("global", "ru-direct"):
-        die("routing preset must be global or ru-direct")
+    if preset != "global" and not region_of(preset):
+        die("routing preset must be global or <region>-direct, region: " + ", ".join(REGIONS))
     st = load_state()
     st["routing"] = preset
     if st["nodes"]:
@@ -2074,6 +2101,9 @@ def cmd_status():
         "running": running,
         "mode": st["mode"],
         "routing": st["routing"],
+        "regions": [{"code": c, "name": v[0],
+                     "flag": "".join(chr(0x1F1E6 + ord(ch) - 97) for ch in c)}
+                    for c, v in REGIONS.items()],
         "adblock": st["adblock"],
         "geo": asset_dir() is not None,
         "xray": os.path.isfile(XRAY),
@@ -2147,7 +2177,6 @@ def cmd_doctor():
     add("kernel >= 5.7 (unprivileged SO_BINDTODEVICE)",
         m and (int(m.group(1)), int(m.group(2))) >= (5, 7), rel)
     add("TUN system unit installed", SYS_UNIT.is_file(), str(SYS_UNIT))
-    add("TUN polkit rule installed", POLKIT_RULE.is_file(), str(POLKIT_RULE))
     add("polkit agent running", _polkit_agent_running(), "needed for the one-time tun-setup prompt")
     resolved = sctl("is-active", "systemd-resolved").stdout.strip() == "active"
     add("systemd-resolved (DNS through the TUN)", resolved)
