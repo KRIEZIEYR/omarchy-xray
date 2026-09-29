@@ -70,6 +70,8 @@ T2S_UNIT = UNIT_DIR / T2S_SERVICE
 SYS_UNIT = pathlib.Path("/etc/systemd/system") / TUN_SERVICE
 POLKIT_RULE = pathlib.Path("/etc/polkit-1/rules.d/49-omarchy-xray.rules")
 NETWORKD_FILE = pathlib.Path("/etc/systemd/network/10-omarchy-xray.network")
+OMARCHY_SHELL = "/usr/share/omarchy/shell"
+OMARCHY_POLKIT = pathlib.Path(OMARCHY_SHELL, "plugins/polkit/manifest.json")
 
 _SYS_DIRS = ("/usr/bin", "/usr/sbin", "/bin", "/sbin", "/usr/local/bin")
 _SAFE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin"
@@ -2165,6 +2167,9 @@ def _polkit_agent_running():
             continue
         low = cmd.lower()
         if "polkit" in low and ("agent" in low or "authentication" in low):
+            return True
+        # the Omarchy shell ships its own agent (plugins/polkit, keepLoaded)
+        if "quickshell" in low and OMARCHY_SHELL in low and OMARCHY_POLKIT.is_file():
             return True
     return False
 
