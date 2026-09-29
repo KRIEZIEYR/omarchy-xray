@@ -167,7 +167,7 @@ Item {
     if (slot.running) return false
     var bounded = boundedArgs(args)
     if (bounded === null) {
-      lastError = "Input too long — refused"
+      lastError = "That text is too long (2048 characters at most)"
       return false
     }
     var env = {}
@@ -319,7 +319,7 @@ Item {
 
   function connectNode(node) {
     if (!node || !node.key) return
-    if (String(node.key).length > 64) { lastError = "Bad node key — refused"; return }
+    if (String(node.key).length > 64) { lastError = "That node is no longer in the list — reopen the panel"; return }
     var wasRunning = coreRunning
     if (!run(_action, [manager, "select", node.key], function(resp) {
       _actionDeadline.stop()
@@ -476,7 +476,7 @@ Item {
   }
 
   function setMode(newMode) {
-    if (newMode !== "proxy" && newMode !== "tun") { lastError = "Bad mode — refused"; return }
+    if (newMode !== "proxy" && newMode !== "tun") { lastError = "Unknown mode: pick proxy or TUN"; return }
     if (newMode === "tun" && !tunInstalled) { tunSetup(true); return }
     runLong([manager, "mode", newMode], "mode switch", 180000, function(d) {
               var name = newMode === "tun" ? "TUN" : "proxy"

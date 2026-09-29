@@ -265,7 +265,8 @@ function heroState(state) {
   var t = state.touch
   if (!t) return "Checking…"
   var mode = state.mode === "tun" ? "TUN" : "proxy"
-  if (connectedNode(t)) return "Connected · " + mode
+  // proxy mode only covers apps that use the system proxy: say so every time
+  if (connectedNode(t)) return state.mode === "tun" ? "Connected · TUN" : "Connected · system-proxy apps"
   if (!t.nodes || t.nodes.length === 0) return "No subscription yet"
   if (t.running) return "Ready · not connected"
   return state.target ? "→ " + state.target + " · " + mode : "Disconnected · " + mode

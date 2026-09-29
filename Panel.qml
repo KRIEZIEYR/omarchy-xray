@@ -19,6 +19,7 @@ Panel {
   // (cursorActive), so the key legend must not follow it: it would pop in
   // and out as the pointer crosses rows and buttons, resizing the panel.
   property bool keysUsed: false
+  property bool legendHidden: false      // `?` — remembered while the shell runs
   property int nodeIndex: 0
   property string filterQuery: ""
   property bool regionsOpen: false
@@ -161,9 +162,13 @@ Panel {
   readonly property bool onTarget: xray.pending === "connecting" || xray.pending === "switching"
                                    || (xray.connected && xray.pending !== "disconnecting")
 
+  // The shield only claims protection once the tunnel is up; while it comes
+  // up it is a bright outline (pulsing at first), off is a dim outline.
+  readonly property bool tunnelUp: xray.connected && xray.pending !== "disconnecting"
+
   readonly property color barIconColor: {
     if (!xray.reachable) return urgent
-    if (onTarget) return onColor
+    if (tunnelUp) return onColor
     return foreground            // "off" is carried by the button's kit dimming
   }
 
@@ -329,6 +334,7 @@ Panel {
   onOpenedChanged: if (opened) {
     cursorActive = false
     keysUsed = false
+    subsOpen = false
     nodeIndex = 0
     pointerGate.reset()
     regionsOpen = false
@@ -391,10 +397,10 @@ Panel {
           anchors.centerIn: parent
           iconSize: Style.space(11)
           color: root.barIconColor
-          filled: root.onTarget
+          filled: root.tunnelUp
           warning: !xray.reachable
-          // ~11 s of a slow breath, then still: a password prompt can take
-          // minutes and must not blink in the bar all that time.
+          // ~11 s of a slow breath, then a still bright outline: a password
+          // prompt can take minutes and must not blink in the bar all along.
           SequentialAnimation on opacity {
             running: xray.pending !== ""
             loops: 8
@@ -444,16 +450,25 @@ Panel {
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
         root.keysUsed = true
-        if (t === "t" || t === "T") xray.testNodes(root.visibleNodes)
-        else if (t === "u" || t === "U") xray.updateSubscriptions()
-        // Dropping the tunnel takes Shift: one stray letter must not send
-        // everything direct.
-        else if (t === "c") { if (root.onTarget) xray.flash("Shift+C disconnects"); else xray.toggleConnection(root.lastNodeKey) }
-        else if (t === "C") xray.toggleConnection(root.lastNodeKey)
-        else if (t === "w" || t === "W") xray.openWebUi()
-        else if (t === "a" || t === "A") root.focusSubUrl()
-        else if (nodeList.headerItem && /^[^\s\x00-\x1f]$/.test(t)) {
-          // any other printable key starts filtering (type-ahead); "/" just opens the field
+        var code = t.charCodeAt(0)
+        if (code > 0 && code < 27) {
+          // Commands take Ctrl (Ctrl+T arrives as "\x14"): a bare letter is
+          // always the start of a search, so typing "tokyo" never tests and
+          // "Canada" never drops the tunnel.
+          var k = String.fromCharCode(96 + code)
+          if (k === "t") xray.testNodes(root.visibleNodes)
+          else if (k === "u") xray.updateSubscriptions()
+          else if (k === "w") xray.openWebUi()
+          else if (k === "a") root.focusSubUrl()
+          else if (k === "c") {
+            if (root.onTarget) xray.flash("Already connected · to disconnect, use the switch")
+            else xray.toggleConnection(root.lastNodeKey)
+          }
+          return
+        }
+        if (t === "?") { root.legendHidden = !root.legendHidden; return }
+        if (nodeList.headerItem && /^[^\s\x00-\x1f]$/.test(t)) {
+          // type-ahead; "/" just opens the field
           var search = nodeList.headerItem.search
           if (t !== "/") root.filterQuery = t
           search.forceActiveFocus()
@@ -484,8 +499,8 @@ Panel {
           iconComponent: Component {
             XrayIcon {
               iconSize: Style.font.display
-              color: root.onTarget ? root.onColor : hero.foreground
-              filled: root.onTarget
+              color: root.tunnelUp ? root.onColor : hero.foreground
+              filled: root.tunnelUp
               warning: !xray.reachable
             }
           }
@@ -503,11 +518,12 @@ Panel {
               Accessible.role: Accessible.CheckBox
               Accessible.name: "VPN connection"
               Accessible.checked: root.onTarget
+              Accessible.focused: hasCursor
 
               PanelToolTip {
                 visible: powerSwitch.containsMouse
-                text: xray.connected ? "Disconnect (Shift+C)"
-                      : xray.connectTarget ? "Connect to " + xray.connectTarget.name + " (c)" : "Add a subscription first"
+                text: xray.connected ? "Disconnect"
+                      : xray.connectTarget ? "Connect to " + xray.connectTarget.name + " (Ctrl+C)" : "Add a subscription first"
                 fontFamily: root.fontFamily
               }
             }
@@ -533,7 +549,7 @@ Panel {
             text: statusRow.kind === "action" ? xray.actionStatus
                   : statusRow.kind === "error" ? "󰀦 " + xray.errorText
                   : statusRow.kind === "none" ? ""
-                  : !statusRow.live ? "󰁅 —   󰁝 —"
+                  : !statusRow.live ? (xray.connected ? "Measuring traffic…" : "Not connected")
                   : "󰁅 " + Model.formatSpeed(xray.traffic.downSpeed)
                     + "   󰁝 " + Model.formatSpeed(xray.traffic.upSpeed)
                     + "   ·   downloaded " + Model.formatBytes(xray.traffic.downTotal)
@@ -547,7 +563,8 @@ Panel {
             Accessible.name: statusRow.kind === "error" ? "Error: " + xray.errorText
                              : statusRow.kind === "action" ? xray.actionStatus
                              : statusRow.live ? "Download " + Model.formatSpeed(xray.traffic.downSpeed)
-                                                + ", upload " + Model.formatSpeed(xray.traffic.upSpeed) : ""
+                                                + ", upload " + Model.formatSpeed(xray.traffic.upSpeed)
+                             : xray.connected ? "Measuring traffic" : "Not connected"
           }
 
           TextActionButton {
@@ -556,6 +573,45 @@ Panel {
             tooltip: "Open the xray journal in a terminal"
             Layout.alignment: Qt.AlignTop
             onClicked: xray.openLogs()
+          }
+        }
+
+        // Keys in three groups, pinned so they are never a list's length
+        // away. Shown once the keyboard is used (and on first run); `?`
+        // hides or shows them. Mouse users get the keys in tooltips.
+        Column {
+          visible: root.firstRun || (root.keysUsed && !root.legendHidden)
+          width: parent.width
+          spacing: Style.space(4)
+
+          Repeater {
+            model: root.firstRun ? [["", "Enter adds the subscription · Esc closes"]]
+                   : [["MOVE", "j/k rows · h/l choices · Enter apply"],
+                      ["ACT", "Ctrl+C connect · Ctrl+T test · Ctrl+U update"],
+                      ["MANAGE", "Ctrl+A add sub · Ctrl+W config · ? hide"]]
+            delegate: RowLayout {
+              required property var modelData
+              width: parent ? parent.width : 0
+              spacing: Style.space(8)
+
+              PanelSectionHeader {
+                visible: modelData[0] !== ""
+                text: modelData[0]
+                Layout.preferredWidth: root.settingLabelWidth
+                Layout.alignment: Qt.AlignTop
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+              Text {
+                textFormat: Text.PlainText
+                Layout.fillWidth: true
+                text: modelData[1]
+                wrapMode: Text.WordWrap
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+            }
           }
         }
 
@@ -628,6 +684,7 @@ Panel {
                 Accessible.role: Accessible.Grouping
                 Accessible.name: "Mode: " + (xray.mode === "tun" ? "TUN, all system traffic" : "proxy")
                 Accessible.description: "Options: proxy, TUN. h and l switch"
+                Accessible.focused: cursorIndex >= 0
                 focusable: false
                 foreground: root.foreground
                 fontFamily: root.fontFamily
@@ -665,6 +722,7 @@ Panel {
                 Accessible.role: Accessible.Grouping
                 Accessible.name: "Route: " + (xray.region ? xray.region.name + " bypasses the VPN" : "everything through the VPN")
                 Accessible.description: "Options: all traffic, bypass one country. h and l switch"
+                Accessible.focused: cursorIndex >= 0
                 focusable: false
                 foreground: root.foreground
                 fontFamily: root.fontFamily
@@ -764,6 +822,7 @@ Panel {
                 Accessible.role: Accessible.CheckBox
                 Accessible.name: "Ad blocking"
                 Accessible.checked: xray.adblock
+                Accessible.focused: hasCursor
               }
 
               Text {
@@ -817,8 +876,9 @@ Panel {
 
               TextActionButton {
                 label: xray.testing ? "Stop · " + root.elapsedText : "Test"
-                tooltip: xray.testing ? "Stop the latency test, finished results are kept (t)"
-                         : root.filterQuery !== "" ? "Latency-test the filtered nodes (t)" : "Latency-test all nodes (t)"
+                tooltip: xray.testing ? "Stop the latency test, finished results are kept (Ctrl+T)"
+                         : (root.filterQuery !== "" ? "Latency-test the filtered nodes" : "Latency-test all nodes")
+                           + (root.visibleNodes.length > 200 ? " (the first 200)" : "") + " (Ctrl+T)"
                 enabled: xray.testing || (root.visibleNodes.length > 0 && !xray.busy)
                 onClicked: xray.testNodes(root.visibleNodes)
               }
@@ -846,7 +906,7 @@ Panel {
                 Accessible.name: "Filter nodes"
                 Layout.fillWidth: true
                 foreground: root.foreground
-                placeholderText: "Filter nodes…  ( / )"
+                placeholderText: "Filter nodes… (just type)"
                 text: root.filterQuery
                 onTextChanged: {
                   root.filterQuery = text
@@ -879,6 +939,7 @@ Panel {
 
               TextActionButton {
                 label: "󰅖"
+                a11yName: "Clear filter"
                 tooltip: "Clear filter"
                 visible: root.filterQuery !== ""
                 onClicked: { root.filterQuery = ""; searchField.text = ""; keyCatcher.forceActiveFocus() }
@@ -961,7 +1022,7 @@ Panel {
 
               TextActionButton {
                 label: "Config"
-                tooltip: "Open the config folder (~/.config/omarchy-xray, where custom.json lives) (w)"
+                tooltip: "Open the config folder (~/.config/omarchy-xray, where custom.json lives) (Ctrl+W)"
                 hasCursor: root.cursorRow === "subs" && root.chipIndex === 0
                 onClicked: xray.openWebUi()
               }
@@ -969,7 +1030,7 @@ Panel {
               TextActionButton {
                 visible: xray.subs.length > 0
                 label: "Update all"
-                tooltip: "Download every subscription again (u)"
+                tooltip: "Download every subscription again (Ctrl+U)"
                 enabled: !xray.busy
                 hasCursor: root.cursorRow === "subs" && root.chipIndex === 1
                 onClicked: xray.updateSubscriptions()
@@ -1076,6 +1137,7 @@ Panel {
 
                   TextActionButton {
                     label: "Update"
+                    a11yName: "Update " + (subRow.sub.title || subRow.sub.host)
                     tooltip: "Download this subscription again"
                     enabled: !xray.busy
                     hasCursor: root.cursorSub === subRow.index && root.chipIndex === 0
@@ -1088,6 +1150,10 @@ Panel {
                     // same width armed or not, so "Update" never shifts
                     Layout.preferredWidth: Math.ceil(confirmMetrics.advanceWidth) + 2 * Style.spacing.controlPaddingX
                     label: armed ? "Confirm" : "Remove"
+                    a11yName: (armed ? "Confirm removing " : "Remove ") + (subRow.sub.title || subRow.sub.host)
+                    // armed reads as a state, not only as a different word
+                    bordered: armed
+                    selected: armed
                     tint: armed ? root.errorColor : root.foreground
                     tooltip: armed ? "Click again to remove " + (subRow.sub.title || subRow.sub.host) + " and its nodes"
                                    : "Remove this subscription and its nodes"
@@ -1101,20 +1167,6 @@ Panel {
             }
           }
 
-          // Key legend once a key was pressed (and on first run); mouse
-          // users get the keys in tooltips instead.
-          Text {
-            textFormat: Text.PlainText
-            visible: root.keysUsed || root.firstRun
-            width: parent.width
-            text: root.firstRun ? "Enter adds the subscription · Esc closes"
-                  : "j/k move · h/l choose · Enter apply · type to filter · t test · u update · c connect · Shift+C disconnect · a add sub · w config"
-            wrapMode: Text.WordWrap
-            color: root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-            horizontalAlignment: Text.AlignHCenter
-          }
         }
       }
     }
@@ -1161,6 +1213,7 @@ Panel {
   // for destructive confirmation and a dimmed disabled state.
   component TextActionButton: Button {
     property string label: ""
+    property string a11yName: ""               // when the label alone is ambiguous
     property string tooltip: ""
     property color tint: root.foreground
     text: label
@@ -1169,8 +1222,9 @@ Panel {
     fontFamily: root.fontFamily
     onHovered: function(h) { if (h) root.cursorActive = false }
     Accessible.role: Accessible.Button
-    Accessible.name: label
+    Accessible.name: a11yName !== "" ? a11yName : label
     Accessible.description: tooltip
+    Accessible.focused: hasCursor
     Accessible.onPressAction: if (enabled) clicked()
   }
 
@@ -1269,7 +1323,7 @@ Panel {
         horizontalAlignment: Text.AlignRight
         text: (nodeRow.fastest ? "󰉁 " : "") + nodeRow.latencyText
         Accessible.ignored: true
-        color: nodeRow.latencyBadLat ? root.urgent : root.foreground
+        color: nodeRow.latencyBadLat ? root.errorColor : root.foreground
         font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall      // the number nodes are chosen by
         font.bold: nodeRow.fastest
