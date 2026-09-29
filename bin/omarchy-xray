@@ -24,14 +24,17 @@ the two explicit TUN install steps):
   tun-remove         undo tun-setup (through polkit)
   tun-install        [root] what tun-setup runs: writes the system unit, the
   tun-uninstall      [root] polkit rule and the networkd drop-in (and removes)
+  tun-run            [user unit] tun2socks on xray0 + follow the default route
 
 Security model:
-  - Proxy mode needs no privileges: a systemd *user* unit runs xray.
-  - TUN mode needs CAP_NET_ADMIN (xray configures its own device). It runs as
-    a *system* unit `omarchy-xray-tun.service` with User=<you> and ambient
-    capabilities granted by systemd — no setcap, no sudoers. After the
-    one-time setup root only ever executes root-owned system binaries
-    (xray, udevadm, resolvectl); this script is never run as root again.
+  - xray never gets a capability, in either mode: a systemd *user* unit runs it.
+  - TUN mode: a root oneshot *system* unit `omarchy-xray-tun.service` runs only
+    `ip`, `udevadm` and `resolvectl` — it creates the xray0 device owned by
+    your uid, routes all traffic into it and points DNS at it; stopping it
+    deletes the device. tun2socks (a user unit, no capabilities) moves the
+    device's packets to xray's local socks port; xray's own connections are
+    bound to the physical interface (unprivileged SO_BINDTODEVICE). No setcap,
+    no sudoers; this script is never run as root after the one-time setup.
   - A polkit rule lets exactly your user start/stop/restart exactly that unit.
   - Subscription URLs are https-only, redirect-checked, byte-capped and
     strictly validated; node fields carry count/string bounds.
@@ -60,14 +63,13 @@ LAT = CFG / "latency.json"
 CUSTOM = CFG / "custom.json"
 UNIT_DIR = HOME / ".config/systemd/user"
 SERVICE = "omarchy-xray.service"
-LOGIN_SERVICE = "omarchy-xray-tun-login.service"
+T2S_SERVICE = "omarchy-xray-tun2socks.service"
 TUN_SERVICE = "omarchy-xray-tun.service"
 UNIT = UNIT_DIR / SERVICE
-LOGIN_UNIT = UNIT_DIR / LOGIN_SERVICE
+T2S_UNIT = UNIT_DIR / T2S_SERVICE
 SYS_UNIT = pathlib.Path("/etc/systemd/system") / TUN_SERVICE
 POLKIT_RULE = pathlib.Path("/etc/polkit-1/rules.d/49-omarchy-xray.rules")
 NETWORKD_FILE = pathlib.Path("/etc/systemd/network/10-omarchy-xray.network")
-PIN_FILE = pathlib.Path("/etc/omarchy-xray/xray.sha256")   # "<sha256>  <xray path>"
 
 _SYS_DIRS = ("/usr/bin", "/usr/sbin", "/bin", "/sbin", "/usr/local/bin")
 _SAFE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin"
@@ -84,7 +86,7 @@ def tool(name):
 
 def find_xray():
     """xray core: fixed system locations first, then $PATH (a user-local core
-    is fine for proxy mode; tun-install insists on a root-owned binary)."""
+    is fine: xray never runs with privileges)."""
     for p in ("/usr/bin/xray", "/usr/local/bin/xray", "/opt/xray/xray"):
         if os.path.isfile(p) and os.access(p, os.X_OK):
             return p
@@ -92,11 +94,11 @@ def find_xray():
 
 
 XRAY = find_xray()
+T2S = tool("tun2socks") or shutil.which("tun2socks")
 SELF = str(pathlib.Path(__file__).resolve())
 
 # Core feature gates (verified against Xray-core tags):
 MIN_CORE = (26, 6, 1)        # finalmask `mkcp-legacy`, hysteria, salamander
-MIN_TUN_CORE = (26, 4, 13)   # tun `gateway`, `autoSystemRoutingTable`, `autoOutboundsInterface`
 PLAIN_REFUSED_CORE = (26, 7, 0)  # plain VLESS/Trojan to public servers refused
 _CORE_VER = []
 SYSTEMCTL = tool("systemctl") or "/usr/bin/systemctl"
@@ -109,6 +111,9 @@ METRICS_URL = "http://127.0.0.1:%d/debug/vars" % METRICS
 TUN_NAME = "xray0"
 TUN_GW4, TUN_DNS = "198.18.0.1/30", "198.18.0.2"
 TUN_GW6 = "fdfe:dcba:9876::1/126"
+TUN_TABLE = TUN_PREF = 18180   # routing table and first of three ip rule prefs
+# Marks a system unit of this layout (v3.0 ran xray itself with CAP_NET_ADMIN).
+TUN_LAYOUT = "# layout: root device + unprivileged tun2socks"
 PROBE = "https://www.gstatic.com/generate_204"
 REMOTE_DNS = "https://1.1.1.1/dns-query"
 PRIVATE = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16",
@@ -157,6 +162,8 @@ DEFAULT_UPDATE_HOURS = 24
 
 TUN_SETUP_HINT = ("TUN mode needs a one-time setup: run `omarchy-xray tun-setup` "
                   "(polkit prompt) or `sudo omarchy-xray tun-install`")
+T2S_HINT = ("TUN mode needs tun2socks (it moves packets from xray0 to xray, no "
+            "privileges): install it, e.g. `omarchy pkg aur add tun2socks`")
 
 _HOST_RE = re.compile(
     r"^(?=.{1,253}\.?$)[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9])?"
@@ -367,13 +374,14 @@ def tun_installed():
     # tun-install writes the unit and the polkit rule together; the rule can't
     # be checked as a user (rules.d is root:polkitd 0750). A missing rule
     # surfaces as "denied" from systemctl in start_service.
-    return SYS_UNIT.is_file()
+    try:
+        return TUN_LAYOUT in SYS_UNIT.read_text()
+    except OSError:
+        return False
 
 
 def tun_active():
-    if not SYS_UNIT.is_file():
-        return False
-    return sctl("is-active", TUN_SERVICE).stdout.strip() == "active"
+    return uctl("is-active", T2S_SERVICE).stdout.strip() == "active"
 
 
 def running_units():
@@ -383,10 +391,8 @@ def running_units():
 
 
 def journal_tail(tun, n=8):
-    if tun:
-        r = sh(JOURNALCTL, "-u", TUN_SERVICE, "-n", str(n), "-o", "cat", "--no-pager")
-    else:
-        r = sh(JOURNALCTL, "--user", "-u", SERVICE, "-n", str(n), "-o", "cat", "--no-pager")
+    units = ["-u", SERVICE] + (["-u", T2S_SERVICE] if tun else [])
+    r = sh(JOURNALCTL, "--user", *units, "-n", str(n), "-o", "cat", "--no-pager")
     return (r.stdout or "").strip()
 
 
@@ -406,24 +412,30 @@ def user_unit_text():
             "WantedBy=default.target\n") % (XRAY, CONF, env)
 
 
-LOGIN_UNIT_TEXT = """[Unit]
-Description=Start omarchy-xray TUN mode with the user session
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=%(systemctl)s start --no-ask-password %(unit)s
-ExecStop=%(systemctl)s stop --no-ask-password %(unit)s
-
-[Install]
-WantedBy=default.target
-""" % {"systemctl": SYSTEMCTL, "unit": TUN_SERVICE}
+def t2s_unit_text():
+    # The root unit's device lives exactly as long as this unit: start it
+    # first, stop it last (ExecStopPost also runs after a failed start).
+    return ("[Unit]\n"
+            "Description=omarchy-xray TUN mode: tun2socks on %(dev)s (no privileges)\n"
+            "Wants=%(xray)s\n"
+            "After=%(xray)s\n\n"
+            "[Service]\n"
+            "ExecStartPre=%(sc)s start --no-ask-password %(tun)s\n"
+            "ExecStart=%(self)s tun-run\n"
+            "ExecStopPost=-%(sc)s stop --no-ask-password %(tun)s\n"
+            "NoNewPrivileges=true\n"
+            "Restart=on-failure\n"
+            "RestartSec=3\n\n"
+            "[Install]\n"
+            "WantedBy=default.target\n") % {
+                "dev": TUN_NAME, "xray": SERVICE, "sc": SYSTEMCTL, "tun": TUN_SERVICE,
+                "self": SELF}
 
 
 def write_user_units():
     UNIT_DIR.mkdir(parents=True, exist_ok=True)
     changed = False
-    for path, text in ((UNIT, user_unit_text()), (LOGIN_UNIT, LOGIN_UNIT_TEXT)):
+    for path, text in ((UNIT, user_unit_text()), (T2S_UNIT, t2s_unit_text())):
         try:
             cur = path.read_text()
         except OSError:
@@ -431,6 +443,11 @@ def write_user_units():
         if cur != text:
             atomic_write(path, text, 0o644)
             changed = True
+    old = UNIT_DIR / "omarchy-xray-tun-login.service"   # v3.0: started the xray TUN unit
+    if old.exists():
+        uctl("disable", old.name)
+        old.unlink()
+        changed = True
     if changed:
         uctl("daemon-reload")
 
@@ -1336,8 +1353,12 @@ def default_dev():
     return best
 
 
-def host_has_v6():
-    return any("dev" in t and t[t.index("dev") + 1] != TUN_NAME for t in _route_lines(True))
+def bound_iface():
+    """Interface the current config binds xray's connections to (TUN mode)."""
+    for ob in load_json(CONF, {}).get("outbounds", []):
+        if isinstance(ob, dict) and ob.get("tag") == "direct":
+            return ob.get("streamSettings", {}).get("sockopt", {}).get("interface")
+    return None
 
 
 def link_dns(dev):
@@ -1402,7 +1423,9 @@ def build_config(st, custom=None):
     target = {"balancerTag": "auto"} if auto else {"outboundTag": "proxy"}
     patch = custom.get("proxyPatch") if isinstance(custom.get("proxyPatch"), dict) else None
 
-    sniff = {"enabled": True, "destOverride": ["http", "tls", "quic"], "routeOnly": True}
+    # TUN traffic arrives as bare IPs: let the sniffed domain replace them, so
+    # the server resolves it (routeOnly keeps proxy-mode apps' own choice).
+    sniff = {"enabled": True, "destOverride": ["http", "tls", "quic"], "routeOnly": mode != "tun"}
     inbounds = [
         {"tag": "socks-in", "listen": "127.0.0.1", "port": SOCKS, "protocol": "socks",
          "settings": {"auth": "noauth", "udp": True}, "sniffing": sniff},
@@ -1421,16 +1444,12 @@ def build_config(st, custom=None):
     outbounds += [direct, {"tag": "block", "protocol": "blackhole"}]
 
     rules, conf = [], {}
+    iface = None
     if mode == "tun":
-        v6 = host_has_v6()
-        inbounds.insert(0, {
-            "tag": "tun-in", "protocol": "tun",
-            "settings": {"name": TUN_NAME, "mtu": 1500,
-                         "gateway": [TUN_GW4] + ([TUN_GW6] if v6 else []),
-                         "autoSystemRoutingTable": ["0.0.0.0/0"] + (["::/0"] if v6 else []),
-                         "autoOutboundsInterface": "auto"},
-            "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"],
-                         "routeOnly": False}})
+        # tun2socks hands xray every connection from xray0 via socks-in.
+        iface = default_dev() or bound_iface()
+        if not iface:
+            die("TUN mode needs a network connection (no default route)")
         # No rules: A/AAAA go to the built-in DNS, other query types get an
         # immediate empty answer (docs: outbounds/dns, fallback rule).
         outbounds.append({"tag": "dns-out", "protocol": "dns"})
@@ -1442,7 +1461,7 @@ def build_config(st, custom=None):
                                 "skipFallback": True, "tag": "dns-bootstrap"})
         servers.append(REMOTE_DNS)
         conf["dns"] = {"servers": servers, "tag": "dns-internal"}
-        rules += [{"inboundTag": ["tun-in"], "port": "53", "outboundTag": "dns-out"},
+        rules += [{"inboundTag": ["socks-in"], "port": "53", "outboundTag": "dns-out"},
                   {"inboundTag": ["dns-bootstrap"], "outboundTag": "direct"},
                   dict({"inboundTag": ["dns-internal"]}, **target)]
 
@@ -1478,6 +1497,13 @@ def build_config(st, custom=None):
         "routing": routing,
     })
     apply_custom(conf, custom)
+    if iface:
+        # xray's own connections must leave through the physical interface or
+        # they loop back into xray0 (SO_BINDTODEVICE, no capability needed).
+        for ob in conf["outbounds"]:
+            if ob.get("protocol") != "blackhole":
+                ob.setdefault("streamSettings", {}).setdefault("sockopt", {}) \
+                    .setdefault("interface", iface)
     return conf
 
 
@@ -1545,41 +1571,28 @@ def _settle(check, tun, timeout=4.0):
 
 def start_service(st):
     write_user_units()
-    if st["mode"] == "tun":
-        if not tun_installed():
-            die(TUN_SETUP_HINT)
-        if user_active():
-            uctl("stop", SERVICE)
-        uctl("disable", SERVICE)
-        uctl("enable", LOGIN_SERVICE)
-        r = sctl("restart", TUN_SERVICE, timeout=90)
-        if r.returncode != 0:
-            if not pin_matches():
-                die("xray changed since TUN setup (package update?) — run: omarchy-xray tun-setup")
-            die("failed to start %s: %s" % (TUN_SERVICE, _last_lines(r.stderr) or "denied")
-                + ". If the polkit rule is missing, re-run: omarchy-xray tun-setup")
-        uctl("start", LOGIN_SERVICE)
-        _settle(tun_active, True)
-    else:
-        if tun_installed():
-            uctl("disable", "--now", LOGIN_SERVICE)
-            if tun_active():
-                sctl("stop", TUN_SERVICE, timeout=60)
-        if user_active():
-            r = uctl("restart", SERVICE)
-        else:
-            r = uctl("enable", "--now", SERVICE)
-        if r.returncode != 0:
-            die("failed to start %s: %s" % (SERVICE, _last_lines(r.stderr)))
-        _settle(user_active, False)
+    tun = st["mode"] == "tun"
+    if tun and not tun_installed():
+        die(TUN_SETUP_HINT)
+    if tun and not T2S:
+        die(T2S_HINT)
+    if not tun:
+        uctl("disable", "--now", T2S_SERVICE)        # its stop deletes the device
+    r = uctl("restart", SERVICE) if user_active() else uctl("enable", "--now", SERVICE)
+    if r.returncode != 0:
+        die("failed to start %s: %s" % (SERVICE, _last_lines(r.stderr)))
+    if tun and uctl("enable", "--now", T2S_SERVICE, timeout=90).returncode != 0:
+        die("TUN did not start: %s. If the polkit rule is missing, re-run: omarchy-xray "
+            "tun-setup" % (_last_lines(journal_tail(True), n=3) or "denied"))
+    _settle(tun_active if tun else user_active, tun)
 
 
 def stop_service():
-    r = uctl("disable", "--now", SERVICE)
-    ok = r.returncode == 0
-    if LOGIN_UNIT.exists():
-        uctl("disable", "--now", LOGIN_SERVICE)
-    if tun_active():
+    if T2S_UNIT.exists():
+        uctl("disable", "--now", T2S_SERVICE)        # its stop deletes the device
+    ok = uctl("disable", "--now", SERVICE).returncode == 0
+    # the device outlived tun2socks (started by hand, or a v3.0 unit)
+    if SYS_UNIT.is_file() and sctl("is-active", TUN_SERVICE).stdout.strip() == "active":
         ok = sctl("stop", TUN_SERVICE, timeout=60).returncode == 0 and ok
     return ok
 
@@ -1590,11 +1603,7 @@ def restart_if_running(st):
         return False
     if (st["mode"] == "tun") != ta:
         start_service(st)                          # mode changed under a running unit
-    elif ta:
-        if sctl("restart", TUN_SERVICE, timeout=90).returncode != 0:
-            die("failed to restart %s" % TUN_SERVICE)
-        _settle(tun_active, True)
-    else:
+    else:                                          # tun2socks needs no restart
         uctl("restart", SERVICE)
         _settle(user_active, False)
     return True
@@ -2068,7 +2077,7 @@ def cmd_status():
     st = load_state()
     lat = load_json(LAT, {})
     ua, ta = running_units()
-    running = ua or ta
+    running = (ua and ta) if st["mode"] == "tun" else ua
     now = int(time.time())
     nodes = []
     auto_tags = []
@@ -2102,8 +2111,8 @@ def cmd_status():
     last_error = ""
     if not running:
         tun = st["mode"] == "tun"
-        failed = (sctl("is-failed", TUN_SERVICE) if tun else uctl("is-failed", SERVICE))
-        if failed.stdout.strip() == "failed":
+        failed = uctl("is-failed", SERVICE, *([T2S_SERVICE] if tun else []))
+        if "failed" in failed.stdout.split():
             last_error = _last_lines(journal_tail(tun), n=2, cap=240)
     out({
         "ok": True,
@@ -2173,11 +2182,7 @@ def cmd_doctor():
     add("core >= %s (all transports)" % ver_str(MIN_CORE), cv is None or cv >= MIN_CORE,
         ver_str(cv) + ("" if cv is None or cv >= MIN_CORE else
                        " — mKCP/Hysteria2 nodes may be rejected; update xray"))
-    add("core >= %s (TUN mode)" % ver_str(MIN_TUN_CORE), cv is None or cv >= MIN_TUN_CORE,
-        ver_str(cv))
-    if have:
-        stt = os.stat(XRAY)
-        add("xray root-owned (needed for TUN)", stt.st_uid == 0 and not stt.st_mode & 0o022, XRAY)
+    add("tun2socks (TUN mode)", T2S, T2S or "missing: omarchy pkg aur add tun2socks")
     a = asset_dir()
     add("geo files (geoip.dat/geosite.dat)", a, a or "missing: routing presets use built-in lists only")
     add("curl", os.path.isfile(CURL), CURL)
@@ -2186,10 +2191,9 @@ def cmd_doctor():
     m = re.match(r"(\d+)\.(\d+)", rel)
     add("kernel >= 5.7 (unprivileged SO_BINDTODEVICE)",
         m and (int(m.group(1)), int(m.group(2))) >= (5, 7), rel)
-    add("TUN system unit installed", SYS_UNIT.is_file(), str(SYS_UNIT))
-    if SYS_UNIT.is_file():
-        add("xray matches the TUN pin", pin_matches(),
-            "" if pin_matches() else "xray changed since tun-setup — run: omarchy-xray tun-setup")
+    add("TUN system unit installed", tun_installed(),
+        str(SYS_UNIT) if tun_installed() or not SYS_UNIT.is_file()
+        else "from v3.0 (xray with CAP_NET_ADMIN) — run: omarchy-xray tun-setup")
     add("polkit agent running", _polkit_agent_running(), "needed for the one-time tun-setup prompt")
     resolved = sctl("is-active", "systemd-resolved").stdout.strip() == "active"
     add("systemd-resolved (DNS through the TUN)", resolved)
@@ -2212,58 +2216,62 @@ def cmd_doctor():
 
 # --- TUN setup (the only privileged code path) -------------------------------
 
-def tun_unit_text(user, group, conf, xray, asset, resolvectl, udevadm, sha256sum):
-    env = "Environment=XRAY_LOCATION_ASSET=%s\n" % asset if asset else ""
-    # xray gets CAP_NET_ADMIN only while it is the exact binary tun-setup
-    # attested; a package update needs a new tun-setup.
-    pin = "ExecStartPre=%s --quiet --check %s\n" % (sha256sum, PIN_FILE)
-    dns = ""
-    if resolvectl:
-        dns = ("ExecStartPost=-+{r} dns {t} {d}\n"
-               "ExecStartPost=-+{r} domain {t} ~.\n"
-               "ExecStartPost=-+{r} default-route {t} yes\n"
-               "ExecStartPost=-+{r} dnsovertls {t} no\n").format(r=resolvectl, t=TUN_NAME, d=TUN_DNS)
-    wait = ("ExecStartPost=-+%s wait --timeout=15 /sys/class/net/%s\n" % (udevadm, TUN_NAME)
-            if udevadm else "")
+def tun_unit_text(uid, ip, udevadm, resolvectl):
+    t, tab, p = TUN_NAME, TUN_TABLE, TUN_PREF
+    # The default route into the device lives in its own table, used only by
+    # lookups with no source yet or from the device's address. xray's sockets
+    # (bound to the physical link) and the strict rp_filter check of their
+    # replies look up from the physical address, so they keep using main.
+    # (IPv6 picks the source from the device before matching a `from` rule,
+    # so its own address covers unset sources; IPv4 needs 0.0.0.0/32.)
+    rules, clean = [], ["-%s link delete %s" % (ip, t)]
+    for fam, opt, sel in (("", "", ["from 0.0.0.0/32", "from " + TUN_GW4.split("/")[0]]),
+                          ("-6 ", "-", ["from " + TUN_GW6.split("/")[0]])):
+        rules += ["%s%s %sroute add default dev %s table %d" % (opt, ip, fam, t, tab),
+                  "%s%s %srule add pref %d lookup main suppress_prefixlength 0" % (opt, ip, fam, p)]
+        rules += ["%s%s %srule add pref %d %s lookup %d" % (opt, ip, fam, p + 1 + i, x, tab)
+                  for i, x in enumerate(sel)]
+        clean += ["-%s %srule delete pref %d" % (ip, fam, p + i) for i in range(len(sel) + 1)]
+    wait = ["-%s wait --timeout=15 /sys/class/net/%s" % (udevadm, t)] if udevadm else []
+    dns = ["-%s dns %s %s" % (resolvectl, t, TUN_DNS), "-%s domain %s ~." % (resolvectl, t),
+           "-%s default-route %s yes" % (resolvectl, t),
+           "-%s dnsovertls %s no" % (resolvectl, t)] if resolvectl else []
+    up = ["%s tuntap add dev %s mode tun user %d" % (ip, t, int(uid)),
+          "%s address add %s dev %s" % (ip, TUN_GW4, t),
+          "-%s -6 address add %s dev %s nodad" % (ip, TUN_GW6, t),
+          "%s link set dev %s mtu 1500 up" % (ip, t)] + rules + wait + dns
+    lines = lambda key, cmds: "".join("%s=%s\n" % (key, c) for c in cmds)
     return (
         "# Installed by `omarchy-xray tun-setup` (%s). Remove: omarchy-xray tun-remove\n"
-        "# xray runs as %s; systemd grants CAP_NET_ADMIN so xray can create and\n"
-        "# route its own TUN device. Root only runs udevadm/resolvectl below.\n"
+        "%s\n"
+        "# Root runs only ip, udevadm and resolvectl: %s is created for uid %d,\n"
+        "# all traffic is routed into it and DNS pointed at it. tun2socks and xray\n"
+        "# run as that user without capabilities. Stopping deletes the device.\n"
         "[Unit]\n"
-        "Description=Xray TUN mode for %s (omarchy-xray)\n"
-        "After=network-online.target nss-lookup.target\n"
-        "Wants=network-online.target\n\n"
+        "Description=omarchy-xray TUN device for uid %d\n"
+        "After=network-online.target systemd-resolved.service\n\n"
         "[Service]\n"
-        "Type=exec\n"
-        "User=%s\n"
-        "Group=%s\n"
-        "%s"
-        "%s"
-        "ExecStart=%s run -c %s\n"
-        "%s%s"
-        "Restart=on-failure\n"
-        "RestartSec=3\n"
-        "AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE\n"
-        "CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE\n"
-        "# ProtectClock= implies DeviceAllow=char-rtc, which closes the device\n"
-        "# policy — the TUN device must be allowed explicitly.\n"
-        "DeviceAllow=/dev/net/tun rw\n"
+        "Type=oneshot\n"
+        "RemainAfterExit=yes\n"
+        "%s%s%s"
+        "CapabilityBoundingSet=CAP_NET_ADMIN\n"
         "NoNewPrivileges=yes\n"
         "ProtectSystem=strict\n"
-        "ProtectHome=read-only\n"
+        "ProtectHome=yes\n"
         "PrivateTmp=yes\n"
+        "ProtectKernelTunables=yes\n"
         "ProtectKernelModules=yes\n"
         "ProtectKernelLogs=yes\n"
         "ProtectControlGroups=yes\n"
-        "ProtectClock=yes\n"
         "ProtectHostname=yes\n"
-        "RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX\n"
+        "RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6\n"
         "RestrictNamespaces=yes\n"
         "RestrictRealtime=yes\n"
         "RestrictSUIDSGID=yes\n"
         "LockPersonality=yes\n"
         "SystemCallArchitectures=native\n"
-    ) % (VERSION, user, user, user, group, env, pin, xray, conf, wait, dns)
+    ) % (VERSION, TUN_LAYOUT, t, int(uid), int(uid),
+         lines("ExecStartPre", clean), lines("ExecStart", up), lines("ExecStopPost", clean))
 
 
 def polkit_rule_text(user):
@@ -2282,8 +2290,8 @@ def polkit_rule_text(user):
         "});\n") % {"u": user, "unit": TUN_SERVICE}
 
 
-NETWORKD_TEXT = """# Installed by `omarchy-xray tun-setup`: xray configures %s itself,
-# systemd-networkd must leave it alone.
+NETWORKD_TEXT = """# Installed by `omarchy-xray tun-setup`: omarchy-xray-tun.service configures
+# %s itself, systemd-networkd must leave it alone.
 [Match]
 Name=%s
 
@@ -2305,48 +2313,10 @@ def _invoking_user():
     return pw
 
 
-def _root_owned_ok(path):
-    try:
-        st = os.stat(path)
-    except OSError:
-        return False
-    if st.st_uid != 0 or st.st_mode & 0o022:
-        return False
-    parent = os.stat(os.path.dirname(path))
-    return parent.st_uid == 0 and not parent.st_mode & 0o022
-
-
 def _root_write(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(path, text, 0o644)
     os.chown(path, 0, 0)
-
-
-def _attest_xray(xray):
-    """xray is about to run with CAP_NET_ADMIN: it must belong to a package and
-    match that package's recorded checksums. Returns its sha256 for the pin."""
-    pac = tool("pacman")
-    if not pac:
-        die("cannot verify %s against a package database (pacman not found)" % xray)
-    owner = sh(pac, "-Qqo", xray).stdout.strip()
-    if not re.match(r"^[a-z0-9@._+-]+$", owner):
-        die("%s is not owned by any package — install xray from your package manager" % xray)
-    r = sh(pac, "-Qkk", owner, timeout=120)
-    if r.returncode != 0 or not re.search(r"\b0 altered files\b", (r.stdout or "") + (r.stderr or "")):
-        die("%s does not match the %s package (pacman -Qkk) — reinstall it" % (xray, owner))
-    return hashlib.sha256(pathlib.Path(xray).read_bytes()).hexdigest()
-
-
-def pin_matches():
-    """True when there is no pin or the installed xray still matches it."""
-    try:
-        want, path = PIN_FILE.read_text().split()
-    except (OSError, ValueError):
-        return True
-    try:
-        return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest() == want
-    except OSError:
-        return False
 
 
 def _root_write_all(pairs):
@@ -2375,32 +2345,12 @@ def cmd_tun_install():
     if os.geteuid() != 0:
         die("tun-install must run as root — use: omarchy-xray tun-setup")
     pw = _invoking_user()
-    try:
-        group = __import__("grp").getgrgid(pw.pw_gid).gr_name
-    except KeyError:
-        die("unknown primary group")
-    if not _USER_RE.match(group):
-        die("unsupported group name: %r" % group)
-    conf = os.path.join(pw.pw_dir, ".config/omarchy-xray/config.json")
-    xray = os.path.realpath(XRAY)
-    for p in (conf, xray):
-        if not _UNIT_PATH_RE.match(p):
-            die("path not usable in a unit file: %r" % p)
-    if not _root_owned_ok(xray):
-        die("%s must be root-owned and not group/world-writable (it will run with "
-            "CAP_NET_ADMIN) — install xray from your package manager" % xray)
-    digest = _attest_xray(xray)
-    sha256sum = tool("sha256sum")
-    if not sha256sum:
-        die("sha256sum not found (coreutils)")
-    asset = asset_dir()
-    if asset and not _UNIT_PATH_RE.match(asset):
-        asset = None
-    resolvectl, udevadm = tool("resolvectl"), tool("udevadm")
+    ip, udevadm, resolvectl = tool("ip"), tool("udevadm"), tool("resolvectl")
+    if not ip:
+        die("ip (iproute2) not found")
     networkd = sh(SYSTEMCTL, "is-active", "systemd-networkd").stdout.strip() == "active"
-    _root_write_all([(PIN_FILE, "%s  %s\n" % (digest, xray)),
-                     (SYS_UNIT, tun_unit_text(pw.pw_name, group, conf, xray, asset,
-                                              resolvectl, udevadm, sha256sum)),
+    sh(SYSTEMCTL, "stop", TUN_SERVICE)       # a running unit (a v3.0 one runs xray)
+    _root_write_all([(SYS_UNIT, tun_unit_text(pw.pw_uid, ip, udevadm, resolvectl)),
                      (POLKIT_RULE, polkit_rule_text(pw.pw_name))]
                     + ([(NETWORKD_FILE, NETWORKD_TEXT)] if networkd else []))
     if networkd:
@@ -2417,7 +2367,7 @@ def cmd_tun_uninstall():
         die("tun-uninstall must run as root — use: omarchy-xray tun-remove")
     sh(SYSTEMCTL, "stop", TUN_SERVICE)
     removed = []
-    for p in (SYS_UNIT, POLKIT_RULE, NETWORKD_FILE, PIN_FILE):
+    for p in (SYS_UNIT, POLKIT_RULE, NETWORKD_FILE):
         try:
             p.unlink()
             removed.append(str(p))
@@ -2443,15 +2393,8 @@ def _escalate(verb):
 
 
 def cmd_tun_setup():
-    xray = os.path.realpath(XRAY)
-    if not os.path.isfile(xray):
-        die("xray core not found — install it first")
-    if not _root_owned_ok(xray):
-        die("%s is not root-owned — TUN mode needs xray from your package manager" % xray)
-    cv = core_version()
-    if cv is not None and cv < MIN_TUN_CORE:
-        die("xray %s is too old for TUN mode (needs >= %s) — update xray first"
-            % (ver_str(cv), ver_str(MIN_TUN_CORE)))
+    if not T2S:
+        die(T2S_HINT)
     rc, so, se = _escalate("tun-install")
     if rc == 126:
         die("TUN setup cancelled: nothing was changed")
@@ -2475,17 +2418,44 @@ def cmd_tun_remove():
     rc, so, se = _escalate("tun-uninstall")
     if rc != 0:
         die("TUN removal failed — run manually: sudo %s tun-uninstall" % SELF)
-    if LOGIN_UNIT.exists():
-        uctl("disable", LOGIN_SERVICE)
+    uctl("disable", T2S_SERVICE)
     if st["mode"] == "tun":
         st["mode"] = "proxy"
         save_state(st)
     out({"ok": True, "tunInstalled": tun_installed()})
 
 
+def cmd_tun_run():
+    """[user unit] tun2socks on xray0 -> xray's socks port. Meanwhile follow
+    the default route (Wi-Fi <-> Ethernet): xray's outbounds are bound to one
+    interface, so a new one means a new config and an xray restart."""
+    if not T2S:
+        die(T2S_HINT)
+    t2s = subprocess.Popen([T2S, "-device", "tun://" + TUN_NAME, "-proxy",
+                            "socks5://127.0.0.1:%d" % SOCKS, "-loglevel", "warn"],
+                           env=child_env())
+    while True:
+        try:
+            sys.exit(t2s.wait(timeout=5) or 1)     # it never exits on its own
+        except subprocess.TimeoutExpired:
+            _rebind()      # ponytail: 5 s route poll; `ip monitor route` if lag matters
+
+
+def _rebind():
+    dev = default_dev()
+    if not dev or dev == bound_iface():
+        return False
+    st = load_state()
+    if st["mode"] != "tun" or not st["nodes"]:
+        return False
+    write_config(st)
+    uctl("restart", SERVICE)
+    return True
+
+
 def cmd_install_unit():
     write_user_units()
-    out({"ok": True, "unit": str(UNIT), "loginUnit": str(LOGIN_UNIT)})
+    out({"ok": True, "unit": str(UNIT), "tunUnit": str(T2S_UNIT)})
 
 
 # --- main --------------------------------------------------------------------
@@ -2518,6 +2488,7 @@ def main():
         "status": cmd_status,
         "logs": lambda: cmd_logs(arg or "40"),
         "doctor": cmd_doctor,
+        "tun-run": cmd_tun_run,
         "install-unit": cmd_install_unit,
         "tun-setup": cmd_tun_setup,
         "tun-remove": cmd_tun_remove,

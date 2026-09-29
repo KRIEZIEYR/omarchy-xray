@@ -41,7 +41,7 @@ if [[ $ASSUME_YES -eq 0 ]]; then
         "$MANAGER" tun-remove >/dev/null || echo "TUN files left in /etc — remove with: sudo $MANAGER tun-uninstall" >&2
       fi
     fi
-    for UNIT in omarchy-xray.service omarchy-xray-tun-login.service xraya.service xraya-lite.service; do
+    for UNIT in omarchy-xray.service omarchy-xray-tun2socks.service omarchy-xray-tun-login.service xraya.service xraya-lite.service; do
       systemctl --user disable --now "$UNIT" 2>/dev/null || true
       rm -f "$HOME/.config/systemd/user/$UNIT"
       rm -rf "$HOME/.config/systemd/user/$UNIT.d"

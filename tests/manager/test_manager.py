@@ -135,8 +135,8 @@ class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="oxtest-"))
         self._saved = {k: getattr(M, k) for k in (
-            "CFG", "CONF", "STATE", "LAT", "CUSTOM", "UNIT_DIR", "UNIT", "LOGIN_UNIT",
-            "XRAY", "host_has_v6", "bootstrap_dns", "running_units")}
+            "CFG", "CONF", "STATE", "LAT", "CUSTOM", "UNIT_DIR", "UNIT", "T2S_UNIT",
+            "XRAY", "default_dev", "bootstrap_dns", "running_units")}
         M.CFG = self.tmp / "cfg"
         M.CONF = M.CFG / "config.json"
         M.STATE = M.CFG / "state.json"
@@ -144,9 +144,9 @@ class Base(unittest.TestCase):
         M.CUSTOM = M.CFG / "custom.json"
         M.UNIT_DIR = self.tmp / "units"
         M.UNIT = M.UNIT_DIR / M.SERVICE
-        M.LOGIN_UNIT = M.UNIT_DIR / M.LOGIN_SERVICE
+        M.T2S_UNIT = M.UNIT_DIR / M.T2S_SERVICE
         M.XRAY = XRAY_BIN if HAVE_XRAY else str(self.tmp / "no-xray")
-        M.host_has_v6 = lambda: True
+        M.default_dev = lambda: "wlan0"
         self._core_ver = list(M._CORE_VER)
         M._CORE_VER[:] = [None]          # link policy as for an unknown (= latest) core
         M.bootstrap_dns = lambda custom: ["192.168.1.1", "1.1.1.1"]
@@ -411,18 +411,55 @@ class ConfigBuilding(Base):
 
     def test_tun_config(self):
         ns = self.nodes()
-        conf = M.build_config(self.state(ns, mode="tun"))
-        tun = conf["inbounds"][0]
-        self.assertEqual(tun["protocol"], "tun")
-        self.assertEqual(tun["settings"]["autoOutboundsInterface"], "auto")
-        self.assertEqual(tun["settings"]["autoSystemRoutingTable"], ["0.0.0.0/0", "::/0"])
-        self.assertEqual(conf["routing"]["rules"][0]["outboundTag"], "dns-out")
+        conf = M.build_config(self.state(ns, mode="tun"), {"outbounds": [
+            {"tag": "frag", "protocol": "freedom"}]})
+        # xray never opens the device: tun2socks feeds socks-in
+        self.assertNotIn("tun", [i["protocol"] for i in conf["inbounds"]])
+        self.assertFalse(conf["inbounds"][0]["sniffing"]["routeOnly"])
+        self.assertEqual(conf["routing"]["rules"][0],
+                         {"inboundTag": ["socks-in"], "port": "53", "outboundTag": "dns-out"})
+        # every connection xray makes is bound to the physical link (no loop)
+        for ob in conf["outbounds"]:
+            if ob["protocol"] != "blackhole":
+                self.assertEqual(ob["streamSettings"]["sockopt"]["interface"], "wlan0", ob["tag"])
         proxy = conf["outbounds"][0]
         self.assertEqual(proxy["streamSettings"]["sockopt"]["domainStrategy"], "UseIPv4v6")
         boot = [s for s in conf["dns"]["servers"] if isinstance(s, dict)]
         self.assertTrue(all(s["tag"] == "dns-bootstrap" for s in boot))
         self.assertIn("full:" + ns[0]["host"], boot[0]["domains"])
         self.assertCoreAccepts(conf)
+
+    def test_tun_interface_fallback(self):
+        ns = self.nodes()
+        M.default_dev = lambda: None
+        with self.assertRaises(SystemExit):              # offline, nothing bound yet
+            M.build_config(self.state(ns, mode="tun"))
+        M.CFG.mkdir(parents=True, exist_ok=True)
+        M.CONF.write_text(json.dumps({"outbounds": [
+            {"tag": "direct", "streamSettings": {"sockopt": {"interface": "eth0"}}}]}))
+        conf = M.build_config(self.state(ns, mode="tun"))  # offline: keep the last link
+        self.assertEqual(conf["outbounds"][0]["streamSettings"]["sockopt"]["interface"], "eth0")
+        proxy = M.build_config(self.state(ns))
+        self.assertNotIn("interface", json.dumps(proxy))
+
+    def test_rebind_follows_default_route(self):
+        if not HAVE_XRAY:
+            self.skipTest("no xray core")
+        st = self.state(self.nodes(), mode="tun")
+        M.CFG.mkdir(parents=True, exist_ok=True)
+        M.STATE.write_text(json.dumps(st))
+        M.write_config(M.load_state())
+        calls = []
+        saved = M.uctl
+        M.uctl = lambda *a, **k: calls.append(a)
+        try:
+            self.assertFalse(M._rebind())                   # still on wlan0
+            M.default_dev = lambda: "eth0"
+            self.assertTrue(M._rebind())
+            self.assertEqual(M.bound_iface(), "eth0")
+            self.assertEqual(calls, [("restart", M.SERVICE)])
+        finally:
+            M.uctl = saved
 
     def test_tun_every_protocol(self):
         for n in self.nodes():
@@ -514,23 +551,38 @@ class ConfigBuilding(Base):
 
 class TunInstall(Base):
     def test_unit_text(self):
-        t = M.tun_unit_text("alice", "alice", "/home/alice/.config/omarchy-xray/config.json",
-                            "/usr/bin/xray", "/usr/share/xray", "/usr/bin/resolvectl",
-                            "/usr/bin/udevadm", "/usr/bin/sha256sum")
-        self.assertIn("User=alice\n", t)
-        self.assertIn("ExecStart=/usr/bin/xray run -c /home/alice/.config/omarchy-xray/config.json\n", t)
-        self.assertIn("AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE\n", t)
-        self.assertIn("NoNewPrivileges=yes\n", t)
-        # ProtectClock implies DeviceAllow=char-rtc (closed device policy)
-        self.assertIn("DeviceAllow=/dev/net/tun rw\n", t)
-        # the pin check runs before xray, as the user (no "+")
-        self.assertLess(t.index("ExecStartPre=/usr/bin/sha256sum --quiet --check /etc/omarchy-xray/xray.sha256\n"),
-                        t.index("ExecStart=/usr/bin/xray"))
-        self.assertIn("ExecStartPost=-+/usr/bin/udevadm wait --timeout=15 /sys/class/net/xray0\n", t)
-        self.assertIn("ExecStartPost=-+/usr/bin/resolvectl dns xray0 198.18.0.2\n", t)
+        t = M.tun_unit_text(1000, "/usr/bin/ip", "/usr/bin/udevadm", "/usr/bin/resolvectl")
+        self.assertIn(M.TUN_LAYOUT + "\n", t)
+        self.assertIn("Type=oneshot\n", t)
+        self.assertIn("ExecStart=/usr/bin/ip tuntap add dev xray0 mode tun user 1000\n", t)
+        self.assertIn("ExecStart=/usr/bin/ip route add default dev xray0 table 18180\n", t)
+        self.assertIn("ExecStart=/usr/bin/ip rule add pref 18180 lookup main suppress_prefixlength 0\n", t)
+        self.assertIn("ExecStart=/usr/bin/ip rule add pref 18181 from 0.0.0.0/32 lookup 18180\n", t)
+        self.assertIn("ExecStart=/usr/bin/ip rule add pref 18182 from 198.18.0.1 lookup 18180\n", t)
+        self.assertIn("ExecStart=-/usr/bin/ip -6 rule add pref 18181 from fdfe:dcba:9876::1 lookup 18180\n", t)
+        self.assertIn("ExecStart=-/usr/bin/resolvectl dns xray0 198.18.0.2\n", t)
+        # teardown (also run before start): device plus all six rules
+        for key in ("ExecStartPre", "ExecStopPost"):
+            self.assertIn("%s=-/usr/bin/ip link delete xray0\n" % key, t)
+            self.assertIn("%s=-/usr/bin/ip -6 rule delete pref 18181\n" % key, t)
+            self.assertEqual(t.count(key + "="), 6)
+        self.assertIn("CapabilityBoundingSet=CAP_NET_ADMIN\n", t)
+        self.assertNotIn("User=", t)
+        self.assertNotIn("Ambient", t)
+        # root runs nothing but these three system tools
         for line in t.splitlines():
-            if line.startswith("ExecStart"):
-                self.assertNotIn("omarchy-xray ", line.split("=", 1)[1].split()[0])
+            if line.startswith("Exec"):
+                self.assertIn(line.split("=", 1)[1].lstrip("-").split()[0],
+                              ("/usr/bin/ip", "/usr/bin/udevadm", "/usr/bin/resolvectl"))
+
+    def test_t2s_unit_text(self):
+        t = M.t2s_unit_text()
+        self.assertIn("ExecStartPre=%s start --no-ask-password omarchy-xray-tun.service\n"
+                      % M.SYSTEMCTL, t)
+        self.assertIn("ExecStart=%s tun-run\n" % M.SELF, t)
+        self.assertIn("ExecStopPost=-%s stop --no-ask-password omarchy-xray-tun.service\n"
+                      % M.SYSTEMCTL, t)
+        self.assertIn("NoNewPrivileges=true\n", t)
 
     def test_polkit_rule_scope(self):
         r = M.polkit_rule_text("alice")
@@ -551,14 +603,6 @@ class TunInstall(Base):
         with self.assertRaises(SystemExit):
             M.cmd_tun_install()
 
-    def test_root_owned_check(self):
-        p = self.tmp / "xray"
-        p.write_text("#!/bin/sh\n")
-        os.chmod(p, 0o755)
-        if os.geteuid() == 0:
-            os.chown(p, 1000, 1000)
-        self.assertFalse(M._root_owned_ok(str(p)))
-
     def test_installed_with_unreadable_polkit_dir(self):
         # /etc/polkit-1/rules.d is root:polkitd 0750: users cannot stat the rule
         if os.geteuid() == 0:
@@ -569,8 +613,10 @@ class TunInstall(Base):
         (rules / "49-omarchy-xray.rules").write_text("//\n")
         os.chmod(rules, 0o000)
         M.SYS_UNIT, M.POLKIT_RULE = self.tmp / "unit.service", rules / "49-omarchy-xray.rules"
-        M.SYS_UNIT.write_text("[Unit]\n")
+        M.SYS_UNIT.write_text("[Unit]\n")          # v3.0 layout: xray with caps
         try:
+            self.assertFalse(M.tun_installed())
+            M.SYS_UNIT.write_text(M.TUN_LAYOUT + "\n[Unit]\n")
             self.assertTrue(M.tun_installed())
         finally:
             os.chmod(rules, 0o755)
@@ -589,20 +635,6 @@ class Hardening(Base):
             M._root_write_all([(old, "replacement\n"), (new, "fresh\n")])
         self.assertEqual(old.read_text(), "previous\n")
         self.assertFalse(new.exists())
-
-    def test_pin_matches(self):
-        saved = M.PIN_FILE
-        binary = self.tmp / "xray"
-        binary.write_bytes(b"xray-bytes")
-        M.PIN_FILE = self.tmp / "xray.sha256"
-        try:
-            self.assertTrue(M.pin_matches())                       # no pin yet
-            M.PIN_FILE.write_text("%s  %s\n" % (M.hashlib.sha256(b"xray-bytes").hexdigest(), binary))
-            self.assertTrue(M.pin_matches())
-            binary.write_bytes(b"updated")
-            self.assertFalse(M.pin_matches())
-        finally:
-            M.PIN_FILE = saved
 
     def test_import_refuses_url_in_argv(self):
         with self.assertRaises(SystemExit):

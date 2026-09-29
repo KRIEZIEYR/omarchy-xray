@@ -8,8 +8,9 @@ traffic.
 
 ```
 Panel.qml ──▶ omarchy-xray (manager, ~/.local/bin)
-                 ├─ proxy mode ─▶ systemd --user  omarchy-xray.service      ─┐
-                 └─ TUN mode   ─▶ systemd system  omarchy-xray-tun.service  ─┴─▶ /usr/bin/xray
+                 ├─ both modes ─▶ systemd --user  omarchy-xray.service  ─▶ /usr/bin/xray (no privileges)
+                 └─ TUN mode   ─▶ systemd --user  omarchy-xray-tun2socks.service ─▶ tun2socks (no privileges)
+                                   └─ starts ─▶ systemd system  omarchy-xray-tun.service (root: ip + resolvectl only)
 Panel.qml ──▶ curl 127.0.0.1:15491/debug/vars  (live traffic, straight from xray)
 ```
 
@@ -70,12 +71,14 @@ the running one.
 ## Requirements
 
 - Omarchy Quattro (shell plugins)
-- Xray core **≥ 26.6.1** (TUN mode needs ≥ 26.4.13; tested with 26.6.1 and
-  26.9.9) — install it yourself from a source you trust (e.g. review the AUR
+- Xray core **≥ 26.6.1** (tested with 26.6.1 and 26.9.9) — install it yourself from a source you trust (e.g. review the AUR
   package, then `omarchy pkg aur add xray`). The installer never installs it
   for you and never grants capabilities to any binary. Older cores still work
   for most nodes; whatever they reject is skipped with a reason, and
   `omarchy-xray doctor` warns about the version.
+- TUN mode only: [tun2socks](https://github.com/xjasonlyu/tun2socks) ≥ 2.5
+  (`omarchy pkg aur add tun2socks`; review the package first). It runs as your
+  user without privileges.
 - optional geo data for the presets (`geoip.dat`, `geosite.dat`; on Arch:
   `v2ray-geoip`, `v2ray-domain-list-community`). Found automatically in
   `$XRAY_LOCATION_ASSET`, next to the xray binary, `/usr/share/xray` or
@@ -125,43 +128,44 @@ turning the tunnel off clears both.
 
 ## TUN mode
 
-TUN routes all system traffic (TCP, UDP, ICMP echo) through Xray.
+TUN routes all system traffic (TCP, UDP) through Xray. **Xray never gets a
+capability**: root only creates the device and the routes, everything that
+touches your traffic runs as your user.
 
-**Why it needs a setup step.** Xray creates and configures its TUN device
-itself (netlink: MTU, link up, addresses, routes), which needs
-`CAP_NET_ADMIN`. A `systemd --user` service cannot receive that capability
-(`AmbientCapabilities=` in a user unit has no effect, and `NoNewPrivileges`
-disables file capabilities), which is why TUN mode in v2 never came up.
+```
+apps ─▶ routes ─▶ xray0 ─▶ tun2socks (you) ─▶ 127.0.0.1:20170 ─▶ xray (you) ─▶ physical link ─▶ server
+```
 
 **What `omarchy-xray tun-setup` does** — once, through one polkit (pkexec)
 prompt, or `sudo omarchy-xray tun-install` from a terminal:
 
 | File (root:root 0644) | Purpose |
 |---|---|
-| `/etc/systemd/system/omarchy-xray-tun.service` | runs `/usr/bin/xray run -c ~/.config/omarchy-xray/config.json` **as your user** with `AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE`, `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome=read-only`, `PrivateTmp` and more; `ExecStartPost=+` runs `udevadm wait` and `resolvectl` (DNS of `xray0` → through the tunnel) with fixed arguments |
+| `/etc/systemd/system/omarchy-xray-tun.service` | root **oneshot** that runs only `ip`, `udevadm` and `resolvectl` with fixed arguments: creates `xray0` owned by your uid (`ip tuntap add … user <uid>`), `198.18.0.1/30` (+ a ULA /126), routes (below) and resolved DNS for `xray0`; stopping it deletes the device and its rules. `CapabilityBoundingSet=CAP_NET_ADMIN`, `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome` and more |
 | `/etc/polkit-1/rules.d/49-omarchy-xray.rules` | lets **only your user** `start`/`stop`/`restart` **only that unit** without a password |
 | `/etc/systemd/network/10-omarchy-xray.network` | only if systemd-networkd is active: keeps networkd away from `xray0` |
 
-The setup reads nothing but your uid (from `PKEXEC_UID`/`SUDO_UID`), refuses
-an xray binary that is not root-owned or is group/world-writable, requires it
-to belong to a package and match it (`pacman -Qkk`), pins its sha256 in
-`/etc/omarchy-xray/xray.sha256` (the unit refuses to start any other binary;
-after an xray update run `tun-setup` again), and writes
-its files all-or-nothing (a failed write restores the previous ones). It never
-touches routing rules itself; v2 leftovers (ip rules 5190/5199) go away on
-reboot. After it,
-root only ever executes root-owned system binaries (`xray` as your user,
-`udevadm`, `resolvectl`); this script is never run as root again. No setcap,
-no sudoers. Undo with `omarchy-xray tun-remove`.
+The setup reads nothing but your uid (from `PKEXEC_UID`/`SUDO_UID`) and
+writes its files all-or-nothing (a failed write restores the previous ones).
+No third-party binary ever runs as root or with capabilities, so there is
+nothing to pin or re-attest after an xray or tun2socks update. This script is
+never run as root again. No setcap, no sudoers. Undo with
+`omarchy-xray tun-remove`.
 
-**How routing works.** The TUN inbound uses Xray's own `gateway`
-(`198.18.0.1/30`, plus a ULA /126 when the host has IPv6),
-`autoSystemRoutingTable` (default routes via `xray0`, IPv6 only when the host
-has a v6 default route) and `autoOutboundsInterface: "auto"`: every socket
-Xray opens is bound to the physical interface and follows default-route
-changes (Wi-Fi ↔ Ethernet), so there are no routing loops for the proxy or
-for `direct`. The device is not persistent: if xray dies, `xray0` and its
-routes disappear and the normal network takes over.
+The user unit `omarchy-xray-tun2socks.service` starts the root unit, runs
+`omarchy-xray tun-run` (tun2socks on `xray0` → xray's socks port) and stops the
+root unit when it stops, so the device lives exactly as long as TUN mode.
+
+**How routing works.** The default route into `xray0` lives in its own table
+(`18180`), selected by three `ip rule`s (prefs 18180–18182; IPv6 has two):
+`main` first but without its default route (LAN stays local), then lookups
+with no source address yet or from `198.18.0.1` go to the tunnel. Xray binds
+every connection it makes to the physical interface (`sockopt.interface`,
+unprivileged `SO_BINDTODEVICE`, Linux ≥ 5.7), so it never loops back into
+`xray0`; its replies are looked up from the physical address and pass a strict
+`rp_filter` (ufw sets `rp_filter=1`). `tun-run` follows default-route changes
+(Wi-Fi ↔ Ethernet) and rebinds xray within ~5 s. If tun2socks stops, its unit
+stops the root unit and the normal network takes over.
 
 DNS: systemd-resolved sends everything to `198.18.0.2` on `xray0`; Xray
 answers it with a `dns` outbound. Queries go over DoH (`1.1.1.1`) through the
@@ -174,7 +178,8 @@ Manual check after `tun-setup` and `omarchy-xray mode tun && omarchy-xray on`:
 ```bash
 omarchy-xray doctor
 ip addr show xray0                 # 198.18.0.1/30
-ip route | grep xray0              # default dev xray0 metric 1
+ip rule | grep 1818                # the three rules
+ip route show table 18180          # default dev xray0
 resolvectl status xray0            # DNS Servers: 198.18.0.2, DNS Domain: ~.
 curl -s https://ifconfig.me        # the server's IP
 ```
@@ -229,10 +234,11 @@ Run `omarchy-xray restart` after editing.
 
 ## Security notes (marketplace review)
 
-- Proxy mode ships no privileged component. TUN mode is opt-in; its one-time
-  setup is the only privileged step and installs the three files above —
-  root afterwards runs only root-owned system binaries; the polkit rule is
-  scoped to one user, one unit and three verbs. No setcap, no sudoers.
+- Xray and tun2socks never run as root or with a capability, in either mode.
+  TUN mode is opt-in; its one-time setup is the only privileged step and
+  installs the three files above — root afterwards runs only `ip`, `udevadm`
+  and `resolvectl` with fixed arguments; the polkit rule is scoped to one
+  user, one unit and three verbs. No setcap, no sudoers.
 - The manager refuses to run as root except for `tun-install`/`tun-uninstall`,
   uses `#!/usr/bin/python3 -I`, calls tools by absolute path and gives child
   processes an explicit environment allowlist. The widget starts processes
@@ -287,7 +293,7 @@ bind = $mainMod SHIFT, T, exec, omarchy-shell krieziey.omarchy-xray select JP
 ## Troubleshooting
 
 - `omarchy-xray doctor` — core version and ownership, geo data, `/dev/net/tun`,
-  kernel, TUN files, polkit agent, resolved/networkd, v2 leftovers, service state.
+  kernel, tun2socks, TUN files, polkit agent, resolved/networkd, v2 leftovers, service state.
 - `omarchy-xray logs` — the journal of the active unit (the panel also shows
   the last error line when the service failed).
 - "N nodes skipped (…)" under the mode switch tells you why links were not

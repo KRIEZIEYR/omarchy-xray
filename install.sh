@@ -81,6 +81,7 @@ if [[ $NO_DEPS -eq 0 ]]; then
     die "xray core not found — review the package first, then install it (e.g. omarchy pkg aur add xray)"
   fi
   command -v curl >/dev/null 2>&1 || warn "curl not found — latency tests and live traffic need it"
+  command -v tun2socks >/dev/null 2>&1 || say "Optional: TUN mode needs tun2socks (review it, then: omarchy pkg aur add tun2socks)"
 
   if systemctl list-unit-files v2raya.service &>/dev/null && systemctl is-enabled v2raya.service &>/dev/null; then
     warn "v2raya system service is enabled, but the widget no longer uses v2rayA."
@@ -220,9 +221,11 @@ Done. The widget talks to omarchy-xray (no accounts, no passwords):
   omarchy-xray test                latency-test nodes
   omarchy-xray doctor              check the environment
 
-TUN mode (optional): omarchy-xray tun-setup   — one polkit/sudo prompt, once.
-It installs a system unit + a polkit rule for exactly that unit; after that
-switching TUN on/off needs no password. Undo: omarchy-xray tun-remove
+TUN mode (optional, needs tun2socks): omarchy-xray tun-setup — one polkit/sudo
+prompt, once. It installs a root unit that only creates the xray0 device and
+its routes, plus a polkit rule for exactly that unit; xray and tun2socks run as
+you without privileges. Switching TUN on/off needs no password afterwards.
+Undo: omarchy-xray tun-remove
 
 Scripting (Hyprland binds):
   bind = SUPER SHIFT, V, exec, omarchy-shell ${PLUGIN_ID} toggleProxy
