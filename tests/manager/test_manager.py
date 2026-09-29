@@ -516,13 +516,16 @@ class TunInstall(Base):
     def test_unit_text(self):
         t = M.tun_unit_text("alice", "alice", "/home/alice/.config/omarchy-xray/config.json",
                             "/usr/bin/xray", "/usr/share/xray", "/usr/bin/resolvectl",
-                            "/usr/bin/udevadm")
+                            "/usr/bin/udevadm", "/usr/bin/sha256sum")
         self.assertIn("User=alice\n", t)
         self.assertIn("ExecStart=/usr/bin/xray run -c /home/alice/.config/omarchy-xray/config.json\n", t)
         self.assertIn("AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE\n", t)
         self.assertIn("NoNewPrivileges=yes\n", t)
         # ProtectClock implies DeviceAllow=char-rtc (closed device policy)
         self.assertIn("DeviceAllow=/dev/net/tun rw\n", t)
+        # the pin check runs before xray, as the user (no "+")
+        self.assertLess(t.index("ExecStartPre=/usr/bin/sha256sum --quiet --check /etc/omarchy-xray/xray.sha256\n"),
+                        t.index("ExecStart=/usr/bin/xray"))
         self.assertIn("ExecStartPost=-+/usr/bin/udevadm wait --timeout=15 /sys/class/net/xray0\n", t)
         self.assertIn("ExecStartPost=-+/usr/bin/resolvectl dns xray0 198.18.0.2\n", t)
         for line in t.splitlines():
@@ -586,6 +589,20 @@ class Hardening(Base):
             M._root_write_all([(old, "replacement\n"), (new, "fresh\n")])
         self.assertEqual(old.read_text(), "previous\n")
         self.assertFalse(new.exists())
+
+    def test_pin_matches(self):
+        saved = M.PIN_FILE
+        binary = self.tmp / "xray"
+        binary.write_bytes(b"xray-bytes")
+        M.PIN_FILE = self.tmp / "xray.sha256"
+        try:
+            self.assertTrue(M.pin_matches())                       # no pin yet
+            M.PIN_FILE.write_text("%s  %s\n" % (M.hashlib.sha256(b"xray-bytes").hexdigest(), binary))
+            self.assertTrue(M.pin_matches())
+            binary.write_bytes(b"updated")
+            self.assertFalse(M.pin_matches())
+        finally:
+            M.PIN_FILE = saved
 
     def test_import_refuses_url_in_argv(self):
         with self.assertRaises(SystemExit):

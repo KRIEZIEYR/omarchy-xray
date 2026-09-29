@@ -143,7 +143,10 @@ prompt, or `sudo omarchy-xray tun-install` from a terminal:
 | `/etc/systemd/network/10-omarchy-xray.network` | only if systemd-networkd is active: keeps networkd away from `xray0` |
 
 The setup reads nothing but your uid (from `PKEXEC_UID`/`SUDO_UID`), refuses
-an xray binary that is not root-owned or is group/world-writable, and writes
+an xray binary that is not root-owned or is group/world-writable, requires it
+to belong to a package and match it (`pacman -Qkk`), pins its sha256 in
+`/etc/omarchy-xray/xray.sha256` (the unit refuses to start any other binary;
+after an xray update run `tun-setup` again), and writes
 its files all-or-nothing (a failed write restores the previous ones). It never
 touches routing rules itself; v2 leftovers (ip rules 5190/5199) go away on
 reboot. After it,

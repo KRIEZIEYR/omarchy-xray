@@ -67,6 +67,7 @@ LOGIN_UNIT = UNIT_DIR / LOGIN_SERVICE
 SYS_UNIT = pathlib.Path("/etc/systemd/system") / TUN_SERVICE
 POLKIT_RULE = pathlib.Path("/etc/polkit-1/rules.d/49-omarchy-xray.rules")
 NETWORKD_FILE = pathlib.Path("/etc/systemd/network/10-omarchy-xray.network")
+PIN_FILE = pathlib.Path("/etc/omarchy-xray/xray.sha256")   # "<sha256>  <xray path>"
 
 _SYS_DIRS = ("/usr/bin", "/usr/sbin", "/bin", "/sbin", "/usr/local/bin")
 _SAFE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin"
@@ -1553,6 +1554,8 @@ def start_service(st):
         uctl("enable", LOGIN_SERVICE)
         r = sctl("restart", TUN_SERVICE, timeout=90)
         if r.returncode != 0:
+            if not pin_matches():
+                die("xray changed since TUN setup (package update?) — run: omarchy-xray tun-setup")
             die("failed to start %s: %s" % (TUN_SERVICE, _last_lines(r.stderr) or "denied")
                 + ". If the polkit rule is missing, re-run: omarchy-xray tun-setup")
         uctl("start", LOGIN_SERVICE)
@@ -2184,6 +2187,9 @@ def cmd_doctor():
     add("kernel >= 5.7 (unprivileged SO_BINDTODEVICE)",
         m and (int(m.group(1)), int(m.group(2))) >= (5, 7), rel)
     add("TUN system unit installed", SYS_UNIT.is_file(), str(SYS_UNIT))
+    if SYS_UNIT.is_file():
+        add("xray matches the TUN pin", pin_matches(),
+            "" if pin_matches() else "xray changed since tun-setup — run: omarchy-xray tun-setup")
     add("polkit agent running", _polkit_agent_running(), "needed for the one-time tun-setup prompt")
     resolved = sctl("is-active", "systemd-resolved").stdout.strip() == "active"
     add("systemd-resolved (DNS through the TUN)", resolved)
@@ -2206,8 +2212,11 @@ def cmd_doctor():
 
 # --- TUN setup (the only privileged code path) -------------------------------
 
-def tun_unit_text(user, group, conf, xray, asset, resolvectl, udevadm):
+def tun_unit_text(user, group, conf, xray, asset, resolvectl, udevadm, sha256sum):
     env = "Environment=XRAY_LOCATION_ASSET=%s\n" % asset if asset else ""
+    # xray gets CAP_NET_ADMIN only while it is the exact binary tun-setup
+    # attested; a package update needs a new tun-setup.
+    pin = "ExecStartPre=%s --quiet --check %s\n" % (sha256sum, PIN_FILE)
     dns = ""
     if resolvectl:
         dns = ("ExecStartPost=-+{r} dns {t} {d}\n"
@@ -2228,6 +2237,7 @@ def tun_unit_text(user, group, conf, xray, asset, resolvectl, udevadm):
         "Type=exec\n"
         "User=%s\n"
         "Group=%s\n"
+        "%s"
         "%s"
         "ExecStart=%s run -c %s\n"
         "%s%s"
@@ -2253,7 +2263,7 @@ def tun_unit_text(user, group, conf, xray, asset, resolvectl, udevadm):
         "RestrictSUIDSGID=yes\n"
         "LockPersonality=yes\n"
         "SystemCallArchitectures=native\n"
-    ) % (VERSION, user, user, user, group, env, xray, conf, wait, dns)
+    ) % (VERSION, user, user, user, group, env, pin, xray, conf, wait, dns)
 
 
 def polkit_rule_text(user):
@@ -2312,6 +2322,33 @@ def _root_write(path, text):
     os.chown(path, 0, 0)
 
 
+def _attest_xray(xray):
+    """xray is about to run with CAP_NET_ADMIN: it must belong to a package and
+    match that package's recorded checksums. Returns its sha256 for the pin."""
+    pac = tool("pacman")
+    if not pac:
+        die("cannot verify %s against a package database (pacman not found)" % xray)
+    owner = sh(pac, "-Qqo", xray).stdout.strip()
+    if not re.match(r"^[a-z0-9@._+-]+$", owner):
+        die("%s is not owned by any package — install xray from your package manager" % xray)
+    r = sh(pac, "-Qkk", owner, timeout=120)
+    if r.returncode != 0 or not re.search(r"\b0 altered files\b", (r.stdout or "") + (r.stderr or "")):
+        die("%s does not match the %s package (pacman -Qkk) — reinstall it" % (xray, owner))
+    return hashlib.sha256(pathlib.Path(xray).read_bytes()).hexdigest()
+
+
+def pin_matches():
+    """True when there is no pin or the installed xray still matches it."""
+    try:
+        want, path = PIN_FILE.read_text().split()
+    except (OSError, ValueError):
+        return True
+    try:
+        return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest() == want
+    except OSError:
+        return False
+
+
 def _root_write_all(pairs):
     """Write every (path, text) or none: on any failure put back what was
     there before (or remove what did not exist) and stop."""
@@ -2352,13 +2389,18 @@ def cmd_tun_install():
     if not _root_owned_ok(xray):
         die("%s must be root-owned and not group/world-writable (it will run with "
             "CAP_NET_ADMIN) — install xray from your package manager" % xray)
+    digest = _attest_xray(xray)
+    sha256sum = tool("sha256sum")
+    if not sha256sum:
+        die("sha256sum not found (coreutils)")
     asset = asset_dir()
     if asset and not _UNIT_PATH_RE.match(asset):
         asset = None
     resolvectl, udevadm = tool("resolvectl"), tool("udevadm")
     networkd = sh(SYSTEMCTL, "is-active", "systemd-networkd").stdout.strip() == "active"
-    _root_write_all([(SYS_UNIT, tun_unit_text(pw.pw_name, group, conf, xray, asset,
-                                              resolvectl, udevadm)),
+    _root_write_all([(PIN_FILE, "%s  %s\n" % (digest, xray)),
+                     (SYS_UNIT, tun_unit_text(pw.pw_name, group, conf, xray, asset,
+                                              resolvectl, udevadm, sha256sum)),
                      (POLKIT_RULE, polkit_rule_text(pw.pw_name))]
                     + ([(NETWORKD_FILE, NETWORKD_TEXT)] if networkd else []))
     if networkd:
@@ -2375,7 +2417,7 @@ def cmd_tun_uninstall():
         die("tun-uninstall must run as root — use: omarchy-xray tun-remove")
     sh(SYSTEMCTL, "stop", TUN_SERVICE)
     removed = []
-    for p in (SYS_UNIT, POLKIT_RULE, NETWORKD_FILE):
+    for p in (SYS_UNIT, POLKIT_RULE, NETWORKD_FILE, PIN_FILE):
         try:
             p.unlink()
             removed.append(str(p))
