@@ -71,7 +71,7 @@ module.exports = function ({ Xray, assert, eq }) {
   /* ---- latency helpers ---- */
   eq('latency ms label', Xray.latencyLabel('123ms'), '123ms')
   eq('latency timeout label', Xray.latencyLabel('TIMEOUT'), 'timeout')
-  eq('latency error label', Xray.latencyLabel('error'), 'unreach')
+  eq('latency error label', Xray.latencyLabel('error'), 'failed')
   assert('latency good', Xray.latencyGood('300ms') === true)
   assert('latency not good', Xray.latencyGood('500ms') === false)
   assert('latency bad', Xray.latencyBad('timeout') === true)
@@ -117,15 +117,31 @@ module.exports = function ({ Xray, assert, eq }) {
     eq('title auto pick', Xray.heroTitle({ touch: ta, autoPick: 'DE' }), 'Auto → DE')
     eq('title auto', Xray.heroTitle({ touch: ta }), 'Auto — best ping')
     const off = Xray.groupsFromStatus(Object.assign({}, status, { running: false }), 1000, NOW)
-    eq('title off', Xray.heroTitle({ touch: off }), 'Xray')
-    eq('state off', Xray.heroState({ touch: off }), 'Disconnected')
+    eq('title off', Xray.heroTitle({ touch: off }), 'Off')
+    eq('state off', Xray.heroState({ touch: off }), 'Disconnected · proxy')
+    eq('state off tun', Xray.heroState({ touch: off, mode: 'tun' }), 'Disconnected · TUN')
+    eq('title off with target', Xray.heroTitle({ touch: off, target: 'DE' }), 'Off')
+    eq('state off names target', Xray.heroState({ touch: off, target: 'DE', mode: 'tun' }), '→ DE · TUN')
   }
   eq('state unreachable', Xray.heroState({ unreachable: true }), 'Manager unreachable')
   eq('state checking', Xray.heroState({}), 'Checking…')
   eq('title checking', Xray.heroTitle({}), 'Xray')
+  eq('title no subscription', Xray.heroTitle({ touch: { nodes: [], connectedKeys: {} } }), 'Xray')
+  eq('state no subscription', Xray.heroState({ touch: { nodes: [], connectedKeys: {} } }), 'No subscription yet')
   eq('state connecting', Xray.heroState({ touch: { nodes: [], connectedKeys: {} }, pending: 'connecting' }), 'Connecting…')
   eq('state disconnecting', Xray.heroState({ touch: { nodes: [], connectedKeys: {} }, pending: 'disconnecting' }), 'Disconnecting…')
-  eq('state unknown pending ignored', Xray.heroState({ touch: { nodes: [], connectedKeys: {} }, pending: 'x' }), 'Disconnected')
+  eq('state unknown pending ignored', Xray.heroState({ touch: { nodes: [{ key: 'k' }], connectedKeys: {} }, pending: 'x' }), 'Disconnected · proxy')
+
+  /* ---- names are tidied; the fastest measured node is known ---- */
+  {
+    const t = Xray.groupsFromStatus({ running: false, subs: [], nodes: [
+      { key: 'a', name: '🇫🇮  Finland  ', latency: '448ms' },
+      { key: 'b', name: 'Sweden', latency: '390ms' },
+      { key: 'c', name: 'Germany', latency: 'timeout' }] }, 1000, NOW)
+    eq('name whitespace collapsed', t.nodes[0].name, '🇫🇮 Finland')
+    eq('fastest key', Xray.fastestKey(t.nodes), 'b')
+    eq('fastest none', Xray.fastestKey([{ key: 'x', latency: 'timeout' }]), '')
+  }
 
   /* ---- formatSpeed / formatBytes ---- */
   eq('speed zero', Xray.formatSpeed(0), '0 B/s')

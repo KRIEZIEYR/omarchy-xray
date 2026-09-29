@@ -18,7 +18,7 @@ function loadModel() {
   const api = ['groupsFromStatus', 'subInfoLabel', 'skippedLabel', 'parseMetrics',
     'latencyLabel', 'latencyGood', 'latencyBad', 'filterNodes', 'findNodeByKey',
     'pickConnectTarget', 'autoPickName', 'formatSpeed', 'formatBytes', 'heroLine',
-    'heroTitle', 'heroState'].join(', ')
+    'heroTitle', 'heroState', 'fastestKey'].join(', ')
   const sandbox = { module: { exports: {} }, exports: {}, JSON, Math, Date, Number, String, Object }
   vm.createContext(sandbox)
   vm.runInContext(src + '\nmodule.exports = { ' + api + ' }', sandbox, { filename: 'Xray.js' })

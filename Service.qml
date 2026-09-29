@@ -61,8 +61,12 @@ Item {
   // "connecting" | "switching" | "disconnecting" while a connection change runs.
   property string pending: ""
 
+  // The node the connect switch / `c` will use (shown while disconnected).
+  readonly property var connectTarget: touch ? Model.pickConnectTarget(touch, String(setting("lastNodeKey", ""))) : null
+
   readonly property var _heroInput: ({
     pending: pending,
+    target: connectTarget ? connectTarget.name : "",
     unreachable: !reachable,
     touch: touch,
     mode: mode,
@@ -244,6 +248,7 @@ Item {
   }
 
   function busyRefused() {
+    if (testing) { flash("A latency test is running: stop it (t) to change settings"); return }
     var slot = _long.running ? _long : _action
     flash(opName(slot._label) + " is still running. Try again in a moment")
   }
@@ -359,7 +364,7 @@ Item {
   function toggleConnection(lastKey) {
     if (connected) { disconnect(); return }
     var target = Model.pickConnectTarget(touch || {}, lastKey)
-    if (target === null) { lastError = "No nodes yet. Add a subscription URL in the panel first"; return }
+    if (target === null) { lastError = "No nodes yet: add a subscription URL first"; return }
     connectNode(target)
   }
 
@@ -399,7 +404,7 @@ Item {
     var all = touch ? touch.nodes : []
     for (var j = 0; j < all.length; j++) if (all[j].key !== "auto") total++
     var subset = keys.length > 0 && keys.length < total
-    var label = !subset ? "Testing nodes (batched, 10 min cap)…"
+    var label = !subset ? "Testing " + total + " nodes…"
               : keys.length === 1 ? "Testing " + scrub(first) + "…"
               : "Testing " + keys.length + " nodes…"
     runLong([manager, "test"].concat(subset ? keys : []), "latency test", 660000,
@@ -429,17 +434,27 @@ Item {
             function(d) { return "Subscription updated: " + (d.nodes || 0) + " nodes in total" }, "Updating subscription…")
   }
 
+  // Import progress and failures, shown next to the URL field itself (the
+  // panel may be scrolled to the subscriptions when they happen).
+  property string importNote: ""
+  readonly property bool importing: _long.running && _long._label === "import"
+
   function importUrl(url, onDone) {
     // The URL is a secret: bounded, https-only, passed via the environment
     // (never argv — argv is world-visible via ps).
     var u = String(url || "").trim()
     if (u === "") return
-    if (u.length > maxInput) { lastError = "That URL is too long (over " + maxInput + " characters)"; return }
-    if (!/^https:\/\//i.test(u)) { lastError = "Subscription URL must start with https://"; return }
+    var bad = u.length > maxInput ? "That URL is too long (over " + maxInput + " characters)"
+            : !/^https:\/\//i.test(u) ? "Subscription URL must start with https://" : ""
+    if (bad !== "") { lastError = bad; importNote = bad; return }
     runLong([manager, "import", "-"], "import", 240000,
             function(d) { return "Subscription added: " + (d.nodes || 0) + " nodes available" },
             "Downloading the subscription…", { OMARCHY_XRAY_SUB_URL: u },
-            function(resp) { if (onDone) onDone(resp.ok) })
+            function(resp) {
+              importNote = resp.ok ? "" : lastError
+              if (onDone) onDone(resp.ok)
+            })
+    if (importing) importNote = "Downloading the subscription…"
   }
 
   function subRemove(index) {

@@ -36,7 +36,7 @@ function groupsFromStatus(data, maxNodes, nowSec) {
     var src = raw[i] || {}
     var node = {
       key: String(src.key || ""),
-      name: String(src.name || "Unnamed"),
+      name: String(src.name || "Unnamed").replace(/\s+/g, " ").trim() || "Unnamed",
       address: String(src.address || ""),
       net: String(src.net || ""),
       latency: String(src.latency || ""),
@@ -136,7 +136,7 @@ function latencyLabel(raw) {
   if (s === "") return ""
   if (/ms$/i.test(s)) return s
   if (/^timeout$/i.test(s)) return "timeout"
-  if (/time/i.test(s) || /fail/i.test(s) || /error/i.test(s) || /refus/i.test(s) || /unreachable/i.test(s)) return "unreach"
+  if (/time/i.test(s) || /fail/i.test(s) || /error/i.test(s) || /refus/i.test(s) || /unreachable/i.test(s)) return "failed"
   return elide(s, 18)
 }
 
@@ -147,7 +147,17 @@ function latencyGood(label) {
 
 function latencyBad(label) {
   var l = String(label || "")
-  return l === "timeout" || l === "unreach"
+  return l === "timeout" || l === "failed"
+}
+
+/* Key of the node with the lowest measured latency ("" when none measured). */
+function fastestKey(nodes) {
+  var best = "", bestMs = Infinity
+  for (var i = 0; i < (nodes || []).length; i++) {
+    var m = /^(\d+)ms$/.exec(String(nodes[i].latency || ""))
+    if (m && nodes[i].key !== "auto" && parseInt(m[1], 10) < bestMs) { bestMs = parseInt(m[1], 10); best = nodes[i].key }
+  }
+  return best
 }
 
 function filterNodes(groups, query) {
@@ -242,7 +252,12 @@ function heroLine(state) {
 // Panel hero: the exit you are on leads; the state is a short caption.
 function heroTitle(state) {
   var n = state ? connectedNode(state.touch) : null
-  if (!n) return "Xray"
+  if (!n) {
+    // "Off" leads; the node a connect would use goes in the caption, so a
+    // node name never looks like a live (or dead) connection.
+    var t = state && state.touch
+    return t && t.nodes && t.nodes.length > 0 ? "Off" : "Xray"
+  }
   if (n.key === "auto") return state.autoPick ? "Auto → " + state.autoPick : n.name
   return n.name
 }
@@ -254,7 +269,9 @@ function heroState(state) {
   if (pending[state.pending]) return pending[state.pending]
   var t = state.touch
   if (!t) return "Checking…"
-  if (connectedNode(t)) return "Connected · " + (state.mode === "tun" ? "TUN" : "proxy")
+  var mode = state.mode === "tun" ? "TUN" : "proxy"
+  if (connectedNode(t)) return "Connected · " + mode
+  if (!t.nodes || t.nodes.length === 0) return "No subscription yet"
   if (t.running) return "Core running · not connected"
-  return "Disconnected"
+  return state.target ? "→ " + state.target + " · " + mode : "Disconnected · " + mode
 }

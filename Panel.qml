@@ -19,6 +19,8 @@ Panel {
   property string filterQuery: ""
   property bool regionsOpen: false
   property int regionHover: -1
+  // No subscription yet: hide what cannot be used and bring the URL field up.
+  readonly property bool firstRun: xray.reachable && xray.touch !== null && xray.subs.length === 0
   property bool subsOpen: false
   readonly property bool subsShown: subsOpen || xray.subs.length === 0
   readonly property real settingLabelWidth: Style.space(52)
@@ -32,6 +34,7 @@ Panel {
   }
 
   function pickRegion(code) {
+    if (xray.busy) { xray.busyRefused(); return }
     regionsOpen = false
     persistSetting("lastRegion", code)
     if (xray.routing !== code + "-direct") xray.setRouting(code + "-direct")
@@ -54,12 +57,13 @@ Panel {
   // The cursor walks the settings rows above the nodes, as in Network:
   // nodeIndex < 0 addresses a settings row (-1 = the last one), >= 0 a node.
   // h/l pick a chip inside the row, Enter applies it.
-  readonly property var settingRows: regionsOpen ? ["mode", "route", "regions"] : ["mode", "route"]
+  readonly property var settingRows: firstRun ? ["hero"]
+                                    : regionsOpen ? ["hero", "mode", "route", "regions"] : ["hero", "mode", "route"]
   property int chipIndex: 0
   readonly property string cursorRow: cursorActive && nodeIndex < 0 ? (settingRows[settingRows.length + nodeIndex] || "") : ""
 
   function chipCount(row) {
-    return row === "mode" ? 2 : row === "route" ? 4 : row === "regions" ? xray.regions.length : 0
+    return row === "hero" ? 1 : row === "mode" ? 2 : row === "route" ? 4 : row === "regions" ? xray.regions.length : 0
   }
 
   function currentChip(row) {
@@ -77,7 +81,8 @@ Panel {
   }
 
   function activateChip() {
-    if (cursorRow === "mode") chooseMode(chipIndex === 1 ? "tun" : "proxy")
+    if (cursorRow === "hero") xray.toggleConnection(root.lastNodeKey)
+    else if (cursorRow === "mode") chooseMode(chipIndex === 1 ? "tun" : "proxy")
     else if (cursorRow === "route") {
       if (chipIndex < 2) chooseRoute(chipIndex === 1 ? "direct" : "global")
       else if (chipIndex === 2) regionsOpen = !regionsOpen
@@ -121,7 +126,7 @@ Panel {
   readonly property string barLabelText: {
     if (xray.barLabel === "node") return xray.connectedNodeName
     if (xray.barLabel === "speed" && xray.connected)
-      return "󰁅" + (xray.traffic !== null ? Model.formatSpeed(xray.traffic.downSpeed) : "…")
+      return "󰁅 " + (xray.traffic !== null ? Model.formatSpeed(xray.traffic.downSpeed) : "…")
     return ""
   }
   // The speed label reserves its widest value so the bar never jitters;
@@ -130,7 +135,7 @@ Panel {
     id: labelMetrics
     font.family: root.fontFamily
     font.pixelSize: Style.font.caption
-    text: xray.barLabel === "speed" ? "󰁅1023.9 KB/s" : root.barLabelText
+    text: xray.barLabel === "speed" ? "󰁅 1023.9 KB/s" : root.barLabelText
   }
   readonly property real barLabelWidth: barLabelText === "" ? 0 : Math.min(Math.ceil(labelMetrics.advanceWidth), Style.space(120))
 
@@ -159,7 +164,8 @@ Panel {
     for (var g = 0; g < visibleGroups.length; g++) {
       var grp = visibleGroups[g]
       var st = grp.status === undefined || grp.status === null ? "" : String(grp.status).trim()
-      var title = grp.title + (st === "" || st === "undefined" || st === "null" ? "" : "  ·  " + st)
+      var title = grp.subscriptionId === "auto" ? ""          // one row needs no header
+                : grp.title + (st === "" || st === "undefined" || st === "null" ? "" : "  ·  " + st)
       for (var i = 0; i < grp.nodes.length; i++) out.push({ node: grp.nodes[i], title: i === 0 ? title : "" })
     }
     return out
@@ -233,6 +239,25 @@ Panel {
     var sec = Math.max(0, Math.floor((nowMs - xray.longStartedMs) / 1000))
     return Math.floor(sec / 60) + ":" + ("0" + sec % 60).slice(-2)
   }
+
+  function focusSubUrl() {
+    subsOpen = true
+    Qt.callLater(function() {
+      if (!nodeList.footerItem) return
+      nodeList.positionViewAtEnd()
+      nodeList.footerItem.subUrl.forceActiveFocus()
+    })
+  }
+
+  readonly property string fastestKey: Model.fastestKey(visibleNodes)
+  TextMetrics {
+    id: latencyMetrics
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.caption
+    font.bold: true
+    text: "󰉁 9999ms"
+  }
+  readonly property real latencyCellWidth: Math.ceil(latencyMetrics.advanceWidth)
 
   function importSub() {
     var field = nodeList.footerItem ? nodeList.footerItem.subUrl : null
@@ -313,7 +338,8 @@ Panel {
     // label no longer paints over the neighbouring widget.
     fixedWidth: vertical ? -1 : slotSize + (root.barLabelWidth > 0 ? root.barLabelWidth + Style.space(5) : 0)
     dimmed: xray.reachable && (!xray.connected || xray.pending !== "")
-    tooltipText: xray.pending !== "" ? xray.actionStatus : xray.heroSummary
+    tooltipText: xray.pending !== "" ? xray.actionStatus
+                 : xray.heroSummary + " · right-click to " + (xray.connected ? "disconnect" : "connect")
     iconComponent: Component {
       Item {
         readonly property string label: root.barLabelText
@@ -365,6 +391,9 @@ Panel {
 
     PanelKeyCatcher {
       id: keyCatcher
+      // Inline editors get every key (kit contract); they handle Up/Down/Enter/Esc themselves.
+      blocked: (nodeList.headerItem !== null && nodeList.headerItem.search.activeFocus)
+               || (nodeList.footerItem !== null && nodeList.footerItem.subUrl.activeFocus)
       anchors.fill: parent
       onMoveRequested: function(dx, dy) {
         if (!root.cursorActive) { root.cursorActive = true; return }
@@ -380,6 +409,7 @@ Panel {
         else if (t === "c" || t === "C") xray.toggleConnection(root.lastNodeKey)
         else if (t === "w" || t === "W") xray.openWebUi()
         else if (t === "/" && nodeList.headerItem) nodeList.headerItem.search.forceActiveFocus()
+        else if (t === "a" || t === "A") root.focusSubUrl()
       }
 
       // One scroll view for the whole panel. Only the node rows are
@@ -428,6 +458,7 @@ Panel {
                 iconSize: Style.font.display
                 color: xray.connected ? root.onColor : hero.foreground
                 filled: xray.connected
+                warning: !xray.reachable
               }
             }
             trailingControl: Component {
@@ -436,46 +467,55 @@ Panel {
                 checked: xray.connected
                 busy: xray.toggleBusy
                 opacity: xray.toggleBusy ? 0.5 : 1.0
-                hasCursor: false
+                hasCursor: root.cursorRow === "hero"
                 foreground: hero.foreground
                 onToggled: xray.toggleConnection(root.lastNodeKey)
+                Accessible.role: Accessible.CheckBox
+                Accessible.name: "VPN connection"
+                Accessible.checked: xray.connected
+
+                PanelToolTip {
+                  visible: powerSwitch.containsMouse
+                  text: xray.connected ? "Disconnect (c)"
+                        : xray.connectTarget ? "Connect to " + xray.connectTarget.name + " (c)" : "Add a subscription first"
+                  fontFamily: root.fontFamily
+                }
               }
             }
           }
 
-          // Status line: what is running now (sentence case, wraps), else the
-          // last error with a glyph so it does not rely on colour alone.
-          Text {
-            textFormat: Text.PlainText
-            visible: xray.actionStatus !== "" || xray.errorText !== ""
-            width: parent.width
-            text: xray.actionStatus !== "" ? xray.actionStatus : "󰀦 " + xray.errorText
-            color: xray.actionStatus !== "" ? root.dim : root.urgent
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-            wrapMode: Text.WordWrap
-          }
-
+          // One status slot under the hero, always one line tall: the running
+          // action, else the last error (with a glyph; errors may wrap), else
+          // live traffic. Flashes swap the text in place instead of pushing
+          // the list down and back.
           Text {
             textFormat: Text.PlainText
             readonly property bool live: xray.connected && xray.traffic !== null
-            visible: xray.reachable
+            readonly property string kind: xray.actionStatus !== "" ? "action"
+                                         : xray.errorText !== "" ? "error"
+                                         : root.firstRun ? "none" : "traffic"
+            visible: xray.reachable || xray.errorText !== ""
             width: parent.width
-            text: !live ? "󰁅 —   󰁝 —"
+            text: kind === "action" ? xray.actionStatus
+                  : kind === "error" ? "󰀦 " + xray.errorText
+                  : kind === "none" ? ""
+                  : !live ? "󰁅 —   󰁝 —"
                   : "󰁅 " + Model.formatSpeed(xray.traffic.downSpeed)
                     + "   󰁝 " + Model.formatSpeed(xray.traffic.upSpeed)
-                    + "   ·   " + Model.formatBytes(xray.traffic.downTotal)
-            color: live ? root.foreground : root.dim
+                    + "   ·   downloaded " + Model.formatBytes(xray.traffic.downTotal)
+            color: kind === "error" ? root.urgent : kind === "traffic" && live ? root.foreground : root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
+            wrapMode: kind === "error" ? Text.WordWrap : Text.NoWrap
+            elide: kind === "error" ? Text.ElideNone : Text.ElideRight
           }
 
-          PanelSeparator { visible: xray.reachable; foreground: root.foreground }
+          PanelSeparator { visible: xray.reachable && !root.firstRun; foreground: root.foreground }
 
           // Mode and route are set-and-forget: a compact label/chips form that
           // stays quieter than the connect switch and the node list.
           Column {
-            visible: xray.reachable
+            visible: xray.reachable && !root.firstRun
             width: parent.width
             spacing: Style.space(8)
 
@@ -507,6 +547,7 @@ Panel {
                 fontSize: Style.font.caption
                 opacity: xray.busy ? 0.45 : 1.0
                 onChanged: function(v) { root.chooseMode(v) }
+                onHovered: function(i, h) { if (h) root.cursorActive = false }
               }
 
               Item { Layout.fillWidth: true }
@@ -540,6 +581,7 @@ Panel {
                 fontSize: Style.font.caption
                 opacity: xray.busy ? 0.45 : 1.0
                 onChanged: function(v) { root.chooseRoute(v) }
+                onHovered: function(i, h) { if (h) root.cursorActive = false }
               }
 
               Button {
@@ -547,6 +589,7 @@ Panel {
                 tooltipText: "Choose the country that bypasses the VPN"
                 bordered: true
                 foreground: xray.region ? root.foreground : root.dim
+                opacity: xray.busy ? 0.45 : 1.0
                 hasCursor: root.cursorRow === "route" && root.chipIndex === 2
                 enabled: xray.regions.length > 0
                 fontFamily: root.fontFamily
@@ -606,7 +649,7 @@ Panel {
                   fontFamily: root.fontFamily
                   fontSize: Style.font.caption
                   onClicked: root.pickRegion(modelData.code)
-                  onHovered: function(h) { root.regionHover = h ? index : (root.regionHover === index ? -1 : root.regionHover) }
+                  onHovered: function(h) { if (h) { root.cursorActive = false; root.regionHover = index } }
                 }
               }
             }
@@ -616,7 +659,7 @@ Panel {
               visible: root.regionsOpen
               width: parent.width
               text: {
-                var i = root.cursorRow === "regions" ? root.chipIndex : root.regionHover
+                var i = root.cursorRow === "regions" ? root.chipIndex : (root.cursorActive ? -1 : root.regionHover)
                 var r = i >= 0 ? xray.regions[i] : null
                 if (r) return r.name + ": its sites and IPs bypass the VPN" + (xray.geo ? "" : " (domains only, no geo data)")
                 return root.routeRegion ? "Bypassing now: " + root.routeRegion.name : "Pick a country to bypass the VPN"
@@ -628,13 +671,14 @@ Panel {
             }
           }
 
-          PanelSeparator { visible: xray.reachable; foreground: root.foreground }
+          PanelSeparator { visible: xray.reachable && !root.firstRun; foreground: root.foreground }
           Column {
             visible: xray.reachable
             width: parent.width
             spacing: Style.space(6)
 
             RowLayout {
+              visible: !root.firstRun
               width: parent.width
               spacing: Style.space(6)
 
@@ -666,6 +710,7 @@ Panel {
             }
 
             RowLayout {
+              visible: !root.firstRun
               width: parent.width
               spacing: Style.space(6)
 
@@ -678,6 +723,7 @@ Panel {
                 onTextChanged: {
                   root.filterQuery = text
                   root.nodeIndex = 0
+                  root.cursorActive = text !== ""
                 }
                 Keys.onPressed: function(event) {
                   if (event.key === Qt.Key_Escape) {
@@ -706,7 +752,7 @@ Panel {
               TextActionButton {
                 label: "󰅖"
                 tooltip: "Clear filter"
-                enabled: root.filterQuery !== ""
+                visible: root.filterQuery !== ""
                 onClicked: { root.filterQuery = ""; searchField.text = ""; keyCatcher.forceActiveFocus() }
               }
             }
@@ -717,6 +763,7 @@ Panel {
               width: parent.width
               text: xray.touch === null ? "Loading…"
                     : root.filterQuery !== "" ? "No nodes match “" + root.filterQuery + "” — Esc clears the filter"
+                    : root.firstRun ? "No subscription yet. Paste the subscription URL from your VPN provider below."
                     : "No nodes yet — add a subscription URL below."
               wrapMode: Text.WordWrap
               color: root.dim
@@ -806,8 +853,10 @@ Panel {
                 foreground: root.foreground
                 placeholderText: "Paste a subscription URL (https://…)"
                 onAccepted: if (text.trim() !== "") root.importSub()
+                onTextChanged: if (!xray.importing) xray.importNote = ""
                 Keys.onEscapePressed: function(event) {
-                  root.close()
+                  if (text !== "") text = ""
+                  else keyCatcher.forceActiveFocus()
                   event.accepted = true
                 }
               }
@@ -817,6 +866,17 @@ Panel {
                 enabled: subUrlField.text.trim() !== "" && !xray.busy
                 onClicked: root.importSub()
               }
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              visible: root.subsShown && xray.importNote !== ""
+              width: parent.width
+              text: xray.importNote
+              color: xray.importing ? root.dim : root.urgent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              wrapMode: Text.WordWrap
             }
 
             Column {
@@ -890,7 +950,7 @@ Panel {
                   TextActionButton {
                     id: removeButton
                     property bool armed: false
-                    label: armed ? "Confirm remove" : "Remove"
+                    label: armed ? "Confirm" : "Remove"
                     tint: armed ? root.urgent : root.foreground
                     tooltip: armed ? "Click again to remove " + (subRow.sub.title || subRow.sub.host) + " and its nodes"
                                    : "Remove this subscription and its nodes"
@@ -911,7 +971,7 @@ Panel {
           Text {
             textFormat: Text.PlainText
             width: parent.width
-            text: "j/k move · h/l choose · Enter apply · / filter · t test/stop · u update subs · c connect/disconnect · w config folder"
+            text: "j/k move · h/l choose · Enter apply · / filter · a add sub · t test · u update · c connect · w config"
             wrapMode: Text.WordWrap
             color: root.dim
             font.family: root.fontFamily
@@ -952,7 +1012,9 @@ Panel {
     readonly property bool latencyOk: node ? Model.latencyGood(latencyText) : false
     readonly property bool latencyBadLat: node ? Model.latencyBad(latencyText) : false
     // Auto's "address" is its member count, which says more than "balancer".
-    readonly property string transport: !node ? "" : node.key === "auto" ? node.address : node.net
+    // Auto's "address" is its member count; other rows keep transport in the tooltip.
+    readonly property string meta: !node || node.key !== "auto" ? "" : node.address
+    readonly property bool fastest: node !== null && node.key === root.fastestKey
 
     hasCursor: root.cursorActive && root.nodeIndex === globalIndex
     current: isConnected
@@ -1012,9 +1074,8 @@ Panel {
 
       Text {
         textFormat: Text.PlainText
-        visible: nodeRow.transport !== ""
-        Layout.maximumWidth: rowInner.width * 0.4
-        text: nodeRow.transport
+        visible: nodeRow.meta !== ""
+        text: nodeRow.meta
         color: root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
@@ -1024,18 +1085,23 @@ Panel {
 
       Text {
         textFormat: Text.PlainText
-        visible: nodeRow.latencyText !== ""
-        text: nodeRow.latencyText
+        visible: nodeRow.node !== null && nodeRow.node.key !== "auto"
+        // Fixed, right-aligned cell: results line up and never shift the name.
+        Layout.preferredWidth: root.latencyCellWidth
+        horizontalAlignment: Text.AlignRight
+        text: (nodeRow.fastest ? "󰉁 " : "") + nodeRow.latencyText
         color: nodeRow.latencyBadLat ? root.urgent : (nodeRow.latencyOk ? root.foreground : root.dim)
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
+        font.bold: nodeRow.fastest
         Layout.alignment: Qt.AlignVCenter
       }
     }
 
     PanelToolTip {
       visible: nodeMouse.containsMouse && nodeRow.node !== null
-      text: (nodeRow.node && nodeRow.node.key !== "auto" && nodeRow.node.address ? nodeRow.node.address + " · " : "")
+      text: (nodeRow.node && nodeRow.node.key !== "auto" && nodeRow.node.address
+               ? nodeRow.node.address + (nodeRow.node.net ? " · " + nodeRow.node.net : "") + (nodeRow.fastest ? " · fastest" : "") + "\n" : "")
             + (nodeRow.isConnected ? "Connected · right-click to test latency" : "Click to connect · right-click to test latency")
       fontFamily: root.fontFamily
     }
