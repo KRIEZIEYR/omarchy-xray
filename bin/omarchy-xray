@@ -19,7 +19,8 @@ the two explicit TUN install steps):
   status             machine-readable JSON for the widget (secrets redacted)
   logs [n]           last journal lines of the active service
   doctor             environment checks (xray, geo files, TUN, polkit, DNS)
-  install-unit       write the systemd user units
+  cleanup            before `omarchy plugin remove`: stop, undo tun-setup, drop
+                     the user units and proxy settings (keeps the config)
   tun-setup          one-time TUN setup through polkit (pkexec) — see below
   tun-remove         undo tun-setup (through polkit)
   tun-install        [root] what tun-setup runs: writes the system unit, the
@@ -45,7 +46,7 @@ import base64, copy, hashlib, ipaddress, json, os, pathlib, pwd, re, shutil, sig
 import socket, subprocess, sys, tempfile, time, urllib.parse, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-VERSION = "3.0.0"
+VERSION = "3.1.0"
 
 
 def _user_home():
@@ -2416,8 +2417,7 @@ def cmd_tun_setup():
     out({"ok": True, "tunInstalled": tun_installed()})
 
 
-def cmd_tun_remove():
-    st = load_state()
+def _tun_remove(st):
     if tun_active():
         stop_service()
     rc, so, se = _escalate("tun-uninstall")
@@ -2427,7 +2427,29 @@ def cmd_tun_remove():
     if st["mode"] == "tun":
         st["mode"] = "proxy"
         save_state(st)
+
+
+def cmd_tun_remove():
+    _tun_remove(load_state())
     out({"ok": True, "tunInstalled": tun_installed()})
+
+
+def cmd_cleanup():
+    """Undo everything this plugin set up outside its folder, except the
+    subscriptions in ~/.config/omarchy-xray. Run before `omarchy plugin remove`."""
+    st = load_state()
+    stop_service()
+    apply_system_proxy(st, False)
+    if SYS_UNIT.is_file():
+        _tun_remove(st)                    # one polkit/sudo prompt
+    removed = []
+    for path in (UNIT, T2S_UNIT, UNIT_DIR / "omarchy-xray-tun-login.service"):
+        if path.exists():
+            uctl("disable", path.name)
+            path.unlink()
+            removed.append(str(path))
+    uctl("daemon-reload")
+    out({"ok": True, "removed": removed, "kept": str(CFG)})
 
 
 def cmd_tun_run():
@@ -2458,11 +2480,6 @@ def _rebind():
     return True
 
 
-def cmd_install_unit():
-    write_user_units()
-    out({"ok": True, "unit": str(UNIT), "tunUnit": str(T2S_UNIT)})
-
-
 # --- main --------------------------------------------------------------------
 
 ROOT_COMMANDS = {"tun-install", "tun-uninstall"}
@@ -2472,7 +2489,7 @@ def main():
     args = sys.argv[1:]
     if not args:
         die("usage: omarchy-xray <import|subremove|update|select|mode|routing|adblock|on|off|"
-            "restart|test|stats|status|logs|doctor|install-unit|tun-setup|tun-remove> [arg]")
+            "restart|test|stats|status|logs|doctor|tun-setup|tun-remove|cleanup> [arg]")
     cmd, rest = args[0], args[1:]
     arg = rest[0] if rest else ""
     if os.geteuid() == 0 and cmd not in ROOT_COMMANDS:
@@ -2494,7 +2511,7 @@ def main():
         "logs": lambda: cmd_logs(arg or "40"),
         "doctor": cmd_doctor,
         "tun-run": cmd_tun_run,
-        "install-unit": cmd_install_unit,
+        "cleanup": cmd_cleanup,
         "tun-setup": cmd_tun_setup,
         "tun-remove": cmd_tun_remove,
         "tun-install": cmd_tun_install,

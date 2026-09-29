@@ -7,7 +7,7 @@ connect/disconnect, node switching (or **Auto** — best ping), proxy or
 traffic.
 
 ```
-Panel.qml ──▶ omarchy-xray (manager, ~/.local/bin)
+Panel.qml ──▶ bin/omarchy-xray (manager, in the plugin folder)
                  ├─ both modes ─▶ systemd --user  omarchy-xray.service  ─▶ /usr/bin/xray (no privileges)
                  └─ TUN mode   ─▶ systemd --user  omarchy-xray-tun2socks.service ─▶ tun2socks (no privileges)
                                    └─ starts ─▶ systemd system  omarchy-xray-tun.service (root: ip + resolvectl only)
@@ -72,8 +72,8 @@ the running one.
 
 - Omarchy Quattro (shell plugins)
 - Xray core **≥ 26.6.1** (tested with 26.6.1 and 26.9.9) — install it yourself from a source you trust (e.g. review the AUR
-  package, then `omarchy pkg aur add xray`). The installer never installs it
-  for you and never grants capabilities to any binary. Older cores still work
+  package, then `omarchy pkg aur add xray`). The plugin never installs
+  packages for you and never grants capabilities to any binary. Older cores still work
   for most nodes; whatever they reject is skipped with a reason, and
   `omarchy-xray doctor` warns about the version.
 - TUN mode only: [tun2socks](https://github.com/xjasonlyu/tun2socks) ≥ 2.5
@@ -88,19 +88,62 @@ the running one.
 ## Install
 
 ```bash
-git clone https://github.com/KRIEZIEYR/omarchy-xray omarchy-xray
-cd omarchy-xray
-./install.sh            # add --tun to also run the one-time TUN setup
+omarchy pkg aur add xray          # the core (review the AUR package first)
+omarchy pkg aur add tun2socks     # optional, TUN mode only
+omarchy plugin add https://github.com/KRIEZIEYR/omarchy-xray.git --enable
 ```
 
-The script puts `omarchy-xray` into `~/.local/bin`, writes the systemd user
-units, asks for your subscription URL (hidden input, passed via environment
-so it never appears in `ps` output), optionally sets up TUN (default: no),
-verifies the tunnel and enables the widget. Flags: `--yes`, `--no-deps`, `--tun`.
+Then click the shield in the bar: on first run the panel asks for your
+subscription URL (it reaches the manager through the environment, never
+argv). That is all proxy mode needs. For TUN, pick **TUN** in the panel: the
+first time it asks for your password once (see [TUN mode](#tun-mode)).
 
-Remove: `./uninstall.sh` (also offers to remove the manager, the TUN setup and the config).
+There is no install script. Until you connect, nothing exists outside the
+plugin folder; the first connect writes `omarchy-xray.service` and
+`omarchy-xray-tun2socks.service` into `~/.config/systemd/user`, and
+subscriptions live in `~/.config/omarchy-xray` (`0700`).
+
+**Update**
+
+```bash
+omarchy plugin update krieziey.omarchy-xray
+omarchy restart shell             # a live rescan keeps the old QML
+```
+
+The manager rewrites its units on the next connect. Coming from 3.0 with TUN
+set up: pick TUN again and confirm the prompt — the old system unit (xray with
+`CAP_NET_ADMIN`) is replaced.
+
+**Remove**
+
+```bash
+~/.config/omarchy/plugins/krieziey.omarchy-xray/bin/omarchy-xray cleanup
+omarchy plugin remove krieziey.omarchy-xray
+rm -rf ~/.config/omarchy-xray     # optional: subscriptions and settings
+```
+
+`cleanup` stops the tunnel, undoes the TUN setup (one password prompt, only if
+it was set up), clears the proxy settings and deletes the two user units.
+
+**Coming from `install.sh` (3.0 and older):** that script copied the plugin
+and put the manager into `~/.local/bin`. Switch once:
+
+```bash
+omarchy plugin remove krieziey.omarchy-xray   # the copied folder (kept as a backup)
+rm -f ~/.local/bin/omarchy-xray
+omarchy plugin add https://github.com/KRIEZIEYR/omarchy-xray.git --enable
+```
+
+Your subscriptions in `~/.config/omarchy-xray` stay as they are.
 
 ## Daily use
+
+The widget covers everything below. The same manager works from a terminal;
+link it onto your `PATH` if you want the short name:
+
+```bash
+ln -s ~/.config/omarchy/plugins/krieziey.omarchy-xray/bin/omarchy-xray ~/.local/bin/
+```
 
 ```bash
 export OMARCHY_XRAY_SUB_URL=<url>; omarchy-xray import -   # add a subscription (also: pipe URL on stdin)
@@ -115,6 +158,7 @@ omarchy-xray test [key…]            # latency (first 200 nodes or the given ke
 omarchy-xray stats                  # traffic totals + speed
 omarchy-xray logs [n]               # journal of the active service
 omarchy-xray doctor                 # environment checks
+omarchy-xray cleanup                # before `omarchy plugin remove`
 ```
 
 Proxies: socks5 `127.0.0.1:20170`, HTTP `127.0.0.1:20171`. Private networks
@@ -307,7 +351,15 @@ OMARCHY_XRAY_TEST_BIN=/path/to/xray python3 -m unittest discover -s tests/manage
                                                     # …plus `xray run -test` on every generated config
 python3 -m py_compile bin/omarchy-xray
 omarchy plugin validate .
-./install.sh --no-deps --yes   # re-copy; restarts the shell (live rescan keeps old QML)
+```
+
+Run the widget from a checkout: link it as the plugin folder (remove an
+installed copy first), then restart the shell after QML changes:
+
+```bash
+ln -s "$PWD" ~/.config/omarchy/plugins/krieziey.omarchy-xray
+omarchy plugin enable krieziey.omarchy-xray right
+omarchy restart shell
 ```
 
 Manager internals: state in `~/.config/omarchy-xray/state.json` (subscriptions

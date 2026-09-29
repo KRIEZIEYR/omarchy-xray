@@ -4,10 +4,11 @@ import Quickshell.Io
 import "model/Xray.js" as Model
 
 /*
- * Backend: the omarchy-xray manager (~/.local/bin/omarchy-xray). Proxy mode
- * runs xray as a systemd user unit, TUN mode as the omarchy-xray-tun system
- * unit (one-time `tun-setup`). Every call is a plain subprocess with JSON on
- * stdout; traffic comes straight from xray's loopback metrics endpoint.
+ * Backend: the omarchy-xray manager in this plugin's bin/ folder. xray runs
+ * as a systemd user unit in both modes; TUN mode adds tun2socks (user unit)
+ * and a root oneshot that only creates the device (one-time `tun-setup`).
+ * Every call is a plain subprocess with JSON on stdout; traffic comes
+ * straight from xray's loopback metrics endpoint.
  */
 Item {
   id: root
@@ -82,7 +83,8 @@ Item {
   readonly property int outCap: 524288
   readonly property int maxNodes: 1000
   readonly property int maxInput: 2048
-  readonly property string manager: String(Quickshell.env("HOME") || "") + "/.local/bin/omarchy-xray"
+  // Shipped next to this file: `omarchy plugin add` clones the repo as is.
+  readonly property string manager: decodeURIComponent(String(Qt.resolvedUrl("bin/omarchy-xray")).replace(/^file:\/\//, ""))
 
   // Children start with a cleared environment; with clearEnvironment a null
   // value means "inherit this one variable from the shell".
@@ -231,7 +233,7 @@ Item {
   function managerFail(message) {
     reachable = false
     installed = false
-    serviceError = message !== "" ? message : "Xray manager not found — reinstall the widget (./install.sh)"
+    serviceError = message !== "" ? message : "Xray manager did not start (needs /usr/bin/python3) — reinstall the plugin if python is present"
   }
 
   function flash(text) {
