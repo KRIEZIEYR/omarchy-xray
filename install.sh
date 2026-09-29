@@ -125,7 +125,11 @@ if [[ -f "$STATE" ]] && /usr/bin/python3 -c 'import json,sys; sys.exit(0 if json
   "$MANAGER" update >/dev/null || warn "subscription refresh failed (offline?) — later: omarchy-xray update"
 elif [[ $NO_DEPS -eq 0 ]]; then
   echo
-  read -r -s -p "Paste your subscription URL (Enter to skip; hidden input): " SUBURL </dev/tty || SUBURL=""
+  SUBURL=""
+  # no terminal (scripted run): skip quietly instead of printing a /dev/tty error
+  if { : </dev/tty; } 2>/dev/null; then
+    read -r -s -p "Paste your subscription URL (Enter to skip; hidden input): " SUBURL </dev/tty || SUBURL=""
+  fi
   echo
   if [[ -n "${SUBURL// }" ]]; then
     # via environment so the secret never appears in argv/ps output

@@ -161,6 +161,8 @@ Panel {
   }
 
   readonly property string barLabelText: {
+    // A vertical bar is one icon wide: no label there.
+    if (root.bar && root.bar.vertical) return ""
     // "off" keeps a placeholder so the bar never changes width
     if (xray.barLabel === "node") return xray.connected ? xray.connectedNodeName : (xray.reachable ? "Off" : "")
     if (xray.barLabel === "speed" && !xray.connected) return xray.reachable ? "󰁅 —" : ""
@@ -311,7 +313,7 @@ Panel {
   TextMetrics {
     id: latencyMetrics
     font.family: root.fontFamily
-    font.pixelSize: Style.font.caption
+    font.pixelSize: Style.font.bodySmall
     font.bold: true
     text: "󰉁 9999ms"
   }
@@ -609,6 +611,9 @@ Panel {
                 ]
                 value: xray.mode
                 cursorIndex: root.cursorRow === "mode" ? root.chipIndex : -1
+                // the kit's chips carry no accessible names; the group says the state
+                Accessible.role: Accessible.Grouping
+                Accessible.name: "Mode: " + (xray.mode === "tun" ? "TUN, all system traffic" : "proxy")
                 focusable: false
                 foreground: root.foreground
                 fontFamily: root.fontFamily
@@ -643,6 +648,8 @@ Panel {
                 ]
                 value: xray.region ? "direct" : "global"
                 cursorIndex: root.cursorRow === "route" && root.chipIndex < 2 ? root.chipIndex : -1
+                Accessible.role: Accessible.Grouping
+                Accessible.name: "Route: " + (xray.region ? xray.region.name + " bypasses the VPN" : "everything through the VPN")
                 focusable: false
                 foreground: root.foreground
                 fontFamily: root.fontFamily
@@ -802,6 +809,7 @@ Panel {
               RowField {
                 id: searchField
                 icon: "󰍉"
+                Accessible.name: "Filter nodes"
                 Layout.fillWidth: true
                 foreground: root.foreground
                 placeholderText: "Filter nodes…  ( / )"
@@ -940,6 +948,7 @@ Panel {
               RowField {
                 id: subUrlField
                 icon: "󰌹"
+                Accessible.name: "Subscription URL"
                 Layout.fillWidth: true
                 foreground: root.foreground
                 placeholderText: "Paste a subscription URL (https://…)"
@@ -1056,8 +1065,11 @@ Panel {
             }
           }
 
+          // Key legend only while the keyboard is in use (and on first run);
+          // mouse users get the keys in tooltips instead.
           Text {
             textFormat: Text.PlainText
+            visible: root.cursorActive || root.firstRun
             width: parent.width
             text: root.firstRun ? "Enter adds the subscription · Esc closes"
                   : "j/k move · h/l choose · Enter apply · / filter · a add sub · t test · u update · c connect · w config"
@@ -1217,7 +1229,7 @@ Panel {
         text: (nodeRow.fastest ? "󰉁 " : "") + nodeRow.latencyText
         color: nodeRow.latencyBadLat ? root.urgent : root.foreground
         font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
+        font.pixelSize: Style.font.bodySmall      // the number nodes are chosen by
         font.bold: nodeRow.fastest
         Layout.alignment: Qt.AlignVCenter
       }

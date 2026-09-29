@@ -550,8 +550,10 @@ Item {
     onTriggered: root.refresh()
   }
 
+  // Open-panel poll only catches outside changes (every action refreshes on
+  // completion, traffic has its own 2 s XHR), so each Python spawn can be rarer.
   Timer {
-    interval: 2000
+    interval: 4000
     repeat: true
     running: root.panelOpen
     onTriggered: root.refresh()
