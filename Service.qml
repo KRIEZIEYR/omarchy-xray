@@ -77,7 +77,6 @@ Item {
   readonly property string heroState: Model.heroState(_heroInput)
 
   readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 20, 10, 600)
-  readonly property string barLabel: strSetting("barLabel", "speed")
 
   // Hardening bounds: stdout cap (bytes), node cap for rendering, input caps.
   readonly property int outCap: 524288
@@ -104,10 +103,6 @@ Item {
     if (n < min) n = min
     if (n > max) n = max
     return n
-  }
-
-  function strSetting(name, fallback) {
-    return String(setting(name, fallback)).trim()
   }
 
   readonly property bool busy: _action.running || _long.running
@@ -570,7 +565,7 @@ Item {
     id: statsTimer
     interval: 2000
     repeat: true
-    running: root.coreRunning && (root.panelOpen || root.barLabel === "speed")
+    running: root.coreRunning && root.panelOpen
     triggeredOnStart: true
     onTriggered: root.pollStats()
   }

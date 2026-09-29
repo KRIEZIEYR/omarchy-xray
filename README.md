@@ -195,7 +195,7 @@ curl -s https://ifconfig.me        # the server's IP
 - **Adblock** — `geosite:category-ads-all` → blackhole (needs geo data).
 - **Auto** (first row in the node list) — up to 32 nodes (best tested latency
   first) behind a `leastPing` balancer fed by Xray's observatory
-  (`generate_204` every minute). The bar shows `Auto → <current pick>`.
+  (`generate_204` every minute). The panel shows `Auto → <current pick>`.
 
 ## custom.json
 
@@ -261,7 +261,6 @@ Run `omarchy-xray restart` after editing.
 | Setting | Default | Description |
 |---|---|---|
 | Refresh interval | `20` s | Closed-panel poll; open panel polls every 2 s. |
-| Bar label | `speed` | `icon` — shield only; `node` — current node name; `speed` — live download speed. |
 
 ## Scripting
 

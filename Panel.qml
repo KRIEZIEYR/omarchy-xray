@@ -160,25 +160,6 @@ Panel {
     return foreground            // "off" is carried by the button's kit dimming
   }
 
-  readonly property string barLabelText: {
-    // A vertical bar is one icon wide: no label there.
-    if (root.bar && root.bar.vertical) return ""
-    // "off" keeps a placeholder so the bar never changes width
-    if (xray.barLabel === "node") return xray.connected ? xray.connectedNodeName : (xray.reachable ? "Off" : "")
-    if (xray.barLabel === "speed" && !xray.connected) return xray.reachable ? "󰁅 —" : ""
-    if (xray.barLabel === "speed")
-      return "󰁅 " + (xray.traffic !== null ? Model.formatSpeed(xray.traffic.downSpeed) : "…")
-    return ""
-  }
-  // The speed label reserves its widest value so the bar never jitters;
-  // node names are capped and elided.
-  TextMetrics {
-    id: labelMetrics
-    font.family: root.fontFamily
-    font.pixelSize: Style.font.caption
-    text: xray.barLabel === "speed" ? "󰁅 1023.9 KB/s" : root.barLabelText
-  }
-  readonly property real barLabelWidth: barLabelText === "" ? 0 : Math.min(Math.ceil(labelMetrics.advanceWidth), Style.space(120))
 
   FileView {
     id: themeColors
@@ -393,47 +374,23 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    // The kit slot fits an icon only; widen it by exactly the label so the
-    // label no longer paints over the neighbouring widget.
-    fixedWidth: vertical ? -1 : slotSize + (root.barLabelWidth > 0 ? root.barLabelWidth + Style.space(5) : 0)
     dimmed: xray.reachable && !root.onTarget
     tooltipText: xray.pending !== "" ? xray.actionStatus
                  : xray.heroSummary + " · right-click to " + (xray.connected ? "disconnect" : "connect")
     iconComponent: Component {
       Item {
-        readonly property string label: root.barLabelText
-        implicitWidth: row.implicitWidth
-        implicitHeight: Math.max(iconGlyph.implicitHeight, labelText.implicitHeight)
-        Row {
-          id: row
+        XrayIcon {
           anchors.centerIn: parent
-          spacing: Style.space(5)
-          XrayIcon {
-            id: iconGlyph
-            anchors.verticalCenter: parent.verticalCenter
-            iconSize: Style.space(11)
-            color: root.barIconColor
-            filled: root.onTarget
-            warning: !xray.reachable
-            SequentialAnimation on opacity {
-              running: xray.pending !== ""
-              loops: Animation.Infinite
-              alwaysRunToEnd: true
-              NumberAnimation { to: 0.35; duration: 550; easing.type: Easing.InOutSine }
-              NumberAnimation { to: 1.0; duration: 550; easing.type: Easing.InOutSine }
-            }
-          }
-          Text {
-            textFormat: Text.PlainText
-            id: labelText
-            visible: row.parent.label !== ""
-            text: row.parent.label
-            width: root.barLabelWidth
-            color: root.barIconColor
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            elide: Text.ElideRight
-            anchors.verticalCenter: parent.verticalCenter
+          iconSize: Style.space(11)
+          color: root.barIconColor
+          filled: root.onTarget
+          warning: !xray.reachable
+          SequentialAnimation on opacity {
+            running: xray.pending !== ""
+            loops: Animation.Infinite
+            alwaysRunToEnd: true
+            NumberAnimation { to: 0.35; duration: 550; easing.type: Easing.InOutSine }
+            NumberAnimation { to: 1.0; duration: 550; easing.type: Easing.InOutSine }
           }
         }
       }
