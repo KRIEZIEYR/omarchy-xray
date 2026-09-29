@@ -81,6 +81,7 @@ module.exports = function ({ Xray, assert, eq }) {
     eq('filter by net', Xray.filterNodes(groups, 'hysteria2')[0].nodes[0].key, 'k3')
     eq('filter no match', Xray.filterNodes(groups, 'zzz').length, 0)
     eq('filter empty returns all', Xray.filterNodes(groups, '').length, 3)
+    eq('short query skips transport', Xray.filterNodes(groups, 'hy').length, 0)
   }
 
   /* ---- pickConnectTarget ---- */

@@ -161,12 +161,15 @@ function filterNodes(groups, query) {
   var out = []
   for (var g = 0; g < groups.length; g++) {
     var src = groups[g]
-    var kept = []
+    // Name matches first; address, transport and subscription title only
+    // from 3 characters on, so one letter does not match every node.
+    var byName = [], byMeta = []
     for (var i = 0; i < src.nodes.length; i++) {
       var n = src.nodes[i]
-      var hay = (n.name + " " + n.address + " " + n.net + " " + src.title).toLowerCase()
-      if (hay.indexOf(q) !== -1) kept.push(n)
+      if (String(n.name).toLowerCase().indexOf(q) !== -1) byName.push(n)
+      else if (q.length >= 3 && (n.address + " " + n.net + " " + src.title).toLowerCase().indexOf(q) !== -1) byMeta.push(n)
     }
+    var kept = byName.concat(byMeta)
     if (kept.length > 0) out.push({ title: src.title, subscriptionId: src.subscriptionId, status: src.status, nodes: kept })
   }
   return out

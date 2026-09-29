@@ -255,7 +255,7 @@ Item {
   }
 
   function busyRefused() {
-    if (testing) { flash("A latency test is running: stop it (t) to change settings"); return }
+    if (testing) { flash("A latency test is running: stop it (Ctrl+T) to change settings"); return }
     var slot = _long.running ? _long : _action
     flash(opName(slot._label) + " is still running. Try again in a moment")
   }

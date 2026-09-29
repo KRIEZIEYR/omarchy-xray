@@ -30,7 +30,7 @@ Panel {
   readonly property bool subsShown: subsOpen || xray.subs.length === 0
   readonly property real settingLabelWidth: Style.space(52)
   readonly property string lastRegion: settings ? String(settings.lastRegion || "") : ""
-  // BYPASS remembers its country, so ALL <-> BYPASS is one click.
+  // DIRECT remembers its country, so ALL <-> DIRECT is one click.
   readonly property var routeRegion: {
     if (xray.region) return xray.region
     for (var i = 0; i < xray.regions.length; i++)
@@ -70,9 +70,12 @@ Panel {
   readonly property string cursorRow: !cursorActive ? ""
       : nodeIndex < 0 ? (settingRows[settingRows.length + nodeIndex] || "")
       : nodeIndex < visibleNodes.length ? "node"
+      // a filter that matches nothing leaves the cursor nowhere: Enter must
+      // not fall through to the Config button below the list
+      : visibleNodes.length === 0 && filterQuery !== "" ? ""
       : nodeIndex === visibleNodes.length ? "subs" : "sub"
   readonly property int cursorSub: cursorRow === "sub" ? nodeIndex - visibleNodes.length - 1 : -1
-  // The country chip only changes BYPASS's country; hidden while ALL is on.
+  // The country chip only changes DIRECT's country; hidden while ALL is on.
   readonly property bool countryChipShown: xray.region !== null || regionsOpen
 
   function chipCount(row) {
@@ -167,7 +170,7 @@ Panel {
   readonly property bool tunnelUp: xray.connected && xray.pending !== "disconnecting"
 
   readonly property color barIconColor: {
-    if (!xray.reachable) return urgent
+    if (!xray.reachable) return errorColor
     if (tunnelUp) return onColor
     return foreground            // "off" is carried by the button's kit dimming
   }
@@ -260,6 +263,26 @@ Panel {
     nodeIndex = index
   }
 
+  // Commands take Ctrl so a bare letter is always the start of a search.
+  function runCtrl(k) {
+    if (k === "t") xray.testNodes(root.visibleNodes)
+    else if (k === "u") xray.updateSubscriptions()
+    else if (k === "w") xray.openWebUi()
+    else if (k === "a") root.focusSubUrl()
+    else if (k === "c") {
+      if (xray.connected) xray.flash("Already connected · to disconnect, use the switch")
+      else if (!root.onTarget) xray.toggleConnection(root.lastNodeKey)
+    }
+  }
+
+  function startTypeAhead(t) {
+    var search = nodeList.headerItem ? nodeList.headerItem.search : null
+    if (!search) return
+    if (t !== "/") root.filterQuery = t
+    search.forceActiveFocus()
+    search.cursorPosition = search.text.length
+  }
+
   function activateCursor() {
     if (cursorRow !== "node") { activateChip(); return }
     ensureCursor()
@@ -339,7 +362,6 @@ Panel {
     pointerGate.reset()
     regionsOpen = false
     nodeList.positionViewAtBeginning()
-    xray.panelOpen = true
     xray.refresh()
     Qt.callLater(function() { if (root.firstRun) root.focusSubUrl(); else keyCatcher.forceActiveFocus() })
   }
@@ -399,6 +421,7 @@ Panel {
           color: root.barIconColor
           filled: root.tunnelUp
           warning: !xray.reachable
+          badgeColor: root.errorColor
           // ~11 s of a slow breath, then a still bright outline: a password
           // prompt can take minutes and must not blink in the bar all along.
           SequentialAnimation on opacity {
@@ -451,30 +474,12 @@ Panel {
       onTextKey: function(t) {
         root.keysUsed = true
         var code = t.charCodeAt(0)
-        if (code > 0 && code < 27) {
-          // Commands take Ctrl (Ctrl+T arrives as "\x14"): a bare letter is
-          // always the start of a search, so typing "tokyo" never tests and
-          // "Canada" never drops the tunnel.
-          var k = String.fromCharCode(96 + code)
-          if (k === "t") xray.testNodes(root.visibleNodes)
-          else if (k === "u") xray.updateSubscriptions()
-          else if (k === "w") xray.openWebUi()
-          else if (k === "a") root.focusSubUrl()
-          else if (k === "c") {
-            if (root.onTarget) xray.flash("Already connected · to disconnect, use the switch")
-            else xray.toggleConnection(root.lastNodeKey)
-          }
-          return
-        }
+        if (code > 0 && code < 27) { root.runCtrl(String.fromCharCode(96 + code)); return }   // Ctrl+T = "\x14"
         if (t === "?") { root.legendHidden = !root.legendHidden; return }
-        if (nodeList.headerItem && /^[^\s\x00-\x1f]$/.test(t)) {
-          // type-ahead; "/" just opens the field
-          var search = nodeList.headerItem.search
-          if (t !== "/") root.filterQuery = t
-          search.forceActiveFocus()
-          search.cursorPosition = search.text.length
-        }
+        if (/^[^\s\x00-\x1f]$/.test(t)) root.startTypeAhead(t)          // "/" just opens the field
       }
+      // the kit reserves x for delete; nothing here deletes, so it types
+      onDeleteRequested: { root.keysUsed = true; root.startTypeAhead("x") }
 
       // One scroll view for the whole panel. Only the node rows are
       // virtualized (1000 rows in a Column cost ~0.3 s per rebuild); the
@@ -502,6 +507,7 @@ Panel {
               color: root.tunnelUp ? root.onColor : hero.foreground
               filled: root.tunnelUp
               warning: !xray.reachable
+          badgeColor: root.errorColor
             }
           }
           trailingControl: Component {
@@ -552,7 +558,7 @@ Panel {
                   : !statusRow.live ? (xray.connected ? "Measuring traffic…" : "Not connected")
                   : "󰁅 " + Model.formatSpeed(xray.traffic.downSpeed)
                     + "   󰁝 " + Model.formatSpeed(xray.traffic.upSpeed)
-                    + "   ·   downloaded " + Model.formatBytes(xray.traffic.downTotal)
+                    + "   ·   Downloaded " + Model.formatBytes(xray.traffic.downTotal)
             color: statusRow.kind === "error" ? root.errorColor
                    : statusRow.kind === "traffic" && statusRow.live ? root.foreground : root.dim
             font.family: root.fontFamily
@@ -565,6 +571,7 @@ Panel {
                              : statusRow.live ? "Download " + Model.formatSpeed(xray.traffic.downSpeed)
                                                 + ", upload " + Model.formatSpeed(xray.traffic.upSpeed)
                              : xray.connected ? "Measuring traffic" : "Not connected"
+            onTextChanged: if (statusRow.kind === "action" || statusRow.kind === "error") Accessible.announce(Accessible.name)
           }
 
           TextActionButton {
@@ -585,8 +592,8 @@ Panel {
           spacing: Style.space(4)
 
           Repeater {
-            model: root.firstRun ? [["", "Enter adds the subscription · Esc closes"]]
-                   : [["MOVE", "j/k rows · h/l choices · Enter apply"],
+            model: root.firstRun ? [["", "Enter adds the subscription · Esc twice closes"]]
+                   : [["MOVE", "j/k rows · h/l choose · Enter · / filter"],
                       ["ACT", "Ctrl+C connect · Ctrl+T test · Ctrl+U update"],
                       ["MANAGE", "Ctrl+A add sub · Ctrl+W config · ? hide"]]
             delegate: RowLayout {
@@ -713,15 +720,15 @@ Panel {
                 options: [
                   { value: "global", label: "ALL",
                     tooltip: "Everything goes through the VPN, except your local network" },
-                  { value: "direct", label: root.routeRegion ? "BYPASS " + root.routeRegion.code.toUpperCase() : "BYPASS",
-                    tooltip: root.routeRegion ? root.routeRegion.name + ": its sites and IPs bypass the VPN"
-                                              : "Let one country's sites and IPs bypass the VPN" }
+                  { value: "direct", label: root.routeRegion ? root.routeRegion.code.toUpperCase() + " DIRECT" : "DIRECT",
+                    tooltip: root.routeRegion ? root.routeRegion.name + ": its sites and IPs go direct, not through the VPN"
+                                              : "Send one country's sites and IPs direct, not through the VPN" }
                 ]
                 value: xray.region ? "direct" : "global"
                 cursorIndex: root.cursorRow === "route" && root.chipIndex < 2 ? root.chipIndex : -1
                 Accessible.role: Accessible.Grouping
-                Accessible.name: "Route: " + (xray.region ? xray.region.name + " bypasses the VPN" : "everything through the VPN")
-                Accessible.description: "Options: all traffic, bypass one country. h and l switch"
+                Accessible.name: "Route: " + (xray.region ? xray.region.name + " sites go direct" : "everything through the VPN")
+                Accessible.description: "Options: all through the VPN, one country direct. h and l switch"
                 Accessible.focused: cursorIndex >= 0
                 focusable: false
                 foreground: root.foreground
@@ -735,7 +742,7 @@ Panel {
               Button {
                 visible: root.countryChipShown
                 text: root.regionsOpen ? "󰅃" : "󰅀"
-                tooltipText: "Change the bypass country"
+                tooltipText: "Change the direct country"
                 bordered: true
                 opacity: xray.busy ? 0.45 : 1.0
                 hasCursor: root.cursorRow === "route" && root.chipIndex === 2
@@ -745,7 +752,7 @@ Panel {
                 onClicked: root.regionsOpen = !root.regionsOpen
                 onHovered: function(h) { if (h) root.cursorActive = false }
                 Accessible.role: Accessible.Button
-                Accessible.name: "Change the bypass country"
+                Accessible.name: "Change the direct country"
               }
 
               Item { Layout.fillWidth: true }
@@ -761,11 +768,11 @@ Panel {
                 delegate: Button {
                   required property var modelData
                   required property int index
-                  text: modelData.code.toUpperCase()
+                  text: modelData.flag + " " + modelData.code.toUpperCase()
                   hasCursor: root.cursorRow === "regions" && root.chipIndex === index
                   Accessible.role: Accessible.Button
-                  Accessible.name: modelData.name + (selected ? ", bypassing now" : "")
-                  tooltipText: modelData.name + ": sites and IPs bypass the VPN"
+                  Accessible.name: modelData.name + (selected ? ", direct now" : "")
+                  tooltipText: modelData.name + ": sites and IPs go direct"
                                + (xray.geo ? "" : " (domains only: no geo data installed)")
                   bordered: true
                   selected: xray.routing === modelData.code + "-direct"
@@ -785,8 +792,8 @@ Panel {
               text: {
                 var i = root.cursorRow === "regions" ? root.chipIndex : (root.cursorActive ? -1 : root.regionHover)
                 var r = i >= 0 ? xray.regions[i] : null
-                if (r) return r.name + ": its sites and IPs bypass the VPN" + (xray.geo ? "" : " (domains only, no geo data)")
-                return root.routeRegion ? "Bypassing now: " + root.routeRegion.name : "Pick a country to bypass the VPN"
+                if (r) return r.name + ": its sites and IPs go direct" + (xray.geo ? "" : " (domains only, no geo data)")
+                return root.routeRegion ? "Direct now: " + root.routeRegion.name : "Pick the country whose sites go direct"
               }
               color: root.dim
               font.family: root.fontFamily
@@ -833,7 +840,8 @@ Panel {
                 color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
-                elide: Text.ElideRight
+                wrapMode: xray.geo ? Text.NoWrap : Text.WordWrap                // the package names are the point
+                elide: xray.geo ? Text.ElideRight : Text.ElideNone
 
                 // the whole line toggles, not just the small switch
                 MouseArea {
@@ -906,7 +914,7 @@ Panel {
                 Accessible.name: "Filter nodes"
                 Layout.fillWidth: true
                 foreground: root.foreground
-                placeholderText: "Filter nodes… (just type)"
+                placeholderText: "Filter — type, or / first for h j k l"
                 text: root.filterQuery
                 onTextChanged: {
                   root.filterQuery = text
@@ -914,6 +922,14 @@ Panel {
                   root.cursorActive = text !== ""
                 }
                 Keys.onPressed: function(event) {
+                  // commands keep working while filtering (Ctrl+T tests the
+                  // filtered nodes); Ctrl+A and Ctrl+C keep their text meaning
+                  if ((event.modifiers & Qt.ControlModifier)
+                      && (event.key === Qt.Key_T || event.key === Qt.Key_U || event.key === Qt.Key_W)) {
+                    root.runCtrl(event.key === Qt.Key_T ? "t" : event.key === Qt.Key_U ? "u" : "w")
+                    event.accepted = true
+                    return
+                  }
                   if (event.key === Qt.Key_Escape) {
                     if (text !== "") text = ""
                     else root.close()
@@ -952,7 +968,7 @@ Panel {
               width: parent.width
               text: xray.touch === null ? "Loading…"
                     : root.filterQuery !== "" ? "No nodes match “" + root.filterQuery + "” — Esc clears the filter"
-                    : root.firstRun ? "No subscription yet. Paste the subscription URL from your VPN provider below."
+                    : root.firstRun ? "Paste the subscription URL from your VPN provider below."
                     : "No nodes yet — add a subscription URL below."
               wrapMode: Text.WordWrap
               color: root.dim
