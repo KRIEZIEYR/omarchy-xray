@@ -20,7 +20,9 @@ Item {
   // --- observable state ---------------------------------------------------
   property bool reachable: false        // manager answered
   property bool installed: true         // manager found
-  property string lastError: ""         // last failed user action; sticky until the next one
+  property string lastError: ""         // last failed user action; cleared by the next one or a healthy poll
+  property double _errorAt: 0
+  onLastErrorChanged: _errorAt = Date.now()
   property string serviceError: ""      // from status: manager/core/unit health
   readonly property string errorText: lastError !== "" ? lastError : serviceError
   property string actionStatus: ""
@@ -238,6 +240,7 @@ Item {
 
   function flash(text) {
     actionStatus = text
+    actionStatusTimer.interval = Math.max(2400, String(text).length * 70)   // long enough to read
     actionStatusTimer.restart()
   }
 
@@ -293,6 +296,9 @@ Item {
     skippedText = Model.skippedLabel(d.skipped)
     autoMembers = d.autoMembers || []
     if (d.metricsUrl && /^http:\/\/127\.0\.0\.1:\d+\/debug\/vars$/.test(d.metricsUrl)) metricsUrl = d.metricsUrl
+    // An action's error stays readable for a while, then a healthy poll
+    // gives the line back to live traffic.
+    if (lastError !== "" && Date.now() - _errorAt > 15000) lastError = ""
     serviceError = d.lastError ? "Xray stopped with an error: " + scrub(d.lastError) : (d.xray === false ? "xray core not found — install it (omarchy pkg aur add xray)" : "")
     var rawSubs = d.subs || []
     subs = rawSubs.slice ? rawSubs.slice(0, 64) : []
@@ -354,7 +360,9 @@ Item {
       _actionDeadline.stop()
       pending = ""
       if (!resp.ok) { actionStatus = ""; lastError = "Couldn't connect: " + (resp.message || "no details") }
-      else flash(mode === "tun" ? "Connected (TUN)" : "Connected")
+      // proxy mode reaches apps through their proxy settings: ones already
+      // running may not re-read them
+      else flash(mode === "tun" ? "Connected (TUN)" : "Connected · apps already open may need a restart")
       refresh()
     })) { busyRefused(); return }
     if (!chained) {
@@ -505,6 +513,12 @@ Item {
   function setAdblock(on) {
     runLong([manager, "adblock", on ? "on" : "off"], "adblock", 120000,
             on ? "Ad blocking on" : "Ad blocking off", on ? "Turning ad blocking on…" : "Turning ad blocking off…")
+  }
+
+  // The journal of both user units, in Omarchy's floating terminal.
+  function openLogs() {
+    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation",
+      "journalctl --user -u omarchy-xray.service -u omarchy-xray-tun2socks.service -n 100 -f"])
   }
 
   function openWebUi() {

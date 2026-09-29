@@ -240,7 +240,7 @@ function heroLine(state) {
     if (n.key === "auto") return "Connected" + mode + " · Auto" + (state.autoPick ? " → " + state.autoPick : "")
     return "Connected" + mode + " · " + n.name
   }
-  if (t.running) return "Core running · not connected"
+  if (t.running) return "Ready · not connected"
   return "Disconnected"
 }
 
@@ -267,6 +267,6 @@ function heroState(state) {
   var mode = state.mode === "tun" ? "TUN" : "proxy"
   if (connectedNode(t)) return "Connected · " + mode
   if (!t.nodes || t.nodes.length === 0) return "No subscription yet"
-  if (t.running) return "Core running · not connected"
+  if (t.running) return "Ready · not connected"
   return state.target ? "→ " + state.target + " · " + mode : "Disconnected · " + mode
 }

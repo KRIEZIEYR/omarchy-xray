@@ -43,8 +43,9 @@ Security model:
   - Child processes get an explicit environment allowlist and absolute paths.
 """
 import base64, copy, hashlib, ipaddress, json, os, pathlib, pwd, re, shutil, signal
-import socket, subprocess, sys, tempfile, time, urllib.parse, urllib.request
-from concurrent.futures import ThreadPoolExecutor
+import socket, subprocess, sys, tempfile, time, urllib.parse
+# urllib.request and concurrent.futures are imported where they are used:
+# they are ~75 ms of the start-up the widget pays on every status poll.
 
 VERSION = "3.1.0"
 
@@ -507,22 +508,6 @@ def save_state(st):
 
 # --- subscription download ---------------------------------------------------
 
-class _SafeRedirect(urllib.request.HTTPRedirectHandler):
-    """Redirects must stay https and stop after a few hops."""
-
-    def __init__(self):
-        self.count = 0
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        self.count += 1
-        if self.count > MAX_REDIRECTS:
-            raise ValueError("too many redirects")
-        final = urllib.parse.urljoin(req.full_url, newurl)
-        if urllib.parse.urlsplit(final).scheme != "https":
-            raise ValueError("redirect to non-https URL refused")
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
-
-
 def check_https_url(url):
     if len(url or "") > MAX_URL_LEN:
         raise ValueError("subscription URL too long")
@@ -534,8 +519,23 @@ def check_https_url(url):
 
 def fetch(url, via_proxy=False):
     """Returns (body, headers). HTTPS only, byte-capped, redirect-checked."""
+    import urllib.request
+
+    class SafeRedirect(urllib.request.HTTPRedirectHandler):
+        """Redirects must stay https and stop after a few hops."""
+        count = 0
+
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            self.count += 1
+            if self.count > MAX_REDIRECTS:
+                raise ValueError("too many redirects")
+            final = urllib.parse.urljoin(req.full_url, newurl)
+            if urllib.parse.urlsplit(final).scheme != "https":
+                raise ValueError("redirect to non-https URL refused")
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+
     check_https_url(url)
-    handlers = [_SafeRedirect()]
+    handlers = [SafeRedirect()]
     if via_proxy:
         p = "http://127.0.0.1:%d" % HTTP
         handlers.append(urllib.request.ProxyHandler({"https": p, "http": p}))
@@ -1955,6 +1955,7 @@ def _probe_batch(batch, iface, rundir):
     try:
         if not _wait_ports(ports, proc, 6.0):
             return None
+        from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=min(TEST_PARALLEL, len(ports))) as ex:
             return list(ex.map(_curl, ports))
     finally:
@@ -2031,6 +2032,7 @@ def cmd_test(keys):
 # --- stats / status ----------------------------------------------------------
 
 def metrics():
+    import urllib.request
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     with opener.open(METRICS_URL, timeout=3) as r:
         return json.loads(r.read(4 * 1024 * 1024).decode("utf-8", "replace"))

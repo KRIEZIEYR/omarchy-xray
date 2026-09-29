@@ -140,6 +140,9 @@ Panel {
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color urgent: bar ? bar.urgent : Color.urgent
   readonly property color dim: Qt.darker(foreground, 1.4)   // the kit's secondary grey
+  // A monochrome theme's "red" is a grey close to `dim`: errors then use the
+  // brightest colour so they never read as secondary text.
+  readonly property color errorColor: urgent.hslSaturation < 0.2 ? foreground : urgent
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property color hoverFill: bar ? Style.hoverFillFor(bar.foreground, Color.accent) : "transparent"
   readonly property color selectedFill: bar ? Style.selectedFillFor(bar.foreground, Color.accent) : "transparent"
@@ -390,12 +393,14 @@ Panel {
           color: root.barIconColor
           filled: root.onTarget
           warning: !xray.reachable
+          // ~11 s of a slow breath, then still: a password prompt can take
+          // minutes and must not blink in the bar all that time.
           SequentialAnimation on opacity {
             running: xray.pending !== ""
-            loops: Animation.Infinite
+            loops: 8
             alwaysRunToEnd: true
-            NumberAnimation { to: 0.35; duration: 550; easing.type: Easing.InOutSine }
-            NumberAnimation { to: 1.0; duration: 550; easing.type: Easing.InOutSine }
+            NumberAnimation { to: 0.45; duration: 700; easing.type: Easing.InOutSine }
+            NumberAnimation { to: 1.0; duration: 700; easing.type: Easing.InOutSine }
           }
         }
       }
@@ -415,7 +420,8 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(400))
-    contentHeight: panel.fittedContentHeight(nodeList.contentHeight, Style.space(620))
+    contentHeight: panel.fittedContentHeight(pinned.height + Style.space(12) + nodeList.contentHeight,
+                                             Style.space(620))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -440,26 +446,136 @@ Panel {
         root.keysUsed = true
         if (t === "t" || t === "T") xray.testNodes(root.visibleNodes)
         else if (t === "u" || t === "U") xray.updateSubscriptions()
-        else if (t === "c" || t === "C") xray.toggleConnection(root.lastNodeKey)
+        // Dropping the tunnel takes Shift: one stray letter must not send
+        // everything direct.
+        else if (t === "c") { if (root.onTarget) xray.flash("Shift+C disconnects"); else xray.toggleConnection(root.lastNodeKey) }
+        else if (t === "C") xray.toggleConnection(root.lastNodeKey)
         else if (t === "w" || t === "W") xray.openWebUi()
-        else if (t === "/" && nodeList.headerItem) nodeList.headerItem.search.forceActiveFocus()
         else if (t === "a" || t === "A") root.focusSubUrl()
+        else if (nodeList.headerItem && /^[^\s\x00-\x1f]$/.test(t)) {
+          // any other printable key starts filtering (type-ahead); "/" just opens the field
+          var search = nodeList.headerItem.search
+          if (t !== "/") root.filterQuery = t
+          search.forceActiveFocus()
+          search.cursorPosition = search.text.length
+        }
       }
 
       // One scroll view for the whole panel. Only the node rows are
       // virtualized (1000 rows in a Column cost ~0.3 s per rebuild); the
       // controls above and the subscriptions below ride along as header and
       // footer so everything still scrolls together.
+      // The hero and the status line stay put; only what is below scrolls,
+      // so the result of an action at the bottom is never drawn out of view.
+      Column {
+        id: pinned
+        anchors.left: parent.left
+        anchors.right: parent.right
+        spacing: Style.space(12)
+
+        PanelHero {
+          id: hero
+          width: parent.width
+          title: xray.heroTitle
+          meta: xray.heroState
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+          iconOpacity: root.onTarget ? 1.0 : 0.5
+          iconComponent: Component {
+            XrayIcon {
+              iconSize: Style.font.display
+              color: root.onTarget ? root.onColor : hero.foreground
+              filled: root.onTarget
+              warning: !xray.reachable
+            }
+          }
+          trailingControl: Component {
+            ToggleSwitch {
+              id: powerSwitch
+              visible: !root.firstRun            // nothing to connect to yet
+              checked: root.onTarget
+              busy: xray.toggleBusy
+              opacity: xray.toggleBusy ? 0.5 : 1.0
+              hasCursor: root.cursorRow === "hero"
+              foreground: hero.foreground
+              onToggled: xray.toggleConnection(root.lastNodeKey)
+              onHovered: function(h) { if (h) root.cursorActive = false }
+              Accessible.role: Accessible.CheckBox
+              Accessible.name: "VPN connection"
+              Accessible.checked: root.onTarget
+
+              PanelToolTip {
+                visible: powerSwitch.containsMouse
+                text: xray.connected ? "Disconnect (Shift+C)"
+                      : xray.connectTarget ? "Connect to " + xray.connectTarget.name + " (c)" : "Add a subscription first"
+                fontFamily: root.fontFamily
+              }
+            }
+          }
+        }
+
+        // One status slot: the running action, else the last error (may wrap,
+        // with a way to the journal), else live traffic.
+        RowLayout {
+          id: statusRow
+          readonly property bool live: xray.connected && xray.traffic !== null
+          readonly property string kind: xray.actionStatus !== "" ? "action"
+                                       : xray.errorText !== "" ? "error"
+                                       : root.firstRun ? "none" : "traffic"
+          visible: xray.reachable || xray.errorText !== ""
+          width: parent.width
+          spacing: Style.space(8)
+
+          Text {
+            textFormat: Text.PlainText
+            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignVCenter
+            text: statusRow.kind === "action" ? xray.actionStatus
+                  : statusRow.kind === "error" ? "󰀦 " + xray.errorText
+                  : statusRow.kind === "none" ? ""
+                  : !statusRow.live ? "󰁅 —   󰁝 —"
+                  : "󰁅 " + Model.formatSpeed(xray.traffic.downSpeed)
+                    + "   󰁝 " + Model.formatSpeed(xray.traffic.upSpeed)
+                    + "   ·   downloaded " + Model.formatBytes(xray.traffic.downTotal)
+            color: statusRow.kind === "error" ? root.errorColor
+                   : statusRow.kind === "traffic" && statusRow.live ? root.foreground : root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            wrapMode: statusRow.kind === "error" ? Text.WordWrap : Text.NoWrap
+            elide: statusRow.kind === "error" ? Text.ElideNone : Text.ElideRight
+            Accessible.role: Accessible.StaticText
+            Accessible.name: statusRow.kind === "error" ? "Error: " + xray.errorText
+                             : statusRow.kind === "action" ? xray.actionStatus
+                             : statusRow.live ? "Download " + Model.formatSpeed(xray.traffic.downSpeed)
+                                                + ", upload " + Model.formatSpeed(xray.traffic.upSpeed) : ""
+          }
+
+          TextActionButton {
+            visible: statusRow.kind === "error"
+            label: "Logs"
+            tooltip: "Open the xray journal in a terminal"
+            Layout.alignment: Qt.AlignTop
+            onClicked: xray.openLogs()
+          }
+        }
+
+        PanelSeparator { visible: xray.reachable && !root.firstRun; foreground: root.foreground }
+      }
+
       ListView {
         id: nodeList
-        anchors.fill: parent
+        anchors.top: pinned.bottom
+        anchors.topMargin: Style.space(12)
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         interactive: contentHeight > height
         reuseItems: true
         spacing: Style.space(4)
         currentIndex: -1                   // the panel keeps its own cursor (nodeIndex)
-        // The header grows upward (status line, country grid): a view resting
+        // The header grows upward (country grid): a view resting
         // at the top stays at the top instead of pushing the hero out of sight.
         property real _prevOriginY: 0
         onOriginYChanged: {
@@ -478,75 +594,6 @@ Panel {
           width: nodeList.width
           spacing: Style.space(12)
           bottomPadding: Style.space(6)
-
-          PanelHero {
-            id: hero
-            width: parent.width
-            title: xray.heroTitle
-            meta: xray.heroState
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            iconOpacity: root.onTarget ? 1.0 : 0.5
-            iconComponent: Component {
-              XrayIcon {
-                iconSize: Style.font.display
-                color: root.onTarget ? root.onColor : hero.foreground
-                filled: root.onTarget
-                warning: !xray.reachable
-              }
-            }
-            trailingControl: Component {
-              ToggleSwitch {
-                id: powerSwitch
-                visible: !root.firstRun            // nothing to connect to yet
-                checked: root.onTarget
-                busy: xray.toggleBusy
-                opacity: xray.toggleBusy ? 0.5 : 1.0
-                hasCursor: root.cursorRow === "hero"
-                foreground: hero.foreground
-                onToggled: xray.toggleConnection(root.lastNodeKey)
-                onHovered: function(h) { if (h) root.cursorActive = false }
-                Accessible.role: Accessible.CheckBox
-                Accessible.name: "VPN connection"
-                Accessible.checked: xray.connected
-
-                PanelToolTip {
-                  visible: powerSwitch.containsMouse
-                  text: xray.connected ? "Disconnect (c)"
-                        : xray.connectTarget ? "Connect to " + xray.connectTarget.name + " (c)" : "Add a subscription first"
-                  fontFamily: root.fontFamily
-                }
-              }
-            }
-          }
-
-          // One status slot under the hero, always one line tall: the running
-          // action, else the last error (with a glyph; errors may wrap), else
-          // live traffic. Flashes swap the text in place instead of pushing
-          // the list down and back.
-          Text {
-            textFormat: Text.PlainText
-            readonly property bool live: xray.connected && xray.traffic !== null
-            readonly property string kind: xray.actionStatus !== "" ? "action"
-                                         : xray.errorText !== "" ? "error"
-                                         : root.firstRun ? "none" : "traffic"
-            visible: xray.reachable || xray.errorText !== ""
-            width: parent.width
-            text: kind === "action" ? xray.actionStatus
-                  : kind === "error" ? "󰀦 " + xray.errorText
-                  : kind === "none" ? ""
-                  : !live ? "󰁅 —   󰁝 —"
-                  : "󰁅 " + Model.formatSpeed(xray.traffic.downSpeed)
-                    + "   󰁝 " + Model.formatSpeed(xray.traffic.upSpeed)
-                    + "   ·   downloaded " + Model.formatBytes(xray.traffic.downTotal)
-            color: kind === "error" ? root.urgent : kind === "traffic" && live ? root.foreground : root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-            wrapMode: kind === "error" ? Text.WordWrap : Text.NoWrap
-            elide: kind === "error" ? Text.ElideNone : Text.ElideRight
-          }
-
-          PanelSeparator { visible: xray.reachable && !root.firstRun; foreground: root.foreground }
 
           // Mode and route are set-and-forget: a compact label/chips form that
           // stays quieter than the connect switch and the node list.
@@ -580,6 +627,7 @@ Panel {
                 // the kit's chips carry no accessible names; the group says the state
                 Accessible.role: Accessible.Grouping
                 Accessible.name: "Mode: " + (xray.mode === "tun" ? "TUN, all system traffic" : "proxy")
+                Accessible.description: "Options: proxy, TUN. h and l switch"
                 focusable: false
                 foreground: root.foreground
                 fontFamily: root.fontFamily
@@ -616,6 +664,7 @@ Panel {
                 cursorIndex: root.cursorRow === "route" && root.chipIndex < 2 ? root.chipIndex : -1
                 Accessible.role: Accessible.Grouping
                 Accessible.name: "Route: " + (xray.region ? xray.region.name + " bypasses the VPN" : "everything through the VPN")
+                Accessible.description: "Options: all traffic, bypass one country. h and l switch"
                 focusable: false
                 foreground: root.foreground
                 fontFamily: root.fontFamily
@@ -683,7 +732,7 @@ Panel {
               }
               color: root.dim
               font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
+              font.pixelSize: Style.font.bodySmall
               wrapMode: Text.WordWrap
             }
 
@@ -720,11 +769,30 @@ Panel {
               Text {
                 textFormat: Text.PlainText
                 Layout.fillWidth: true
-                text: xray.geo ? "Ads and trackers (geosite:category-ads-all)" : "Needs Xray geo data (geosite.dat)"
+                text: xray.geo ? "Blocks known ad and tracker domains"
+                               : "Needs geo data: install v2ray-geoip and v2ray-domain-list-community"
                 color: root.dim
                 font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
+                font.pixelSize: Style.font.bodySmall
                 elide: Text.ElideRight
+
+                // the whole line toggles, not just the small switch
+                MouseArea {
+                  id: adblockText
+                  anchors.fill: parent
+                  anchors.topMargin: -Style.space(6)
+                  anchors.bottomMargin: -Style.space(6)
+                  hoverEnabled: true
+                  enabled: xray.geo || xray.adblock
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: if (!xray.busy) xray.setAdblock(!xray.adblock)
+                  onEntered: root.cursorActive = false
+                }
+                PanelToolTip {
+                  visible: adblockText.containsMouse
+                  text: "Sends geosite:category-ads-all to a blackhole"
+                  fontFamily: root.fontFamily
+                }
               }
             }
           }
@@ -763,7 +831,7 @@ Panel {
               text: xray.skippedText
               color: root.dim
               font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
+              font.pixelSize: Style.font.bodySmall
               wrapMode: Text.WordWrap
             }
 
@@ -880,6 +948,8 @@ Panel {
 
                 MouseArea {
                   anchors.fill: parent
+                  anchors.topMargin: -Style.space(6)       // a caption-high strip is too thin to hit
+                  anchors.bottomMargin: -Style.space(6)
                   enabled: xray.subs.length > 0
                   cursorShape: Qt.PointingHandCursor
                   onClicked: root.subsOpen = !root.subsOpen
@@ -939,7 +1009,7 @@ Panel {
               visible: root.subsShown && xray.importNote !== ""
               width: parent.width
               text: xray.importNote
-              color: xray.importing ? root.dim : root.urgent
+              color: xray.importing ? root.dim : root.errorColor
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
               wrapMode: Text.WordWrap
@@ -997,9 +1067,9 @@ Panel {
                       Layout.fillWidth: true
                       visible: text !== ""
                       text: subRow.sub ? (subRow.sub.error ? "󰀦 " + subRow.sub.error : Model.subInfoLabel(subRow.sub.info)) : ""
-                      color: subRow.sub && subRow.sub.error ? root.urgent : root.dim
+                      color: subRow.sub && subRow.sub.error ? root.errorColor : root.dim
                       font.family: root.fontFamily
-                      font.pixelSize: Style.font.caption
+                      font.pixelSize: Style.font.bodySmall
                       elide: Text.ElideRight
                     }
                   }
@@ -1018,7 +1088,7 @@ Panel {
                     // same width armed or not, so "Update" never shifts
                     Layout.preferredWidth: Math.ceil(confirmMetrics.advanceWidth) + 2 * Style.spacing.controlPaddingX
                     label: armed ? "Confirm" : "Remove"
-                    tint: armed ? root.urgent : root.foreground
+                    tint: armed ? root.errorColor : root.foreground
                     tooltip: armed ? "Click again to remove " + (subRow.sub.title || subRow.sub.host) + " and its nodes"
                                    : "Remove this subscription and its nodes"
                     enabled: !xray.busy
@@ -1038,11 +1108,11 @@ Panel {
             visible: root.keysUsed || root.firstRun
             width: parent.width
             text: root.firstRun ? "Enter adds the subscription · Esc closes"
-                  : "j/k move · h/l choose · Enter apply · / filter · a add sub · t test · u update · c connect · w config"
+                  : "j/k move · h/l choose · Enter apply · type to filter · t test · u update · c connect · Shift+C disconnect · a add sub · w config"
             wrapMode: Text.WordWrap
             color: root.dim
             font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
+            font.pixelSize: Style.font.bodySmall
             horizontalAlignment: Text.AlignHCenter
           }
         }
@@ -1127,7 +1197,11 @@ Panel {
     width: parent ? parent.width : 0
     implicitHeight: rowInner.implicitHeight + Style.spacing.rowPaddingX
     Accessible.role: Accessible.Button
-    Accessible.name: node ? node.name + (isConnected ? ", connected" : "") + (latencyText !== "" ? ", " + latencyText : "") : ""
+    Accessible.name: node ? node.name + (isConnected ? ", connected" : "") + (latencyText !== "" ? ", " + latencyText : "")
+                            + (fastest ? ", fastest" : "") : ""
+    // the panel's own cursor is the focus a screen reader should follow
+    Accessible.focusable: true
+    Accessible.focused: hasCursor
     Accessible.onPressAction: if (node) xray.connectNode(node)
 
     MouseArea {
@@ -1158,6 +1232,7 @@ Panel {
       Text {
         textFormat: Text.PlainText
         text: nodeRow.isConnected ? "󰐾" : "󰐽"
+        Accessible.ignored: true                  // the row's name says "connected"
         color: nodeRow.isConnected ? root.foreground : root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
@@ -1193,6 +1268,7 @@ Panel {
         Layout.preferredWidth: root.latencyCellWidth
         horizontalAlignment: Text.AlignRight
         text: (nodeRow.fastest ? "󰉁 " : "") + nodeRow.latencyText
+        Accessible.ignored: true
         color: nodeRow.latencyBadLat ? root.urgent : root.foreground
         font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall      // the number nodes are chosen by

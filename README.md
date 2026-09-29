@@ -31,7 +31,8 @@ commands and reads JSON back.
   `profile-title`, automatic refresh (`profile-update-interval`, default 24 h)
 - latency tests: batched and parallel, one xray process per 32 nodes
 - live traffic counters and speeds from xray's metrics endpoint (loopback)
-- keyboard-first: `j/k` move through the MODE/ROUTE rows and the nodes, `h/l` choose, `Enter` apply/connect, `/` filter, `t` test (again to stop), `u` update, `c` toggle, `w` config folder
+- keyboard-first: `j/k` move through the MODE/ROUTE rows and the nodes, `h/l` choose, `Enter` apply/connect, type to filter (or `/`), `t` test (again to stop), `u` update, `c` connect, `Shift+C` disconnect, `a` add a subscription, `w` config folder
+- the status line stays pinned under the switch; an error there offers **Logs** (the journal in a floating terminal)
 - IPC verbs for Hyprland binds
 
 ## Protocols and transports
