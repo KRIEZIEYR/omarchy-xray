@@ -15,6 +15,10 @@ Panel {
 
   // --- cursor / keyboard state -------------------------------------------
   property bool cursorActive: false
+  // A key was pressed since the panel opened. Hover also moves the cursor
+  // (cursorActive), so the key legend must not follow it: it would pop in
+  // and out as the pointer crosses rows and buttons, resizing the panel.
+  property bool keysUsed: false
   property int nodeIndex: 0
   property string filterQuery: ""
   property bool regionsOpen: false
@@ -321,6 +325,7 @@ Panel {
 
   onOpenedChanged: if (opened) {
     cursorActive = false
+    keysUsed = false
     nodeIndex = 0
     pointerGate.reset()
     regionsOpen = false
@@ -419,15 +424,20 @@ Panel {
                || (nodeList.footerItem !== null && nodeList.footerItem.subUrl.activeFocus)
       anchors.fill: parent
       onMoveRequested: function(dx, dy) {
+        root.keysUsed = true
         if (!root.cursorActive) { root.cursorActive = true; return }
         if (dy !== 0) root.moveNodeCursor(dy > 0 ? 1 : -1)
         else if (dx !== 0) root.moveChip(dx)
       }
       // Enter with no cursor shows it first instead of doing nothing.
-      onActivateRequested: if (root.cursorActive) root.activateCursor(); else root.cursorActive = true
+      onActivateRequested: {
+        root.keysUsed = true
+        if (root.cursorActive) root.activateCursor(); else root.cursorActive = true
+      }
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
+        root.keysUsed = true
         if (t === "t" || t === "T") xray.testNodes(root.visibleNodes)
         else if (t === "u" || t === "U") xray.updateSubscriptions()
         else if (t === "c" || t === "C") xray.toggleConnection(root.lastNodeKey)
@@ -1021,11 +1031,11 @@ Panel {
             }
           }
 
-          // Key legend only while the keyboard is in use (and on first run);
-          // mouse users get the keys in tooltips instead.
+          // Key legend once a key was pressed (and on first run); mouse
+          // users get the keys in tooltips instead.
           Text {
             textFormat: Text.PlainText
-            visible: root.cursorActive || root.firstRun
+            visible: root.keysUsed || root.firstRun
             width: parent.width
             text: root.firstRun ? "Enter adds the subscription · Esc closes"
                   : "j/k move · h/l choose · Enter apply · / filter · a add sub · t test · u update · c connect · w config"
