@@ -251,6 +251,14 @@ Panel {
 
   readonly property string fastestKey: Model.fastestKey(visibleNodes)
   TextMetrics {
+    id: glyphMetrics
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.caption
+    text: "󰐽"
+  }
+  readonly property real rowGlyphWidth: Math.ceil(glyphMetrics.advanceWidth)
+  readonly property real rowTextInset: Style.space(8) + rowGlyphWidth + Style.space(8)
+  TextMetrics {
     id: latencyMetrics
     font.family: root.fontFamily
     font.pixelSize: Style.font.caption
@@ -714,8 +722,9 @@ Panel {
               width: parent.width
               spacing: Style.space(6)
 
-              TextField {
+              RowField {
                 id: searchField
+                icon: "󰍉"
                 Layout.fillWidth: true
                 foreground: root.foreground
                 placeholderText: "Filter nodes…  ( / )"
@@ -847,8 +856,9 @@ Panel {
               width: parent.width
               spacing: Style.space(6)
 
-              TextField {
+              RowField {
                 id: subUrlField
+                icon: "󰌹"
                 Layout.fillWidth: true
                 foreground: root.foreground
                 placeholderText: "Paste a subscription URL (https://…)"
@@ -979,6 +989,43 @@ Panel {
             horizontalAlignment: Text.AlignHCenter
           }
         }
+      }
+    }
+  }
+
+  // Text input shaped like a list row: the same height, no box at rest (hover
+  // and focus use the kit's control states), and an icon in the row's
+  // leading glyph column so typed text starts where node/subscription names do.
+  component RowField: TextField {
+    id: rowField
+    property string icon: ""
+    readonly property bool _hotState: hovered || activeFocus
+    foreground: root.foreground
+    font.family: root.fontFamily
+    // kit TextField height = line + 2 * (verticalPadding + 1 px border);
+    // a NodeRow is line + rowPaddingX
+    verticalPadding: Style.spacing.rowPaddingX / 2 - 1
+    leftPadding: root.rowTextInset
+    rightPadding: Style.space(8)
+    background: BorderSurface {
+      radius: Style.cornerRadius
+      color: rowField.activeFocus ? Style.focusFillFor(root.foreground, Color.accent)
+           : rowField.hovered ? Style.hoverFillFor(root.foreground, Color.accent) : "transparent"
+      borderSpec: rowField.activeFocus ? Border.controlSpec("focus", root.foreground, Color.accent)
+                : rowField.hovered ? Border.controlSpec("hover-cursor", root.foreground, Color.accent)
+                : Border.none()
+
+      Text {
+        textFormat: Text.PlainText
+        anchors.left: parent.left
+        anchors.leftMargin: Style.space(8)
+        anchors.verticalCenter: parent.verticalCenter
+        width: root.rowGlyphWidth
+        horizontalAlignment: Text.AlignHCenter
+        text: rowField.icon
+        color: rowField._hotState ? root.foreground : root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
       }
     }
   }
