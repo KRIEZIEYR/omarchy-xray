@@ -636,6 +636,29 @@ class Hardening(Base):
         self.assertEqual(old.read_text(), "previous\n")
         self.assertFalse(new.exists())
 
+    def test_cleanup_removes_units_keeps_config(self):
+        saved = M.uctl, M.sctl, M.apply_system_proxy, M.SYS_UNIT, M._escalate
+        calls = []
+        ok = type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        M.uctl = lambda *a, **k: calls.append(a) or ok
+        M.sctl = lambda *a, **k: ok
+        M.apply_system_proxy = lambda st, on: calls.append(("proxy", on))
+        M.SYS_UNIT = self.tmp / "no-tun.service"              # TUN never set up
+        M._escalate = lambda verb: self.fail("no privileged step without TUN")
+        try:
+            M.UNIT_DIR.mkdir(parents=True)
+            for p in (M.UNIT, M.T2S_UNIT, M.UNIT_DIR / "omarchy-xray-tun-login.service"):
+                p.write_text("[Unit]\n")
+            M.CFG.mkdir(parents=True)
+            M.STATE.write_text(json.dumps(self.state([self.node("trojan-ws")])))
+            M.cmd_cleanup()
+            self.assertEqual(list(M.UNIT_DIR.iterdir()), [])
+            self.assertTrue(M.STATE.exists())                   # subscriptions stay
+            self.assertIn(("proxy", False), calls)
+            self.assertIn(("disable", M.SERVICE), calls)
+        finally:
+            M.uctl, M.sctl, M.apply_system_proxy, M.SYS_UNIT, M._escalate = saved
+
     def test_import_refuses_url_in_argv(self):
         with self.assertRaises(SystemExit):
             M.secret_url_from_arg("https://sub.example.com/secret-token")
