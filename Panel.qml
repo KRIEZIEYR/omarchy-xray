@@ -54,21 +54,32 @@ Panel {
     }
   }
 
-  // The cursor walks the settings rows above the nodes, as in Network:
-  // nodeIndex < 0 addresses a settings row (-1 = the last one), >= 0 a node.
-  // h/l pick a chip inside the row, Enter applies it.
+  // One keyboard cursor walks the whole panel, as in Network: settings rows
+  // above the nodes (nodeIndex < 0, -1 = the last one), the node rows
+  // (0..n-1), then the subscriptions (header, then one row each).
+  // h/l pick a chip inside a row, Enter applies it.
   readonly property var settingRows: firstRun ? ["hero"]
-                                    : regionsOpen ? ["hero", "mode", "route", "regions"] : ["hero", "mode", "route"]
+      : regionsOpen ? ["hero", "mode", "route", "regions", "ads"] : ["hero", "mode", "route", "ads"]
+  readonly property int footerRows: xray.reachable ? 1 + (subsShown ? xray.subs.length : 0) : 0
   property int chipIndex: 0
-  readonly property string cursorRow: cursorActive && nodeIndex < 0 ? (settingRows[settingRows.length + nodeIndex] || "") : ""
+  readonly property string cursorRow: !cursorActive ? ""
+      : nodeIndex < 0 ? (settingRows[settingRows.length + nodeIndex] || "")
+      : nodeIndex < visibleNodes.length ? "node"
+      : nodeIndex === visibleNodes.length ? "subs" : "sub"
+  readonly property int cursorSub: cursorRow === "sub" ? nodeIndex - visibleNodes.length - 1 : -1
+  // The country chip only changes BYPASS's country; hidden while ALL is on.
+  readonly property bool countryChipShown: xray.region !== null || regionsOpen
 
   function chipCount(row) {
-    return row === "hero" ? 1 : row === "mode" ? 2 : row === "route" ? 4 : row === "regions" ? xray.regions.length : 0
+    return row === "mode" ? 2 : row === "route" ? (countryChipShown ? 3 : 2)
+         : row === "regions" ? xray.regions.length
+         : row === "subs" ? (xray.subs.length > 0 ? 2 : 1) : row === "sub" ? 2 : 1
   }
 
   function currentChip(row) {
     if (row === "mode") return xray.mode === "tun" ? 1 : 0
     if (row === "route") return xray.region ? 1 : 0
+    if (row !== "regions") return 0
     for (var i = 0; i < xray.regions.length; i++)
       if (xray.routing === xray.regions[i].code + "-direct") return i
     return 0
@@ -81,23 +92,44 @@ Panel {
   }
 
   function activateChip() {
-    if (cursorRow === "hero") xray.toggleConnection(root.lastNodeKey)
-    else if (cursorRow === "mode") chooseMode(chipIndex === 1 ? "tun" : "proxy")
-    else if (cursorRow === "route") {
+    var r = cursorRow
+    if (r === "hero") xray.toggleConnection(root.lastNodeKey)
+    else if (r === "mode") chooseMode(chipIndex === 1 ? "tun" : "proxy")
+    else if (r === "route") {
       if (chipIndex < 2) chooseRoute(chipIndex === 1 ? "direct" : "global")
-      else if (chipIndex === 2) regionsOpen = !regionsOpen
-      else if (xray.geo || xray.adblock) xray.setAdblock(!xray.adblock)
-    } else if (cursorRow === "regions" && xray.regions[chipIndex]) pickRegion(xray.regions[chipIndex].code)
+      else regionsOpen = !regionsOpen
+    }
+    else if (r === "regions" && xray.regions[chipIndex]) pickRegion(xray.regions[chipIndex].code)
+    else if (r === "ads") { if (xray.geo || xray.adblock) xray.setAdblock(!xray.adblock) }
+    else if (r === "subs") { if (chipIndex === 0) xray.openWebUi(); else xray.updateSubscriptions() }
+    else if (r === "sub" && xray.subs[cursorSub]) {
+      if (chipIndex === 0) xray.updateSub(xray.subs[cursorSub].index)
+      else armRemove(cursorSub)
+    }
   }
 
-  // Opening or closing the country grid adds or removes a row above the
-  // nodes; keep the cursor on the row it was on (a closed grid hands back
-  // to its COUNTRY chip).
+  // Removal can't be undone (the URL is a secret the user would have to find
+  // again), so it takes a second press on the same spot within 4 s.
+  property int armedSub: -1
+  Timer { id: disarmTimer; interval: 4000; onTriggered: root.armedSub = -1 }
+  function armRemove(i) {
+    if (armedSub === i) { armedSub = -1; xray.subRemove(xray.subs[i].index); return }
+    armedSub = i
+    disarmTimer.restart()
+  }
+
+  // Opening or closing the country grid inserts or removes the row right
+  // after ROUTE; keep the cursor on the row it was on (a grid closed under
+  // the cursor hands back to its country chip).
   onRegionsOpenChanged: {
-    if (nodeIndex >= 0) return
-    if (regionsOpen) nodeIndex -= 1
-    else if (nodeIndex === -1) chipIndex = 2
-    else nodeIndex += 1
+    var k = settingRows.indexOf("route") + 1
+    if (nodeIndex >= 0 || k === 0) return
+    var len = settingRows.length
+    var abs = nodeIndex + (regionsOpen ? len - 1 : len + 1)
+    if (regionsOpen) { if (abs >= k) abs += 1 }
+    else if (abs === k) { abs = k - 1; chipIndex = Math.min(2, chipCount("route") - 1) }
+    else if (abs > k) abs -= 1
+    nodeIndex = abs - len
   }
   readonly property string lastNodeKey: settings ? String(settings.lastNodeKey || "") : ""
 
@@ -117,15 +149,22 @@ Panel {
     var c = hex ? Qt.color(hex) : Color.accent
     return c.hslSaturation < 0.2 ? foreground : c
   }
+  // Where the connection is heading: the switch flips and the shield fills at
+  // once while the operation runs (the kit's optimistic toggle).
+  readonly property bool onTarget: xray.pending === "connecting" || xray.pending === "switching"
+                                   || (xray.connected && xray.pending !== "disconnecting")
+
   readonly property color barIconColor: {
     if (!xray.reachable) return urgent
-    if (xray.connected) return onColor
+    if (onTarget) return onColor
     return foreground            // "off" is carried by the button's kit dimming
   }
 
   readonly property string barLabelText: {
-    if (xray.barLabel === "node") return xray.connectedNodeName
-    if (xray.barLabel === "speed" && xray.connected)
+    // "off" keeps a placeholder so the bar never changes width
+    if (xray.barLabel === "node") return xray.connected ? xray.connectedNodeName : (xray.reachable ? "Off" : "")
+    if (xray.barLabel === "speed" && !xray.connected) return xray.reachable ? "󰁅 —" : ""
+    if (xray.barLabel === "speed")
       return "󰁅 " + (xray.traffic !== null ? Model.formatSpeed(xray.traffic.downSpeed) : "…")
     return ""
   }
@@ -191,22 +230,27 @@ Panel {
   }
 
   function ensureCursor() {
-    // Clamp only against real rows: an empty list at startup must not park
-    // the cursor on a settings row.
-    if (visibleNodes.length > 0 && nodeIndex >= visibleNodes.length) nodeIndex = visibleNodes.length - 1
+    // Clamp from below at 0: an empty list at startup must not park the
+    // cursor on a settings row.
+    var last = visibleNodes.length - 1 + footerRows
+    if (nodeIndex > last) nodeIndex = Math.max(0, last)
   }
 
   function moveNodeCursor(delta) {
     pointerGate.reset()
     cursorActive = true
-    var next = Math.max(-settingRows.length, Math.min(visibleNodes.length - 1, nodeIndex + delta))
+    var next = Math.max(-settingRows.length, Math.min(visibleNodes.length - 1 + footerRows, nodeIndex + delta))
     if (next === nodeIndex) return
     nodeIndex = next
     if (nodeIndex < 0) {
       chipIndex = currentChip(cursorRow)
       nodeList.positionViewAtBeginning()
-    } else {
+    } else if (nodeIndex < visibleNodes.length) {
       nodeList.positionViewAtIndex(nodeIndex, ListView.Contain)
+    } else {
+      chipIndex = 0
+      subsOpen = true
+      nodeList.positionViewAtEnd()
     }
   }
 
@@ -222,7 +266,7 @@ Panel {
   }
 
   function activateCursor() {
-    if (nodeIndex < 0) { activateChip(); return }
+    if (cursorRow !== "node") { activateChip(); return }
     ensureCursor()
     var node = selectedNode()
     if (node) xray.connectNode(node)
@@ -257,6 +301,12 @@ Panel {
     text: "󰐽"
   }
   readonly property real rowGlyphWidth: Math.ceil(glyphMetrics.advanceWidth)
+  TextMetrics {
+    id: confirmMetrics
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.body
+    text: "Confirm"
+  }
   readonly property real rowTextInset: Style.space(8) + rowGlyphWidth + Style.space(8)
   TextMetrics {
     id: latencyMetrics
@@ -294,7 +344,7 @@ Panel {
     nodeList.positionViewAtBeginning()
     xray.panelOpen = true
     xray.refresh()
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    Qt.callLater(function() { if (root.firstRun) root.focusSubUrl(); else keyCatcher.forceActiveFocus() })
   }
   onVisibleNodesChanged: ensureCursor()
 
@@ -345,7 +395,7 @@ Panel {
     // The kit slot fits an icon only; widen it by exactly the label so the
     // label no longer paints over the neighbouring widget.
     fixedWidth: vertical ? -1 : slotSize + (root.barLabelWidth > 0 ? root.barLabelWidth + Style.space(5) : 0)
-    dimmed: xray.reachable && (!xray.connected || xray.pending !== "")
+    dimmed: xray.reachable && !root.onTarget
     tooltipText: xray.pending !== "" ? xray.actionStatus
                  : xray.heroSummary + " · right-click to " + (xray.connected ? "disconnect" : "connect")
     iconComponent: Component {
@@ -362,8 +412,15 @@ Panel {
             anchors.verticalCenter: parent.verticalCenter
             iconSize: Style.space(11)
             color: root.barIconColor
-            filled: xray.connected
+            filled: root.onTarget
             warning: !xray.reachable
+            SequentialAnimation on opacity {
+              running: xray.pending !== ""
+              loops: Animation.Infinite
+              alwaysRunToEnd: true
+              NumberAnimation { to: 0.35; duration: 550; easing.type: Easing.InOutSine }
+              NumberAnimation { to: 1.0; duration: 550; easing.type: Easing.InOutSine }
+            }
           }
           Text {
             textFormat: Text.PlainText
@@ -408,7 +465,8 @@ Panel {
         if (dy !== 0) root.moveNodeCursor(dy > 0 ? 1 : -1)
         else if (dx !== 0) root.moveChip(dx)
       }
-      onActivateRequested: if (root.cursorActive) root.activateCursor()
+      // Enter with no cursor shows it first instead of doing nothing.
+      onActivateRequested: if (root.cursorActive) root.activateCursor(); else root.cursorActive = true
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
@@ -460,24 +518,26 @@ Panel {
             meta: xray.heroState
             foreground: root.foreground
             fontFamily: root.fontFamily
-            iconOpacity: xray.connected ? 1.0 : 0.5
+            iconOpacity: root.onTarget ? 1.0 : 0.5
             iconComponent: Component {
               XrayIcon {
                 iconSize: Style.font.display
-                color: xray.connected ? root.onColor : hero.foreground
-                filled: xray.connected
+                color: root.onTarget ? root.onColor : hero.foreground
+                filled: root.onTarget
                 warning: !xray.reachable
               }
             }
             trailingControl: Component {
               ToggleSwitch {
                 id: powerSwitch
-                checked: xray.connected
+                visible: !root.firstRun            // nothing to connect to yet
+                checked: root.onTarget
                 busy: xray.toggleBusy
                 opacity: xray.toggleBusy ? 0.5 : 1.0
                 hasCursor: root.cursorRow === "hero"
                 foreground: hero.foreground
                 onToggled: xray.toggleConnection(root.lastNodeKey)
+                onHovered: function(h) { if (h) root.cursorActive = false }
                 Accessible.role: Accessible.CheckBox
                 Accessible.name: "VPN connection"
                 Accessible.checked: xray.connected
@@ -577,7 +637,7 @@ Panel {
                 options: [
                   { value: "global", label: "ALL",
                     tooltip: "Everything goes through the VPN, except your local network" },
-                  { value: "direct", label: "BYPASS",
+                  { value: "direct", label: root.routeRegion ? "BYPASS " + root.routeRegion.code.toUpperCase() : "BYPASS",
                     tooltip: root.routeRegion ? root.routeRegion.name + ": its sites and IPs bypass the VPN"
                                               : "Let one country's sites and IPs bypass the VPN" }
                 ]
@@ -593,48 +653,22 @@ Panel {
               }
 
               Button {
-                text: (root.routeRegion ? root.routeRegion.code.toUpperCase() : "COUNTRY") + (root.regionsOpen ? " 󰅃" : " 󰅀")
-                tooltipText: "Choose the country that bypasses the VPN"
+                visible: root.countryChipShown
+                text: root.regionsOpen ? "󰅃" : "󰅀"
+                tooltipText: "Change the bypass country"
                 bordered: true
-                foreground: xray.region ? root.foreground : root.dim
                 opacity: xray.busy ? 0.45 : 1.0
                 hasCursor: root.cursorRow === "route" && root.chipIndex === 2
                 enabled: xray.regions.length > 0
                 fontFamily: root.fontFamily
                 fontSize: Style.font.caption
                 onClicked: root.regionsOpen = !root.regionsOpen
+                onHovered: function(h) { if (h) root.cursorActive = false }
+                Accessible.role: Accessible.Button
+                Accessible.name: "Change the bypass country"
               }
 
               Item { Layout.fillWidth: true }
-
-              PanelSectionHeader {
-                id: adblockLabel
-                text: "ADBLOCK"
-                Layout.alignment: Qt.AlignVCenter
-                opacity: xray.geo || xray.adblock ? 1.0 : 0.45
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-              }
-
-              ToggleSwitch {
-                id: adblockSwitch
-                trackHeight: Math.round(adblockLabel.font.pixelSize * 1.2)
-                cursorPad: Style.space(3)
-                Layout.alignment: Qt.AlignVCenter
-                checked: xray.adblock
-                busy: xray.busy
-                hasCursor: root.cursorRow === "route" && root.chipIndex === 3
-                opacity: xray.busy || !(xray.geo || xray.adblock) ? 0.45 : 1.0
-                foreground: root.foreground
-                onToggled: if (xray.geo || xray.adblock) xray.setAdblock(!xray.adblock)
-
-                PanelToolTip {
-                  visible: adblockSwitch.containsMouse
-                  text: xray.geo ? "Block ads and trackers (geosite:category-ads-all)"
-                                 : "Needs Xray geo data (geosite.dat). Run omarchy-xray doctor to see what is missing"
-                  fontFamily: root.fontFamily
-                }
-              }
             }
 
             Flow {
@@ -649,6 +683,8 @@ Panel {
                   required property int index
                   text: modelData.code.toUpperCase()
                   hasCursor: root.cursorRow === "regions" && root.chipIndex === index
+                  Accessible.role: Accessible.Button
+                  Accessible.name: modelData.name + (selected ? ", bypassing now" : "")
                   tooltipText: modelData.name + ": sites and IPs bypass the VPN"
                                + (xray.geo ? "" : " (domains only: no geo data installed)")
                   bordered: true
@@ -677,6 +713,47 @@ Panel {
               font.pixelSize: Style.font.caption
               wrapMode: Text.WordWrap
             }
+
+            RowLayout {
+              width: parent.width
+              spacing: Style.space(8)
+
+              PanelSectionHeader {
+                id: adblockLabel
+                text: "ADBLOCK"
+                Layout.preferredWidth: root.settingLabelWidth
+                Layout.alignment: Qt.AlignVCenter
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+
+              ToggleSwitch {
+                id: adblockSwitch
+                trackHeight: Math.round(adblockLabel.font.pixelSize * 1.2)
+                cursorPad: Style.space(3)
+                Layout.alignment: Qt.AlignVCenter
+                checked: xray.adblock
+                busy: xray.busy
+                hasCursor: root.cursorRow === "ads"
+                opacity: xray.busy || !(xray.geo || xray.adblock) ? 0.45 : 1.0
+                foreground: root.foreground
+                onToggled: if (xray.geo || xray.adblock) xray.setAdblock(!xray.adblock)
+                onHovered: function(h) { if (h) root.cursorActive = false }
+                Accessible.role: Accessible.CheckBox
+                Accessible.name: "Ad blocking"
+                Accessible.checked: xray.adblock
+              }
+
+              Text {
+                textFormat: Text.PlainText
+                Layout.fillWidth: true
+                text: xray.geo ? "Ads and trackers (geosite:category-ads-all)" : "Needs Xray geo data (geosite.dat)"
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                elide: Text.ElideRight
+              }
+            }
           }
 
           PanelSeparator { visible: xray.reachable && !root.firstRun; foreground: root.foreground }
@@ -699,8 +776,8 @@ Panel {
 
               TextActionButton {
                 label: xray.testing ? "Stop · " + root.elapsedText : "Test"
-                tooltip: xray.testing ? "Stop the latency test (finished results are kept)"
-                         : root.filterQuery !== "" ? "Latency-test the filtered nodes" : "Latency-test all nodes"
+                tooltip: xray.testing ? "Stop the latency test, finished results are kept (t)"
+                         : root.filterQuery !== "" ? "Latency-test the filtered nodes (t)" : "Latency-test all nodes (t)"
                 enabled: xray.testing || (root.visibleNodes.length > 0 && !xray.busy)
                 onClicked: xray.testNodes(root.visibleNodes)
               }
@@ -840,13 +917,17 @@ Panel {
 
               TextActionButton {
                 label: "Config"
-                tooltip: "Open the config folder (~/.config/omarchy-xray, where custom.json lives)"
+                tooltip: "Open the config folder (~/.config/omarchy-xray, where custom.json lives) (w)"
+                hasCursor: root.cursorRow === "subs" && root.chipIndex === 0
                 onClicked: xray.openWebUi()
               }
 
               TextActionButton {
+                visible: xray.subs.length > 0
                 label: "Update all"
+                tooltip: "Download every subscription again (u)"
                 enabled: !xray.busy
+                hasCursor: root.cursorRow === "subs" && root.chipIndex === 1
                 onClicked: xray.updateSubscriptions()
               }
             }
@@ -940,7 +1021,7 @@ Panel {
                       textFormat: Text.PlainText
                       Layout.fillWidth: true
                       visible: text !== ""
-                      text: subRow.sub ? (subRow.sub.error ? "⚠ " + subRow.sub.error : Model.subInfoLabel(subRow.sub.info)) : ""
+                      text: subRow.sub ? (subRow.sub.error ? "󰀦 " + subRow.sub.error : Model.subInfoLabel(subRow.sub.info)) : ""
                       color: subRow.sub && subRow.sub.error ? root.urgent : root.dim
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.caption
@@ -952,25 +1033,22 @@ Panel {
                     label: "Update"
                     tooltip: "Download this subscription again"
                     enabled: !xray.busy
+                    hasCursor: root.cursorSub === subRow.index && root.chipIndex === 0
                     onClicked: xray.updateSub(subRow.sub.index)
                   }
 
-                  // Removal can't be undone (the URL is a secret the user would have
-                  // to find again), so it takes a second click on the same spot.
                   TextActionButton {
                     id: removeButton
-                    property bool armed: false
+                    readonly property bool armed: root.armedSub === subRow.index
+                    // same width armed or not, so "Update" never shifts
+                    Layout.preferredWidth: Math.ceil(confirmMetrics.advanceWidth) + 2 * Style.spacing.controlPaddingX
                     label: armed ? "Confirm" : "Remove"
                     tint: armed ? root.urgent : root.foreground
                     tooltip: armed ? "Click again to remove " + (subRow.sub.title || subRow.sub.host) + " and its nodes"
                                    : "Remove this subscription and its nodes"
                     enabled: !xray.busy
-                    onClicked: {
-                      if (!armed) { armed = true; disarm.restart(); return }
-                      armed = false
-                      xray.subRemove(subRow.sub.index)
-                    }
-                    Timer { id: disarm; interval: 4000; onTriggered: removeButton.armed = false }
+                    hasCursor: root.cursorSub === subRow.index && root.chipIndex === 1
+                    onClicked: root.armRemove(subRow.index)
                   }
                 }
               }
@@ -981,7 +1059,8 @@ Panel {
           Text {
             textFormat: Text.PlainText
             width: parent.width
-            text: "j/k move · h/l choose · Enter apply · / filter · a add sub · t test · u update · c connect · w config"
+            text: root.firstRun ? "Enter adds the subscription · Esc closes"
+                  : "j/k move · h/l choose · Enter apply · / filter · a add sub · t test · u update · c connect · w config"
             wrapMode: Text.WordWrap
             color: root.dim
             font.family: root.fontFamily
@@ -1040,6 +1119,7 @@ Panel {
     tooltipText: tooltip
     foreground: enabled ? tint : root.dim
     fontFamily: root.fontFamily
+    onHovered: function(h) { if (h) root.cursorActive = false }
     Accessible.role: Accessible.Button
     Accessible.name: label
     Accessible.description: tooltip
@@ -1056,9 +1136,7 @@ Panel {
     }
     readonly property bool isConnected: node !== null && node.connected === true
     readonly property string latencyText: node ? Model.latencyLabel(node.latency) : ""
-    readonly property bool latencyOk: node ? Model.latencyGood(latencyText) : false
     readonly property bool latencyBadLat: node ? Model.latencyBad(latencyText) : false
-    // Auto's "address" is its member count, which says more than "balancer".
     // Auto's "address" is its member count; other rows keep transport in the tooltip.
     readonly property string meta: !node || node.key !== "auto" ? "" : node.address
     readonly property bool fastest: node !== null && node.key === root.fastestKey
@@ -1137,7 +1215,7 @@ Panel {
         Layout.preferredWidth: root.latencyCellWidth
         horizontalAlignment: Text.AlignRight
         text: (nodeRow.fastest ? "󰉁 " : "") + nodeRow.latencyText
-        color: nodeRow.latencyBadLat ? root.urgent : (nodeRow.latencyOk ? root.foreground : root.dim)
+        color: nodeRow.latencyBadLat ? root.urgent : root.foreground
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
         font.bold: nodeRow.fastest

@@ -72,8 +72,6 @@ module.exports = function ({ Xray, assert, eq }) {
   eq('latency ms label', Xray.latencyLabel('123ms'), '123ms')
   eq('latency timeout label', Xray.latencyLabel('TIMEOUT'), 'timeout')
   eq('latency error label', Xray.latencyLabel('error'), 'failed')
-  assert('latency good', Xray.latencyGood('300ms') === true)
-  assert('latency not good', Xray.latencyGood('500ms') === false)
   assert('latency bad', Xray.latencyBad('timeout') === true)
 
   /* ---- filterNodes ---- */

@@ -16,7 +16,7 @@ function loadModel() {
   let src = fs.readFileSync(path.join(root, 'model', 'Xray.js'), 'utf8')
   src = src.replace(/^\.pragma library\s*/m, '')
   const api = ['groupsFromStatus', 'subInfoLabel', 'skippedLabel', 'parseMetrics',
-    'latencyLabel', 'latencyGood', 'latencyBad', 'filterNodes', 'findNodeByKey',
+    'latencyLabel', 'latencyBad', 'filterNodes', 'findNodeByKey',
     'pickConnectTarget', 'autoPickName', 'formatSpeed', 'formatBytes', 'heroLine',
     'heroTitle', 'heroState', 'fastestKey'].join(', ')
   const sandbox = { module: { exports: {} }, exports: {}, JSON, Math, Date, Number, String, Object }

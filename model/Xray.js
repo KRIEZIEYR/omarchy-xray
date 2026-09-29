@@ -140,11 +140,6 @@ function latencyLabel(raw) {
   return elide(s, 18)
 }
 
-function latencyGood(label) {
-  var m = /^(\d+)ms$/.exec(String(label || ""))
-  return m !== null && parseInt(m[1], 10) < 400
-}
-
 function latencyBad(label) {
   var l = String(label || "")
   return l === "timeout" || l === "failed"
