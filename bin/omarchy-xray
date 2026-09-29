@@ -67,7 +67,6 @@ LOGIN_UNIT = UNIT_DIR / LOGIN_SERVICE
 SYS_UNIT = pathlib.Path("/etc/systemd/system") / TUN_SERVICE
 POLKIT_RULE = pathlib.Path("/etc/polkit-1/rules.d/49-omarchy-xray.rules")
 NETWORKD_FILE = pathlib.Path("/etc/systemd/network/10-omarchy-xray.network")
-LEGACY_RUN_DIR = pathlib.Path("/run/omarchy-xray")
 
 _SYS_DIRS = ("/usr/bin", "/usr/sbin", "/bin", "/sbin", "/usr/local/bin")
 _SAFE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin"
@@ -1645,7 +1644,8 @@ def secret_url_from_arg(arg):
             if data:
                 return data
         die("usage: omarchy-xray import -  (with $OMARCHY_XRAY_SUB_URL or stdin)")
-    return arg
+    die("refusing a URL in the command line (every local process can read argv): "
+        "OMARCHY_XRAY_SUB_URL=<url> omarchy-xray import -")
 
 
 def rebuild(st, prev_sel, prev_name):
@@ -2193,7 +2193,7 @@ def cmd_doctor():
     legacy = sh(IP, "rule", "show", timeout=10).stdout
     stale = bool(re.search(r"^5(190|199):", legacy, re.M))
     add("no v2 TUN leftovers (ip rules 5190/5199)", not stale,
-        "run: omarchy-xray tun-setup (cleans them)" if stale else "")
+        "reboot clears them (they are not persistent)" if stale else "")
     ua, ta = running_units()
     add("service running", ua or ta, "tun" if ta else ("proxy" if ua else "stopped"))
     add("default route", default_dev() is not None, default_dev() or "none")
@@ -2312,23 +2312,24 @@ def _root_write(path, text):
     os.chown(path, 0, 0)
 
 
-def _cleanup_legacy():
-    """Remove v2 route-up leftovers (policy rules, table 518, persistent xray0)."""
-    marker = LEGACY_RUN_DIR / "routes.json"
-    rules = sh(IP, "rule", "show").stdout
-    if not marker.exists() and not re.search(r"^5(190|199):", rules, re.M):
-        return False
-    pris = ["5190", "5199"] + (["99", "1000"] if marker.exists() else [])
-    for pri in pris:
-        for fam in ("-4", "-6"):
-            sh(IP, fam, "rule", "del", "priority", pri)
-    for fam in ("-4", "-6"):
-        sh(IP, fam, "route", "flush", "table", "518")
-    a = sh(IP, "addr", "show", "dev", TUN_NAME)
-    if a.returncode == 0 and "172.19.0.1" in (a.stdout or ""):
-        sh(IP, "link", "del", TUN_NAME)
-    shutil.rmtree(LEGACY_RUN_DIR, ignore_errors=True)
-    return True
+def _root_write_all(pairs):
+    """Write every (path, text) or none: on any failure put back what was
+    there before (or remove what did not exist) and stop."""
+    before = {}
+    try:
+        for path, text in pairs:
+            before[path] = path.read_text() if path.is_file() else None
+            _root_write(path, text)
+    except OSError as e:
+        for path, old in before.items():
+            try:
+                if old is None:
+                    path.unlink()
+                else:
+                    _root_write(path, old)
+            except OSError:
+                pass
+        die("TUN setup failed writing %s (%s) — previous state restored" % (path, e.strerror or e))
 
 
 def cmd_tun_install():
@@ -2355,19 +2356,18 @@ def cmd_tun_install():
     if asset and not _UNIT_PATH_RE.match(asset):
         asset = None
     resolvectl, udevadm = tool("resolvectl"), tool("udevadm")
-    _root_write(SYS_UNIT, tun_unit_text(pw.pw_name, group, conf, xray, asset,
-                                        resolvectl, udevadm))
-    _root_write(POLKIT_RULE, polkit_rule_text(pw.pw_name))
     networkd = sh(SYSTEMCTL, "is-active", "systemd-networkd").stdout.strip() == "active"
+    _root_write_all([(SYS_UNIT, tun_unit_text(pw.pw_name, group, conf, xray, asset,
+                                              resolvectl, udevadm)),
+                     (POLKIT_RULE, polkit_rule_text(pw.pw_name))]
+                    + ([(NETWORKD_FILE, NETWORKD_TEXT)] if networkd else []))
     if networkd:
-        _root_write(NETWORKD_FILE, NETWORKD_TEXT)
         nc = tool("networkctl")
         if nc:
             sh(nc, "reload")
     sh(SYSTEMCTL, "daemon-reload")
-    legacy = _cleanup_legacy()
     out({"ok": True, "user": pw.pw_name, "unit": str(SYS_UNIT), "polkit": str(POLKIT_RULE),
-         "networkd": networkd, "legacyCleaned": legacy})
+         "networkd": networkd})
 
 
 def cmd_tun_uninstall():
@@ -2384,7 +2384,6 @@ def cmd_tun_uninstall():
     sh(SYSTEMCTL, "daemon-reload")
     if str(NETWORKD_FILE) in removed and tool("networkctl"):
         sh(tool("networkctl"), "reload")
-    _cleanup_legacy()
     out({"ok": True, "removed": removed})
 
 

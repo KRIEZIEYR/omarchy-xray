@@ -175,6 +175,7 @@ Item {
     for (var k in baseEnv) env[k] = null
     if (extraEnv) for (var x in extraEnv) env[x] = extraEnv[x]
     if (slot === _action || slot === _long) lastError = ""
+    slot._terminating = false
     slot._done = done
     slot.environment = env
     slot.command = bounded
@@ -211,12 +212,18 @@ Item {
     timer.restart()
   }
 
+  // Deadline: SIGTERM first so the manager can stop its own children (latency
+  // probes run in their own sessions and would outlive a SIGKILL); SIGKILL
+  // only if it is still there 3 s later.
   function onDeadline(slot, timer) {
     timer.stop()
     if (!slot.running) return
+    if (slot._terminating) { try { slot.signal(9) } catch (e) {} ; return }
+    slot._terminating = true
     slot._done = null
-    try { slot.signal(9) } catch (e) {}
-    slot.running = false
+    try { slot.signal(15) } catch (e1) {}
+    timer.interval = 3000
+    timer.restart()
     try { slot.environment = ({}) } catch (e2) {}
     var msg = scrub(opName(slot._label) + " took too long and was stopped. Try again")
     if (slot === _action || slot === _long) lastError = msg
@@ -607,6 +614,7 @@ Item {
     id: _action
     property var _done: null
     property string _label: ""
+    property bool _terminating: false
     clearEnvironment: true
     running: false
     command: []
@@ -621,6 +629,7 @@ Item {
     id: _status
     property var _done: null
     property string _label: ""
+    property bool _terminating: false
     clearEnvironment: true
     running: false
     command: []
@@ -635,6 +644,7 @@ Item {
     id: _long
     property var _done: null
     property string _label: ""
+    property bool _terminating: false
     clearEnvironment: true
     running: false
     command: []

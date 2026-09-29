@@ -381,7 +381,6 @@ Panel {
     function updateSubs(): string { xray.updateSubscriptions(); return "ok" }
     function startCore(): string { xray.startCore(); return "ok" }
     function stopCore(): string { xray.stopCore(); return "ok" }
-    function importUrl(url: string): string { xray.importUrl(url); return "ok" }
     function subRemove(index: string): string { xray.subRemove(index); return "ok" }
     function mode(m: string): string { xray.setMode(m); return "ok" }
     function routing(p: string): string { xray.setRouting(p); return "ok" }

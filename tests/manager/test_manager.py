@@ -574,6 +574,24 @@ class TunInstall(Base):
             M.SYS_UNIT, M.POLKIT_RULE = saved
 
 
+class Hardening(Base):
+    def test_root_write_all_restores_previous_files(self):
+        # As a user the chown to root fails, which drives the rollback path.
+        if os.geteuid() == 0:
+            self.skipTest("running as root")
+        old = self.tmp / "unit.service"
+        old.write_text("previous\n")
+        new = self.tmp / "rule.rules"
+        with self.assertRaises(SystemExit):
+            M._root_write_all([(old, "replacement\n"), (new, "fresh\n")])
+        self.assertEqual(old.read_text(), "previous\n")
+        self.assertFalse(new.exists())
+
+    def test_import_refuses_url_in_argv(self):
+        with self.assertRaises(SystemExit):
+            M.secret_url_from_arg("https://sub.example.com/secret-token")
+
+
 class LatencyTest(Base):
     def test_stop_keeps_finished_results(self):
         ns = [self.node(k) for k in LINKS][:3]

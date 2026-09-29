@@ -143,8 +143,10 @@ prompt, or `sudo omarchy-xray tun-install` from a terminal:
 | `/etc/systemd/network/10-omarchy-xray.network` | only if systemd-networkd is active: keeps networkd away from `xray0` |
 
 The setup reads nothing but your uid (from `PKEXEC_UID`/`SUDO_UID`), refuses
-an xray binary that is not root-owned or is group/world-writable, and removes
-v2 leftovers (ip rules 5190/5199, table 518, a persistent `xray0`). After it,
+an xray binary that is not root-owned or is group/world-writable, and writes
+its files all-or-nothing (a failed write restores the previous ones). It never
+touches routing rules itself; v2 leftovers (ip rules 5190/5199) go away on
+reboot. After it,
 root only ever executes root-owned system binaries (`xray` as your user,
 `udevadm`, `resolvectl`); this script is never run as root again. No setcap,
 no sudoers. Undo with `omarchy-xray tun-remove`.
@@ -237,7 +239,7 @@ Run `omarchy-xray restart` after editing.
   count/string bounds (2000 nodes, 5000 lines), malformed links skipped.
 - Secrets: `~/.config/omarchy-xray/` is `0700`, `state.json`/`config.json`
   are atomic `0600` no-follow writes; `import -` reads the URL from
-  `$OMARCHY_XRAY_SUB_URL`/stdin; argv URLs accepted but never echoed
+  `$OMARCHY_XRAY_SUB_URL`/stdin; a URL in argv is refused (argv is world-readable)
   (status/errors show `host/***` only). Temporary test configs live in
   `$XDG_RUNTIME_DIR/omarchy-xray` (`0700`).
 - Loopback-only listeners: socks 20170, http 20171, metrics 15491.
@@ -266,7 +268,6 @@ Run `omarchy-xray restart` after editing.
 | `test` | Latency-test nodes (bounded) |
 | `updateSubs` | Re-fetch the subscriptions |
 | `startCore` / `stopCore` | `omarchy-xray on` / `off` |
-| `importUrl <url>` | Add a subscription (https-only) and fetch |
 | `subRemove <index>` | Remove a subscription |
 | `mode <proxy\|tun>` | Switch mode (TUN runs the one-time setup first if needed) |
 | `routing <global\|<region>-direct>` | Routing preset (`ru-direct`, `kz-direct`, …) |

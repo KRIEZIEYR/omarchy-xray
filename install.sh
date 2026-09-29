@@ -112,13 +112,6 @@ say "Manager installed to $MANAGER"
 "$MANAGER" install-unit >/dev/null
 say "Systemd user units installed"
 
-# v2 TUN attempts could leave policy rules behind (ip rules 5190/5199).
-if ip rule show 2>/dev/null | grep -qE '^5(190|199):'; then
-  warn "leftover routing rules from the old TUN mode were found;"
-  warn "the TUN setup below (or: omarchy-xray tun-setup) removes them."
-  WANT_TUN=1
-fi
-
 # --- subscription -------------------------------------------------------------
 if [[ -f "$STATE" ]] && /usr/bin/python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("subs") else 1)' "$STATE" 2>/dev/null; then
   say "Existing omarchy-xray configuration found — refreshing it"
