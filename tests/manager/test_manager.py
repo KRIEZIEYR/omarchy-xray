@@ -561,19 +561,28 @@ class TunInstall(Base):
         self.assertIn("ExecStart=/usr/bin/ip rule add pref 18182 from 198.18.0.1 lookup 18180\n", t)
         self.assertIn("ExecStart=-/usr/bin/ip -6 rule add pref 18181 from fdfe:dcba:9876::1 lookup 18180\n", t)
         self.assertIn("ExecStart=-/usr/bin/resolvectl dns xray0 198.18.0.2\n", t)
-        # teardown (also run before start): device plus all six rules
+        # ownership: only an xray0 with our alias is ever deleted, rules only by
+        # their full spec, and a foreign xray0 stops the start
+        self.assertIn("ExecStart=/usr/bin/ip link set dev xray0 alias omarchy-xray\n", t)
         for key in ("ExecStartPre", "ExecStopPost"):
-            self.assertIn("%s=-/usr/bin/ip link delete xray0\n" % key, t)
-            self.assertIn("%s=-/usr/bin/ip -6 rule delete pref 18181\n" % key, t)
-            self.assertEqual(t.count(key + "="), 6)
+            self.assertIn("%s=-/bin/sh -c \"/usr/bin/ip link show dev xray0 2>/dev/null | grep -q "
+                          "'alias omarchy-xray' && exec /usr/bin/ip link delete xray0\"\n" % key, t)
+            self.assertIn("%s=-/usr/bin/ip rule delete pref 18181 from 0.0.0.0/32 lookup 18180\n" % key, t)
+            self.assertIn("%s=-/usr/bin/ip -6 rule delete pref 18180 lookup main suppress_prefixlength 0\n" % key, t)
+            self.assertNotIn("%s=-/usr/bin/ip link delete xray0\n" % key, t)
+        self.assertEqual(t.count("ExecStartPre="), 7)
+        self.assertEqual(t.count("ExecStopPost="), 6)
+        self.assertIn("then echo 'xray0 exists and is not ours - refusing' >&2; exit 1; fi", t)
         self.assertIn("CapabilityBoundingSet=CAP_NET_ADMIN\n", t)
         self.assertNotIn("User=", t)
         self.assertNotIn("Ambient", t)
-        # root runs nothing but these three system tools
+        # root runs nothing but these system tools (sh only to wrap ip)
         for line in t.splitlines():
             if line.startswith("Exec"):
-                self.assertIn(line.split("=", 1)[1].lstrip("-").split()[0],
-                              ("/usr/bin/ip", "/usr/bin/udevadm", "/usr/bin/resolvectl"))
+                cmd = line.split("=", 1)[1].lstrip("-")
+                self.assertIn(cmd.split()[0], ("/usr/bin/ip", "/usr/bin/udevadm", "/usr/bin/resolvectl", "/bin/sh"))
+                if cmd.startswith("/bin/sh"):
+                    self.assertNotIn("omarchy-xray ", cmd.replace("alias omarchy-xray", ""))
 
     def test_t2s_unit_text(self):
         t = M.t2s_unit_text()
@@ -659,6 +668,20 @@ class Hardening(Base):
             self.assertIn(("disable", M.SERVICE), calls)
         finally:
             M.uctl, M.sctl, M.apply_system_proxy, M.SYS_UNIT, M._escalate = saved
+
+    def test_sub_error_never_carries_the_url(self):
+        def boom(url, via_proxy=False):
+            raise RuntimeError("download failed for %s" % url)
+        saved = M.fetch
+        M.fetch = boom
+        try:
+            st = self.state([self.node("trojan-ws")], subs=[{"url": "https://sub.example.com/secret-token?k=1"}])
+            M.fetch_subs(st, None)
+            err = st["subs"][0]["error"]
+            self.assertNotIn("secret-token", err)
+            self.assertIn("sub.example.com", err)
+        finally:
+            M.fetch = saved
 
     def test_import_refuses_url_in_argv(self):
         with self.assertRaises(SystemExit):

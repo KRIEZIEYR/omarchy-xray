@@ -187,7 +187,7 @@ prompt, or `sudo omarchy-xray tun-install` from a terminal:
 
 | File (root:root 0644) | Purpose |
 |---|---|
-| `/etc/systemd/system/omarchy-xray-tun.service` | root **oneshot** that runs only `ip`, `udevadm` and `resolvectl` with fixed arguments: creates `xray0` owned by your uid (`ip tuntap add … user <uid>`), `198.18.0.1/30` (+ a ULA /126), routes (below) and resolved DNS for `xray0`; stopping it deletes the device and its rules. `CapabilityBoundingSet=CAP_NET_ADMIN`, `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome` and more |
+| `/etc/systemd/system/omarchy-xray-tun.service` | root **oneshot** that runs only `ip`, `udevadm` and `resolvectl` with fixed arguments: creates `xray0` owned by your uid (`ip tuntap add … user <uid>`), `198.18.0.1/30` (+ a ULA /126), routes (below) and resolved DNS for `xray0`; stopping it deletes the device and its rules. Ownership is explicit: `xray0` carries the alias `omarchy-xray` and only a device with it is ever deleted, a foreign `xray0` makes the start refuse (preflight), a failed start rolls back through the same cleanup, and rules are removed by their exact spec (pref + selector + table), never by number alone; `sh` appears only to wrap two such `ip` checks. `CapabilityBoundingSet=CAP_NET_ADMIN`, `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome` and more |
 | `/etc/polkit-1/rules.d/49-omarchy-xray.rules` | lets **only your user** `start`/`stop`/`restart` **only that unit** without a password |
 | `/etc/systemd/network/10-omarchy-xray.network` | only if systemd-networkd is active: keeps networkd away from `xray0` |
 
@@ -288,7 +288,7 @@ Run `omarchy-xray restart` after editing.
 - Xray and tun2socks never run as root or with a capability, in either mode.
   TUN mode is opt-in; its one-time setup is the only privileged step and
   installs the three files above — root afterwards runs only `ip`, `udevadm`
-  and `resolvectl` with fixed arguments; the polkit rule is scoped to one
+  and `resolvectl` with fixed arguments (plus `sh` wrapping two `ip` ownership checks); the polkit rule is scoped to one
   user, one unit and three verbs. No setcap, no sudoers.
 - The manager refuses to run as root except for `tun-install`/`tun-uninstall`,
   uses `#!/usr/bin/python3 -I`, calls tools by absolute path and gives child

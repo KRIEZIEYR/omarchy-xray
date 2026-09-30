@@ -116,6 +116,7 @@ TUN_NAME = "xray0"
 TUN_GW4, TUN_DNS = "198.18.0.1/30", "198.18.0.2"
 TUN_GW6 = "fdfe:dcba:9876::1/126"
 TUN_TABLE = TUN_PREF = 18180   # routing table and first of three ip rule prefs
+TUN_MARK = "omarchy-xray"      # xray0's alias: marks the device as ours
 # Marks a system unit of this layout (v3.0 ran xray itself with CAP_NET_ADMIN).
 TUN_LAYOUT = "# layout: root device + unprivileged tun2socks"
 PROBE = "https://www.gstatic.com/generate_204"
@@ -1273,7 +1274,7 @@ def fetch_subs(st, only=None):
             sub["error"] = "" if got else "no usable nodes"
             nodes.extend(got)
         except Exception as e:
-            sub["error"] = str(e)[:200]
+            sub["error"] = re.sub(r"[A-Za-z][\w+.-]*://\S+", lambda m: redact_url(m.group(0)), str(e))[:200]
             sub["fetched"] = int(time.time())
             nodes.extend(n for n in st["nodes"] if n.get("sub") == i)  # keep last good
             print("warn: fetch failed for %s: %s" % (redact_url(url), e), file=sys.stderr)
@@ -2274,19 +2275,27 @@ def tun_unit_text(uid, ip, udevadm, resolvectl):
     # replies look up from the physical address, so they keep using main.
     # (IPv6 picks the source from the device before matching a `from` rule,
     # so its own address covers unset sources; IPv4 needs 0.0.0.0/32.)
-    rules, clean = [], ["-%s link delete %s" % (ip, t)]
+    # Ownership: xray0 carries the alias TUN_MARK and only a device with it
+    # is ever deleted; rules are deleted by their full spec (pref + selector
+    # + table), so a neighbour's device or rule is never touched. A foreign
+    # xray0 stops the start (preflight) instead of being replaced.
+    ours = "%s link show dev %s 2>/dev/null | grep -q 'alias %s'" % (ip, t, TUN_MARK)
+    clean = ['-/bin/sh -c "%s && exec %s link delete %s"' % (ours, ip, t)]
+    rules = []
     for fam, opt, sel in (("", "", ["from 0.0.0.0/32", "from " + TUN_GW4.split("/")[0]]),
                           ("-6 ", "-", ["from " + TUN_GW6.split("/")[0]])):
-        rules += ["%s%s %sroute add default dev %s table %d" % (opt, ip, fam, t, tab),
-                  "%s%s %srule add pref %d lookup main suppress_prefixlength 0" % (opt, ip, fam, p)]
-        rules += ["%s%s %srule add pref %d %s lookup %d" % (opt, ip, fam, p + 1 + i, x, tab)
-                  for i, x in enumerate(sel)]
-        clean += ["-%s %srule delete pref %d" % (ip, fam, p + i) for i in range(len(sel) + 1)]
+        specs = ["lookup main suppress_prefixlength 0"] + ["%s lookup %d" % (x, tab) for x in sel]
+        rules += ["%s%s %sroute add default dev %s table %d" % (opt, ip, fam, t, tab)]
+        rules += ["%s%s %srule add pref %d %s" % (opt, ip, fam, p + i, x) for i, x in enumerate(specs)]
+        clean += ["-%s %srule delete pref %d %s" % (ip, fam, p + i, x) for i, x in enumerate(specs)]
+    preflight = ['/bin/sh -c "if %s link show dev %s >/dev/null 2>&1; then '
+                 'echo \'%s exists and is not ours - refusing\' >&2; exit 1; fi"' % (ip, t, t)]
     wait = ["-%s wait --timeout=15 /sys/class/net/%s" % (udevadm, t)] if udevadm else []
     dns = ["-%s dns %s %s" % (resolvectl, t, TUN_DNS), "-%s domain %s ~." % (resolvectl, t),
            "-%s default-route %s yes" % (resolvectl, t),
            "-%s dnsovertls %s no" % (resolvectl, t)] if resolvectl else []
     up = ["%s tuntap add dev %s mode tun user %d" % (ip, t, int(uid)),
+          "%s link set dev %s alias %s" % (ip, t, TUN_MARK),
           "%s address add %s dev %s" % (ip, TUN_GW4, t),
           "-%s -6 address add %s dev %s nodad" % (ip, TUN_GW6, t),
           "%s link set dev %s mtu 1500 up" % (ip, t)] + rules + wait + dns
@@ -2321,7 +2330,7 @@ def tun_unit_text(uid, ip, udevadm, resolvectl):
         "LockPersonality=yes\n"
         "SystemCallArchitectures=native\n"
     ) % (VERSION, TUN_LAYOUT, t, int(uid), int(uid),
-         lines("ExecStartPre", clean), lines("ExecStart", up), lines("ExecStopPost", clean))
+         lines("ExecStartPre", clean + preflight), lines("ExecStart", up), lines("ExecStopPost", clean))
 
 
 def polkit_rule_text(user):
