@@ -1067,7 +1067,7 @@ Panel {
         delegate: Column {
           id: rowCol
           required property int index
-          readonly property string groupTitle: root.visibleRows[index] ? root.visibleRows[index].title : """
+          readonly property string groupTitle: root.visibleRows[index] ? root.visibleRows[index].title : ""
           width: nodeList.width
           spacing: Style.space(4)
           topPadding: groupTitle !== "" && index > 0 ? Style.space(6) : 0
