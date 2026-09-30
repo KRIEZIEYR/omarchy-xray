@@ -1067,7 +1067,7 @@ Panel {
         delegate: Column {
           id: rowCol
           required property int index
-          readonly property string groupTitle: index < root.visibleRows.length ? root.visibleRows[index].title : ""
+          readonly property string groupTitle: root.visibleRows[index] ? root.visibleRows[index].title : """
           width: nodeList.width
           spacing: Style.space(4)
           topPadding: groupTitle !== "" && index > 0 ? Style.space(6) : 0
@@ -1341,12 +1341,13 @@ Panel {
       var flat = root.visibleNodes
       return globalIndex < flat.length ? flat[globalIndex] : null
     }
-    readonly property bool isConnected: node !== null && node.connected === true
+    // !! and not !== null: a row being removed briefly sees undefined
+    readonly property bool isConnected: !!node && node.connected === true
     readonly property string latencyText: node ? Model.latencyLabel(node.latency) : ""
     readonly property bool latencyBadLat: node ? Model.latencyBad(latencyText) : false
     // Auto's "address" is its member count; other rows keep transport in the tooltip.
     readonly property string meta: !node || node.key !== "auto" ? "" : node.address
-    readonly property bool fastest: node !== null && node.key === root.fastestKey
+    readonly property bool fastest: !!node && node.key === root.fastestKey
 
     hasCursor: root.cursorActive && root.nodeIndex === globalIndex
     current: isConnected
@@ -1422,7 +1423,7 @@ Panel {
 
       Text {
         textFormat: Text.PlainText
-        visible: nodeRow.node !== null && nodeRow.node.key !== "auto"
+        visible: !!nodeRow.node && nodeRow.node.key !== "auto"
         // Fixed, right-aligned cell: results line up and never shift the name.
         Layout.preferredWidth: root.latencyCellWidth
         horizontalAlignment: Text.AlignRight
@@ -1437,7 +1438,7 @@ Panel {
     }
 
     PanelToolTip {
-      visible: nodeMouse.containsMouse && nodeRow.node !== null
+      visible: nodeMouse.containsMouse && !!nodeRow.node
       text: (nodeRow.node && nodeRow.node.key !== "auto" && nodeRow.node.address
                ? nodeRow.node.address + (nodeRow.node.net ? " · " + nodeRow.node.net : "") + (nodeRow.fastest ? " · fastest" : "") + "\n" : "")
             + (nodeRow.isConnected ? "Connected · right-click to test latency" : "Click to connect · right-click to test latency")
