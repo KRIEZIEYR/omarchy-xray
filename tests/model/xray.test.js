@@ -120,6 +120,7 @@ module.exports = function ({ Xray, assert, eq }) {
     eq('state off', Xray.heroState({ touch: off }), 'Disconnected · proxy')
     eq('state off tun', Xray.heroState({ touch: off, mode: 'tun' }), 'Disconnected · TUN')
     eq('title off with target', Xray.heroTitle({ touch: off, target: 'DE' }), 'Off')
+    eq('title while connecting', Xray.heroTitle({ touch: off, target: 'DE', pending: 'connecting' }), 'DE')
     eq('state off names target', Xray.heroState({ touch: off, target: 'DE', mode: 'tun' }), '→ DE · TUN')
   }
   eq('state unreachable', Xray.heroState({ unreachable: true }), 'Manager unreachable')

@@ -250,6 +250,9 @@ function heroLine(state) {
 // Panel hero: the exit you are on leads; the state is a short caption.
 function heroTitle(state) {
   var n = state ? connectedNode(state.touch) : null
+  // while connecting the switch is already on: the title names where it goes
+  if (!n && state && (state.pending === "connecting" || state.pending === "switching") && state.target)
+    return state.target
   if (!n) {
     // "Off" leads; the node a connect would use goes in the caption, so a
     // node name never looks like a live (or dead) connection.

@@ -234,6 +234,34 @@ Panel {
     if (nodeIndex > last) nodeIndex = Math.max(0, last)
   }
 
+  // Home jumps to the switch (disconnect is Home, Enter), End to the last
+  // node, PgUp/PgDn move a page. Text fields keep these keys for themselves.
+  function jumpCursor(where) {
+    var page = Math.max(1, Math.floor(nodeList.height / Style.space(32)))
+    var target = where === "home" ? -settingRows.length
+               : where === "end" ? visibleNodes.length - 1
+               : nodeIndex + (where === "pgdn" ? page : -page)
+    root.keysUsed = true
+    moveNodeCursor(target - nodeIndex)
+  }
+
+  // The flag grid wraps: j/k step to the flag above or below before leaving it.
+  function regionStep(dir) {
+    var cur = regionRepeater.itemAt(chipIndex)
+    if (!cur) return false
+    var best = -1, bestDy = 0, bestDx = 0
+    for (var i = 0; i < regionRepeater.count; i++) {
+      var it = regionRepeater.itemAt(i)
+      var dy = (it.y - cur.y) * dir
+      if (dy <= 0) continue
+      var dx = Math.abs(it.x - cur.x)
+      if (best < 0 || dy < bestDy || (dy === bestDy && dx < bestDx)) { best = i; bestDy = dy; bestDx = dx }
+    }
+    if (best < 0) return false
+    chipIndex = best
+    return true
+  }
+
   function moveNodeCursor(delta) {
     pointerGate.reset()
     cursorActive = true
@@ -266,11 +294,11 @@ Panel {
   // Commands take Ctrl so a bare letter is always the start of a search.
   function runCtrl(k) {
     if (k === "t") xray.testNodes(root.visibleNodes)
-    else if (k === "u") xray.updateSubscriptions()
-    else if (k === "w") xray.openWebUi()
+    else if (k === "r") xray.updateSubscriptions()             // Ctrl+U/W stay text editing
+    else if (k === "o") xray.openWebUi()
     else if (k === "a") root.focusSubUrl()
     else if (k === "c") {
-      if (xray.connected) xray.flash("Already connected · to disconnect, use the switch")
+      if (xray.connected) xray.flash("Already connected · Home, then Enter disconnects")
       else if (!root.onTarget) xray.toggleConnection(root.lastNodeKey)
     }
   }
@@ -411,8 +439,10 @@ Panel {
     anchors.fill: parent
     bar: root.bar
     dimmed: xray.reachable && !root.onTarget
-    tooltipText: xray.pending !== "" ? xray.actionStatus
-                 : xray.heroSummary + " · right-click to " + (xray.connected ? "disconnect" : "connect")
+    // an action started from the bar (right-click) reports back here too
+    tooltipText: (xray.errorText !== "" ? "󰀦 " + xray.errorText + "\n" : "")
+                 + (xray.pending !== "" ? xray.actionStatus
+                    : xray.heroSummary + " · right-click to " + (xray.connected ? "disconnect" : "connect"))
     iconComponent: Component {
       Item {
         XrayIcon {
@@ -420,7 +450,7 @@ Panel {
           iconSize: Style.space(11)
           color: root.barIconColor
           filled: root.tunnelUp
-          warning: !xray.reachable
+          warning: !xray.reachable || xray.errorText !== ""
           badgeColor: root.errorColor
           // ~11 s of a slow breath, then a still bright outline: a password
           // prompt can take minutes and must not blink in the bar all along.
@@ -461,7 +491,7 @@ Panel {
       onMoveRequested: function(dx, dy) {
         root.keysUsed = true
         if (!root.cursorActive) { root.cursorActive = true; return }
-        if (dy !== 0) root.moveNodeCursor(dy > 0 ? 1 : -1)
+        if (dy !== 0) { if (!(root.cursorRow === "regions" && root.regionStep(dy))) root.moveNodeCursor(dy > 0 ? 1 : -1) }
         else if (dx !== 0) root.moveChip(dx)
       }
       // Enter with no cursor shows it first instead of doing nothing.
@@ -480,6 +510,11 @@ Panel {
       }
       // the kit reserves x for delete; nothing here deletes, so it types
       onDeleteRequested: { root.keysUsed = true; root.startTypeAhead("x") }
+
+      Shortcut { sequence: "Home"; enabled: root.opened && !keyCatcher.blocked; onActivated: root.jumpCursor("home") }
+      Shortcut { sequence: "End"; enabled: root.opened && !keyCatcher.blocked; onActivated: root.jumpCursor("end") }
+      Shortcut { sequence: "PgDown"; enabled: root.opened && !keyCatcher.blocked; onActivated: root.jumpCursor("pgdn") }
+      Shortcut { sequence: "PgUp"; enabled: root.opened && !keyCatcher.blocked; onActivated: root.jumpCursor("pgup") }
 
       // One scroll view for the whole panel. Only the node rows are
       // virtualized (1000 rows in a Column cost ~0.3 s per rebuild); the
@@ -587,15 +622,15 @@ Panel {
         // away. Shown once the keyboard is used (and on first run); `?`
         // hides or shows them. Mouse users get the keys in tooltips.
         Column {
-          visible: root.firstRun || (root.keysUsed && !root.legendHidden)
+          visible: root.firstRun || (xray.reachable && root.keysUsed && !root.legendHidden)
           width: parent.width
           spacing: Style.space(4)
 
           Repeater {
             model: root.firstRun ? [["", "Enter adds the subscription · Esc twice closes"]]
-                   : [["MOVE", "j/k rows · h/l choose · Enter · / filter"],
-                      ["ACT", "Ctrl+C connect · Ctrl+T test · Ctrl+U update"],
-                      ["MANAGE", "Ctrl+A add sub · Ctrl+W config · ? hide"]]
+                   : [["MOVE", "j/k · h/l · Home switch · Enter · / filter"],
+                      ["ACT", "Ctrl+C connect · Ctrl+T test · Ctrl+R update"],
+                      ["MANAGE", "Ctrl+A add sub · Ctrl+O config · ? hide"]]
             delegate: RowLayout {
               required property var modelData
               width: parent ? parent.width : 0
@@ -764,6 +799,7 @@ Panel {
               spacing: Style.space(4)
 
               Repeater {
+                id: regionRepeater
                 model: xray.regions
                 delegate: Button {
                   required property var modelData
@@ -799,6 +835,32 @@ Panel {
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
               wrapMode: Text.WordWrap
+            }
+
+            // Keyboard users never see hover tooltips: the chip under the
+            // cursor explains itself here (and to a screen reader).
+            Text {
+              id: chipHint
+              textFormat: Text.PlainText
+              visible: text !== ""
+              width: parent.width
+              text: {
+                var r = root.cursorRow, c = root.chipIndex
+                if (r === "mode") return c === 1
+                  ? (xray.tunInstalled ? "TUN: all system traffic goes through the VPN"
+                                       : "TUN: all system traffic through the VPN · the first switch asks for your password")
+                  : "PROXY: apps that use the system proxy go through the VPN"
+                if (r === "route") return c === 0 ? "ALL: everything through the VPN except your local network"
+                  : c === 1 ? (root.routeRegion ? root.routeRegion.name + " sites go direct, the rest through the VPN"
+                                                : "DIRECT: one country's sites skip the VPN")
+                  : "Change the direct country"
+                return ""
+              }
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              wrapMode: Text.WordWrap
+              onTextChanged: if (text !== "") Accessible.announce(text)
             }
 
             RowLayout {
@@ -922,11 +984,10 @@ Panel {
                   root.cursorActive = text !== ""
                 }
                 Keys.onPressed: function(event) {
-                  // commands keep working while filtering (Ctrl+T tests the
-                  // filtered nodes); Ctrl+A and Ctrl+C keep their text meaning
-                  if ((event.modifiers & Qt.ControlModifier)
-                      && (event.key === Qt.Key_T || event.key === Qt.Key_U || event.key === Qt.Key_W)) {
-                    root.runCtrl(event.key === Qt.Key_T ? "t" : event.key === Qt.Key_U ? "u" : "w")
+                  // Ctrl+T tests the filtered nodes; every other chord keeps
+                  // its text-editing meaning in the field
+                  if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_T) {
+                    root.runCtrl("t")
                     event.accepted = true
                     return
                   }
@@ -1038,7 +1099,7 @@ Panel {
 
               TextActionButton {
                 label: "Config"
-                tooltip: "Open the config folder (~/.config/omarchy-xray, where custom.json lives) (Ctrl+W)"
+                tooltip: "Open the config folder (~/.config/omarchy-xray, where custom.json lives) (Ctrl+O)"
                 hasCursor: root.cursorRow === "subs" && root.chipIndex === 0
                 onClicked: xray.openWebUi()
               }
@@ -1046,7 +1107,7 @@ Panel {
               TextActionButton {
                 visible: xray.subs.length > 0
                 label: "Update all"
-                tooltip: "Download every subscription again (Ctrl+U)"
+                tooltip: "Download every subscription again (Ctrl+R)"
                 enabled: !xray.busy
                 hasCursor: root.cursorRow === "subs" && root.chipIndex === 1
                 onClicked: xray.updateSubscriptions()
@@ -1339,7 +1400,7 @@ Panel {
         horizontalAlignment: Text.AlignRight
         text: (nodeRow.fastest ? "󰉁 " : "") + nodeRow.latencyText
         Accessible.ignored: true
-        color: nodeRow.latencyBadLat ? root.errorColor : root.foreground
+        color: nodeRow.latencyBadLat ? root.dim : root.foreground      // "timeout" says it; don't shout
         font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall      // the number nodes are chosen by
         font.bold: nodeRow.fastest

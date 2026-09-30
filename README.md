@@ -25,13 +25,13 @@ commands and reads JSON back.
 - **every transport the current Xray core supports** (see the table below)
 - **Auto** node: Xray's observatory + `leastPing` balancer picks the best live node
 - **proxy mode** (no privileges) and **TUN mode** (whole system, one-time setup)
-- routing presets: **Global** / **Direct** for one region (RU, BY, KZ, UZ, TM, CN, IR, TR, AE, SA, EG, PK, VN, MM), optional **Adblock**
+- routing presets: **ALL** / **<CC> DIRECT** for one region (RU, BY, KZ, UZ, TM, CN, IR, TR, AE, SA, EG, PK, VN, MM), optional **Adblock**
 - `custom.json` for anything else the core can do (rules, DNS, mux, fragment…)
 - subscription info: traffic used/total and expiry (`subscription-userinfo`),
   `profile-title`, automatic refresh (`profile-update-interval`, default 24 h)
 - latency tests: batched and parallel, one xray process per 32 nodes
 - live traffic counters and speeds from xray's metrics endpoint (loopback)
-- keyboard-first: `j/k` move through the rows and nodes, `h/l` choose, `Enter` apply/connect, just type to filter (`/` first for a name starting with h, j, k or l); commands take Ctrl so typing never triggers them: `Ctrl+C` connect, `Ctrl+T` test (again to stop), `Ctrl+U` update, `Ctrl+A` add a subscription, `Ctrl+W` config folder; disconnect is `Enter` on the switch; `?` hides or shows the key legend
+- keyboard-first: `j/k` move through the rows and nodes (the flag grid in two directions), `h/l` choose, `Enter` apply/connect, `Home` the switch (so `Home`, `Enter` disconnects), `End` last node, `PgUp/PgDn` a page; just type to filter (`/` first for a name starting with h, j, k or l). Commands take Ctrl so typing never triggers them: `Ctrl+C` connect, `Ctrl+T` test (again to stop; also inside the filter), `Ctrl+R` update, `Ctrl+A` add a subscription, `Ctrl+O` config folder; `?` hides or shows the key legend
 - the status line stays pinned under the switch; an error there offers **Logs** (the journal in a floating terminal)
 - IPC verbs for Hyprland binds
 
@@ -231,7 +231,7 @@ curl -s https://ifconfig.me        # the server's IP
 
 ## Routing presets and Auto
 
-- **Global** — everything except private networks through the proxy.
+- **ALL** — everything except private networks through the proxy.
 - **Direct: region** — pick one country with heavy censorship (panel: ROUTE → `DIRECT`, country chip next to it; `ALL` sends everything through the VPN):
   its ccTLDs and `geoip:<code>` go direct, plus a geosite list where one exists
   (RU: `.ru/.su/.рф` + `geosite:category-ru`, CN: `geosite:cn`, IR:
@@ -305,7 +305,7 @@ Run `omarchy-xray restart` after editing.
 
 | Setting | Default | Description |
 |---|---|---|
-| Refresh interval | `20` s | Closed-panel poll; open panel polls every 2 s. |
+| Refresh interval | `20` s | Closed-panel poll; the open panel reads status every 4 s and traffic every 2 s. |
 
 ## Scripting
 
@@ -340,7 +340,7 @@ bind = $mainMod SHIFT, T, exec, omarchy-shell krieziey.omarchy-xray select JP
   kernel, tun2socks, TUN files, polkit agent, resolved/networkd, v2 leftovers, service state.
 - `omarchy-xray logs` — the journal of the active unit (the panel also shows
   the last error line when the service failed).
-- "N nodes skipped (…)" under the mode switch tells you why links were not
+- "N nodes skipped (…)" under the settings rows tells you why links were not
   imported (removed transport, unsupported method, rejected by the core…).
 
 ## Development
