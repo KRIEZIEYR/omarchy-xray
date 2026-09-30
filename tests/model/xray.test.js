@@ -120,6 +120,8 @@ module.exports = function ({ Xray, assert, eq }) {
     eq('state off', Xray.heroState({ touch: off }), 'proxy')
     eq('state off tun', Xray.heroState({ touch: off, mode: 'tun' }), 'TUN')
     eq('title off with target', Xray.heroTitle({ touch: off, target: 'DE' }), 'Off')
+    eq('title blocked', Xray.heroTitle({ touch: off, blocked: true }), 'Blocked')
+    eq('state blocked', Xray.heroState({ touch: off, blocked: true }), 'Kill switch · reconnecting')
     eq('title while connecting', Xray.heroTitle({ touch: off, target: 'DE', pending: 'connecting' }), 'DE')
     eq('state off names target', Xray.heroState({ touch: off, target: 'DE', mode: 'tun' }), 'TUN → DE')
     eq('state skipped nodes', Xray.heroState({ touch: { nodes: [], connectedKeys: {} }, hasSubs: true }), 'No usable nodes · see below')

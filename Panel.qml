@@ -23,6 +23,7 @@ Panel {
   property bool keyboardUser: false      // keys were used in an earlier open: no layout jump
   onKeysUsedChanged: if (keysUsed) keyboardUser = true
   readonly property bool filterFocused: nodeList.headerItem !== null && nodeList.headerItem.search.activeFocus
+  readonly property bool urlFocused: nodeList.footerItem !== null && nodeList.footerItem.subUrl.activeFocus
   property int nodeIndex: 0
   property string filterQuery: ""
   property bool regionsOpen: false
@@ -173,7 +174,7 @@ Panel {
   readonly property bool tunnelUp: xray.connected && xray.pending !== "disconnecting"
 
   readonly property color barIconColor: {
-    if (!xray.reachable) return errorColor
+    if (!xray.reachable || xray.blocked) return errorColor
     if (tunnelUp) return onColor
     return foreground            // "off" is carried by the button's kit dimming
   }
@@ -393,6 +394,8 @@ Panel {
     cursorActive = false
     keysUsed = false
     subsOpen = false
+    filterQuery = ""                     // every open starts from the whole list
+    if (nodeList.headerItem) nodeList.headerItem.search.text = ""
     nodeIndex = 0
     pointerGate.reset()
     regionsOpen = false
@@ -423,13 +426,13 @@ Panel {
     function toggleProxy(): string { xray.toggleConnection(root.lastNodeKey); return "ok" }
     function select(name: string): string {
       var q = String(name).toLowerCase()
-      var nodes = root.visibleNodes
+      var nodes = xray.touch ? xray.touch.nodes : []
       for (var i = 0; i < nodes.length; i++) {
         if (nodes[i].name.toLowerCase().indexOf(q) !== -1) { xray.connectNode(nodes[i]); return "ok" }
       }
       return "no node matches: " + name
     }
-    function test(): string { xray.testNodes(root.visibleNodes); return "ok" }
+    function test(): string { xray.testNodes(xray.touch ? xray.touch.nodes : []); return "ok" }
     function updateSubs(): string { xray.updateSubscriptions(); return "ok" }
     function startCore(): string { xray.startCore(); return "ok" }
     function stopCore(): string { xray.stopCore(); return "ok" }
@@ -458,7 +461,7 @@ Panel {
           color: root.barIconColor
           filled: root.tunnelUp
           half: xray.mode !== "tun"   // proxy covers only some apps
-          warning: !xray.reachable || xray.errorText !== ""
+          warning: !xray.reachable || xray.errorText !== "" || xray.subsTrouble
           badgeColor: root.errorColor
           // ~11 s of a slow breath, then a still bright outline: a password
           // prompt can take minutes and must not blink in the bar all along.
@@ -558,7 +561,7 @@ Panel {
             ToggleSwitch {
               id: powerSwitch
               visible: !root.firstRun && xray.reachable   // nothing to connect to (yet)
-              checked: root.onTarget
+              checked: root.onTarget || xray.blocked || xray.dropped
               busy: xray.toggleBusy
               opacity: xray.toggleBusy ? 0.5 : 1.0
               hasCursor: root.cursorRow === "hero"
@@ -572,7 +575,8 @@ Panel {
 
               PanelToolTip {
                 visible: powerSwitch.containsMouse
-                text: xray.connected ? "Disconnect"
+                text: xray.blocked ? "Turn off: lifts the kill switch, traffic goes direct"
+                      : xray.connected ? "Disconnect"
                       : xray.connectTarget ? "Connect to " + xray.connectTarget.name + " (Ctrl+C)" : "Add a subscription first"
                 fontFamily: root.fontFamily
               }
@@ -638,8 +642,9 @@ Panel {
 
           Repeater {
             model: root.firstRun ? [["", "Enter adds the subscription · Esc twice closes"]]
-                   : [["MOVE", root.filterFocused ? "↑/↓ nodes · Enter connect · Esc back to list"
-                                                  : "j/k · h/l · Enter apply · Home switch · ? hide"],
+                   : root.filterFocused ? [["FILTER", "↑/↓ · Enter connect · Ctrl+T test · Esc clear"]]
+                   : root.urlFocused ? [["URL", "Enter adds it · Esc back to the list"]]
+                   : [["MOVE", "j/k · h/l · Enter apply · Home switch · ? hide"],
                       ["ACT", "Ctrl+C connect · Ctrl+T test · Ctrl+R update"],
                       ["MANAGE", "Ctrl+A add sub · Ctrl+O config · Ctrl+L logs"]]
             delegate: RowLayout {
@@ -930,7 +935,8 @@ Panel {
                                                 : "DIRECT: one country's sites skip the VPN")
                   : "Change the direct country"
                 if (r === "ads") return xray.geo ? "ADBLOCK: known ad and tracker domains" : "ADBLOCK needs the geo data packages"
-                if (r === "hero") return xray.connected ? "Enter disconnects" : "Enter connects"
+                if (r === "hero") return xray.blocked ? "Enter turns it off and lifts the kill switch"
+                                          : xray.connected ? "Enter disconnects" : "Enter connects"
                 return " "                                // keeps the line's height
               }
               color: root.dim

@@ -56,7 +56,8 @@ function groupsFromStatus(data, maxNodes, nowSec) {
     if (k !== "auto") {
       var sub = subs[parseInt(k, 10)] || {}
       title = String(sub.title || sub.host || "SERVERS").toUpperCase()
-      status = subInfoLabel(sub.info, nowSec)
+      // a failing subscription says so where its nodes are, not only in the footer
+      status = sub.error ? "󰀦 " + String(sub.error).slice(0, 60) : subInfoLabel(sub.info, nowSec)
     }
     result.groups.push({ title: title, status: status, subscriptionId: k, nodes: bySub[k] })
   }
@@ -235,6 +236,7 @@ function connectedNode(touch) {
 function heroLine(state) {
   if (!state) return "…"
   if (state.unreachable) return "Xray manager unreachable"
+  if (state.blocked) return "Blocked · kill switch, reconnecting"
   var t = state.touch
   if (!t) return "Checking…"
   var n = connectedNode(t)
@@ -249,6 +251,7 @@ function heroLine(state) {
 
 // Panel hero: the exit you are on leads; the state is a short caption.
 function heroTitle(state) {
+  if (state && state.blocked) return "Blocked"
   var n = state ? connectedNode(state.touch) : null
   // while connecting the switch is already on: the title names where it goes
   if (!n && state && (state.pending === "connecting" || state.pending === "switching") && state.target)
@@ -266,6 +269,7 @@ function heroTitle(state) {
 function heroState(state) {
   if (!state) return "…"
   if (state.unreachable) return "Manager unreachable"
+  if (state.blocked) return "Kill switch · reconnecting"
   var pending = { connecting: "Connecting…", switching: "Switching…", disconnecting: "Disconnecting…" }
   if (pending[state.pending]) return pending[state.pending]
   var t = state.touch

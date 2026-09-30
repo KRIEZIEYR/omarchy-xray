@@ -11,7 +11,7 @@ Panel.qml ──▶ bin/omarchy-xray (manager, in the plugin folder)
                  ├─ both modes ─▶ systemd --user  omarchy-xray.service  ─▶ /usr/bin/xray (no privileges)
                  └─ TUN mode   ─▶ systemd --user  omarchy-xray-tun2socks.service ─▶ tun2socks (no privileges)
                                    └─ starts ─▶ systemd system  omarchy-xray-tun.service (root: ip + resolvectl only)
-Panel.qml ──▶ curl 127.0.0.1:15491/debug/vars  (live traffic, straight from xray)
+Panel.qml ──▶ 127.0.0.1:15491/debug/vars  (live traffic, straight from xray's metrics)
 ```
 
 No daemon accounts, no passwords, no REST — the widget runs `omarchy-xray`
@@ -209,8 +209,13 @@ every connection it makes to the physical interface (`sockopt.interface`,
 unprivileged `SO_BINDTODEVICE`, Linux ≥ 5.7), so it never loops back into
 `xray0`; its replies are looked up from the physical address and pass a strict
 `rp_filter` (ufw sets `rp_filter=1`). `tun-run` follows default-route changes
-(Wi-Fi ↔ Ethernet) and rebinds xray within ~5 s. If tun2socks stops, its unit
-stops the root unit and the normal network takes over.
+(Wi-Fi ↔ Ethernet) and rebinds xray within ~5 s.
+
+**Kill switch.** If tun2socks or xray crashes, the device and its routes stay,
+so traffic is blocked (never sent direct) while systemd restarts them; the
+panel shows **Blocked** and a critical notification says so. Turning the
+switch off (or `omarchy-xray off`, or switching to proxy) removes the device
+and the normal network takes over. Only a deliberate stop lifts it.
 
 DNS: systemd-resolved sends everything to `198.18.0.2` on `xray0`; Xray
 answers it with a `dns` outbound. Queries go over DoH (`1.1.1.1`) through the

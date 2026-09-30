@@ -21,8 +21,9 @@ Item {
   property bool reachable: false        // manager answered
   property bool installed: true         // manager found
   property bool _quietNext: false
-  property bool _wasUp: false
-  property string _dropText: ""
+  property bool dropped: false          // a unit crashed while wanted; it is restarting
+  property bool blocked: false          // ...and in TUN the kill switch blocks traffic meanwhile
+  property int _restarts: -1
   property string lastError: ""         // last failed user action; cleared by the next one or a healthy poll
   property double _errorAt: 0
   onLastErrorChanged: _errorAt = Date.now()
@@ -73,6 +74,7 @@ Item {
   readonly property var _heroInput: ({
     pending: pending,
     target: connectTarget ? connectTarget.name : "",
+    blocked: blocked,
     hasSubs: subs.length > 0,
     unreachable: !reachable,
     touch: touch,
@@ -118,6 +120,16 @@ Item {
   // The connect toggle only waits for short commands: a latency test (up to
   // 11 min) must not swallow disconnect. Other long jobs rewrite state and
   // would race a node switch, so they still hold it.
+  // A subscription that errored or ran out keeps a badge on the bar.
+  readonly property bool subsTrouble: {
+    var now = Date.now() / 1000
+    for (var i = 0; i < subs.length; i++) {
+      var s = subs[i] || {}
+      var e = Number(s.info && s.info.expire) || 0
+      if (s.error || (e > 0 && e < now)) return true
+    }
+    return false
+  }
   readonly property bool toggleBusy: _action.running || (_long.running && !testing)
 
   // --- plumbing -----------------------------------------------------------
@@ -306,7 +318,9 @@ Item {
     // An action's error stays readable for a while, then a healthy poll
     // gives the line back to live traffic.
     if (lastError !== "" && Date.now() - _errorAt > 15000) lastError = ""
-    serviceError = d.lastError ? "Xray stopped with an error: " + scrub(d.lastError) : (d.xray === false ? "xray core not found — install it (omarchy pkg aur add xray)" : "")
+    serviceError = d.blocked === true ? "Kill switch: traffic is blocked while the VPN reconnects"
+                 : d.dropped === true ? "VPN dropped: reconnecting…"
+                 : d.lastError ? "Xray stopped with an error: " + scrub(d.lastError) : (d.xray === false ? "xray core not found — install it (omarchy pkg aur add xray)" : "")
     var rawSubs = d.subs || []
     subs = rawSubs.slice ? rawSubs.slice(0, 64) : []
     // Rebuild the node model only when something changed: reassigning `touch`
@@ -324,26 +338,29 @@ Item {
     if (testing && d.testProgress && d.testProgress.total > 0)
       actionStatus = "Testing " + d.testProgress.done + "/" + d.testProgress.total + "…"
 
-    // The tunnel went down without being asked to (units still enabled):
-    // say so loudly, once. With the kill switch TUN traffic is blocked meanwhile.
-    var up = connected
-    if (_wasUp && !up && d.wanted === true && !busy && pending === "") {
-      _dropText = mode === "tun" ? "VPN dropped: traffic is blocked until it reconnects or you turn it off"
-                                 : "VPN dropped: apps using the proxy are offline until it reconnects"
-      lastError = _dropText
-      Quickshell.execDetached(["notify-send", "-u", "critical", "-a", "Xray", "VPN dropped", _dropText])
-    } else if (up && _dropText !== "") {
-      if (lastError === _dropText) lastError = ""
-      _dropText = ""
+    // Drops come from the manager's unit states (a crash while enabled), so
+    // an off, a mode switch or a node switch never raises one, and a busy job
+    // does not hide one. The restart counter catches a crash that recovered
+    // between two polls.
+    var nowDropped = d.dropped === true
+    blocked = d.blocked === true
+    if (nowDropped && !dropped)
+      Quickshell.execDetached(["notify-send", "-u", "critical", "-a", "Xray", "VPN dropped",
+        blocked ? "Traffic is blocked until it reconnects or you turn it off" : "Reconnecting…"])
+    else if (!nowDropped && dropped && d.running === true)
       Quickshell.execDetached(["notify-send", "-u", "low", "-a", "Xray", "VPN reconnected"])
-    }
-    _wasUp = up
+    else if (!nowDropped && _restarts >= 0 && (d.restarts || 0) > _restarts)
+      Quickshell.execDetached(["notify-send", "-a", "Xray", "VPN recovered from a crash",
+                               "It was down for a few seconds and reconnected on its own"])
+    dropped = nowDropped
+    _restarts = typeof d.restarts === "number" ? d.restarts : -1
   }
 
   // --- actions ------------------------------------------------------------
 
   function connectNode(node) {
     if (!node || !node.key) return
+    if (_long.running && !testing) { busyRefused(); return }   // an update or mode switch owns the state
     if (String(node.key).length > 64) { lastError = "That node is no longer in the list — reopen the panel"; return }
     var wasRunning = coreRunning
     if (!run(_action, [manager, "select", node.key], function(resp) {
@@ -398,8 +415,11 @@ Item {
     armDeadline(_action, _actionDeadline, 120000, "start")
   }
 
+  // Every way to connect or disconnect (switch, Enter, bar right-click, IPC)
+  // lands here or in connectNode. A dropped or blocked tunnel counts as on:
+  // toggling it turns it off, which also lifts the kill switch.
   function toggleConnection(lastKey) {
-    if (connected) { disconnect(); return }
+    if (connected || blocked || dropped) { disconnect(); return }
     var target = Model.pickConnectTarget(touch || {}, lastKey)
     if (target === null) { lastError = subs.length > 0 ? "No usable nodes: every link was skipped (see below)"
                                                     : "No nodes yet: add a subscription URL first"; return }

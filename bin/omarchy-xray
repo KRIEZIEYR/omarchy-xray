@@ -2091,6 +2091,23 @@ def net_label(n):
     return "/".join(parts)[:64]
 
 
+def unit_states():
+    """ActiveState / SubState / NRestarts / UnitFileState of both user units
+    in one systemctl call."""
+    r = uctl("show", "-p", "Id", "-p", "ActiveState", "-p", "SubState", "-p", "NRestarts",
+             "-p", "UnitFileState", SERVICE, T2S_SERVICE)
+    units, cur = {}, {}
+    for line in (r.stdout or "").splitlines() + [""]:
+        if not line.strip():
+            if cur.get("Id"):
+                units[cur["Id"]] = cur
+            cur = {}
+            continue
+        k, _, v = line.partition("=")
+        cur[k] = v
+    return units
+
+
 def _test_progress():
     p = load_json(pathlib.Path(runtime_dir()) / "test-progress.json", {})
     return p if isinstance(p.get("done"), int) and isinstance(p.get("total"), int) else None
@@ -2099,8 +2116,19 @@ def _test_progress():
 def cmd_status():
     st = load_state()
     lat = load_json(LAT, {})
-    ua, ta = running_units()
-    running = (ua and ta) if st["mode"] == "tun" else ua
+    us = unit_states()
+    xs, ts = us.get(SERVICE, {}), us.get(T2S_SERVICE, {})
+    tun_mode = st["mode"] == "tun"
+    running = xs.get("ActiveState") == "active" and (not tun_mode or ts.get("ActiveState") == "active")
+    wanted = xs.get("UnitFileState") == "enabled"          # off disables; a crash does not
+    relevant = [xs, ts] if tun_mode else [xs]
+    # A crash, not an off: a unit waits to restart (or gave up) while enabled.
+    # In TUN the kill switch keeps the device, so traffic is blocked meanwhile.
+    dropped = wanted and not running and any(u.get("SubState") in ("auto-restart", "failed")
+                                             for u in relevant)
+    blocked = dropped and tun_mode and sctl("is-active", TUN_SERVICE).stdout.strip() == "active"
+    restarts = sum(int(u.get("NRestarts") or 0) for u in relevant
+                   if str(u.get("NRestarts") or "0").isdigit())
     now = int(time.time())
     nodes = []
     auto_tags = []
@@ -2132,11 +2160,8 @@ def cmd_status():
         n = selected_node(st)
         sel = n["id"] if n else ""
     last_error = ""
-    if not running:
-        tun = st["mode"] == "tun"
-        failed = uctl("is-failed", SERVICE, *([T2S_SERVICE] if tun else []))
-        if "failed" in failed.stdout.split():
-            last_error = _last_lines(journal_tail(tun), n=2, cap=240)
+    if not running and any(u.get("ActiveState") == "failed" for u in relevant):
+        last_error = _last_lines(journal_tail(tun_mode), n=2, cap=240)
     out({
         "ok": True,
         "version": VERSION,
@@ -2151,7 +2176,10 @@ def cmd_status():
         "xray": os.path.isfile(XRAY),
         "tunInstalled": tun_installed(),
         # off disables the units; a crash leaves them enabled - that is a drop
-        "wanted": uctl("is-enabled", SERVICE).stdout.strip() == "enabled",
+        "wanted": wanted,
+        "dropped": dropped,
+        "blocked": blocked,
+        "restarts": restarts,
         "testProgress": _test_progress(),
         "hasUrl": bool(st["subs"]),
         "subs": subs,
@@ -2495,17 +2523,40 @@ def _rebind():
     dev = default_dev()
     if not dev or dev == bound_iface():
         return False
+    if not _lock():
+        return False                 # someone is changing things; next poll retries
     st = load_state()
     if st["mode"] != "tun" or not st["nodes"]:
         return False
     write_config(st)
     uctl("restart", SERVICE)
+    import fcntl
+    fcntl.flock(_LOCK_FD, fcntl.LOCK_UN)
     return True
 
 
 # --- main --------------------------------------------------------------------
 
 ROOT_COMMANDS = {"tun-install", "tun-uninstall"}
+LOCKED_COMMANDS = {"import", "subremove", "update", "select", "mode", "routing", "adblock",
+                   "on", "restart", "tun-remove", "cleanup"}
+_LOCK_FD = None
+
+
+def _lock(wait=False):
+    """One state-changing command at a time (an update saving its node list
+    must not undo a node switch made meanwhile). `off` never takes it."""
+    global _LOCK_FD
+    import fcntl
+    _cfg_dir()
+    fd = os.open(str(CFG / ".lock"), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+    except BlockingIOError:
+        os.close(fd)
+        return False
+    _LOCK_FD = fd
+    return True
 
 
 def main():
@@ -2517,6 +2568,8 @@ def main():
     arg = rest[0] if rest else ""
     if os.geteuid() == 0 and cmd not in ROOT_COMMANDS:
         die("refusing to run as root — run omarchy-xray as your user")
+    if cmd in LOCKED_COMMANDS and not _lock():
+        die("another change is still running (update, mode switch…) — try again in a moment")
     table = {
         "import": lambda: cmd_import(arg),
         "subremove": lambda: cmd_subremove(arg),
