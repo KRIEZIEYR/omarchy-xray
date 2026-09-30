@@ -96,10 +96,10 @@ module.exports = function ({ Xray, assert, eq }) {
   /* ---- heroLine ---- */
   {
     const t = Xray.groupsFromStatus(status, 1000, NOW)
-    eq('hero connected', Xray.heroLine({ touch: t }), 'Connected · US LA')
+    eq('hero connected', Xray.heroLine({ touch: t }), 'Connected (proxy) · US LA')
     eq('hero tun', Xray.heroLine({ touch: t, mode: 'tun' }), 'Connected (TUN) · US LA')
     const ta = Xray.groupsFromStatus(Object.assign({}, status, { connectedKey: 'auto' }), 1000, NOW)
-    eq('hero auto', Xray.heroLine({ touch: ta, autoPick: 'DE' }), 'Connected · Auto → DE')
+    eq('hero auto', Xray.heroLine({ touch: ta, autoPick: 'DE' }), 'Connected (proxy) · Auto → DE')
     const off = Xray.groupsFromStatus(Object.assign({}, status, { running: false }), 1000, NOW)
     eq('hero disconnected', Xray.heroLine({ touch: off }), 'Off')
   }

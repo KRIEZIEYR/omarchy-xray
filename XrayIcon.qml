@@ -69,8 +69,9 @@ Item {
       if (root.filled) {
         ctx.save(); fillArea(); shield(); ctx.fillStyle = root.color; ctx.fill(); ctx.restore()
       }
-      // the V: drawn where the shield is empty, cut out where it is filled
-      if (!root.filled || root.half) { vee(); ctx.stroke() }
+      // the V: drawn on an empty shield, cut out of the fill; a half shield
+      // keeps its upper half hollow so it reads as half even at bar size
+      if (!root.filled) { vee(); ctx.stroke() }
       if (root.filled) {
         ctx.save(); fillArea(); ctx.globalCompositeOperation = "destination-out"; vee(); ctx.stroke(); ctx.restore()
       }

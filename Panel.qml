@@ -67,7 +67,7 @@ Panel {
   // above the nodes (nodeIndex < 0, -1 = the last one), the node rows
   // (0..n-1), then the subscriptions (header, then one row each).
   // h/l pick a chip inside a row, Enter applies it.
-  readonly property var settingRows: firstRun ? ["hero"]
+  readonly property var settingRows: !xray.reachable || firstRun ? []
       : regionsOpen ? ["hero", "mode", "route", "regions", "ads"] : ["hero", "mode", "route", "ads"]
   readonly property int footerRows: xray.reachable ? 1 + (subsShown ? xray.subs.length : 0) : 0
   property int chipIndex: 0
@@ -80,7 +80,7 @@ Panel {
       : nodeIndex === visibleNodes.length ? "subs" : "sub"
   readonly property int cursorSub: cursorRow === "sub" ? nodeIndex - visibleNodes.length - 1 : -1
   // The country chip only changes DIRECT's country; hidden while ALL is on.
-  readonly property bool countryChipShown: xray.region !== null || regionsOpen
+  readonly property bool countryChipShown: xray.regions.length > 0
 
   function chipCount(row) {
     return row === "mode" ? 2 : row === "route" ? (countryChipShown ? 3 : 2)
@@ -243,7 +243,7 @@ Panel {
   function jumpCursor(where) {
     var page = Math.max(1, Math.floor(nodeList.height / Style.space(32)))
     var target = where === "home" ? -settingRows.length
-               : where === "end" ? visibleNodes.length - 1
+               : where === "end" ? visibleNodes.length - 1 + footerRows
                : nodeIndex + (where === "pgdn" ? page : -page)
     root.keysUsed = true
     moveNodeCursor(target - nodeIndex)
@@ -571,6 +571,7 @@ Panel {
               Accessible.role: Accessible.CheckBox
               Accessible.name: "VPN connection"
               Accessible.checked: root.onTarget
+              Accessible.focusable: true
               Accessible.focused: hasCursor
 
               PanelToolTip {
@@ -591,8 +592,8 @@ Panel {
           readonly property bool live: xray.connected && xray.traffic !== null
           readonly property string kind: xray.actionStatus !== "" ? "action"
                                        : xray.errorText !== "" ? "error"
-                                       : root.firstRun ? "none" : "traffic"
-          visible: xray.reachable || xray.errorText !== ""
+                                       : root.firstRun || !xray.connected ? "none" : "traffic"
+          visible: kind !== "none"
           width: parent.width
           spacing: Style.space(8)
 
@@ -619,7 +620,8 @@ Panel {
                              : statusRow.live ? "Download " + Model.formatSpeed(xray.traffic.downSpeed)
                                                 + ", upload " + Model.formatSpeed(xray.traffic.upSpeed)
                              : xray.connected ? "Measuring traffic" : "Not connected"
-            onTextChanged: if (statusRow.kind === "action" || statusRow.kind === "error")
+            onTextChanged: if (statusRow.kind === "error"
+                               || (statusRow.kind === "action" && !/^Testing \d/.test(xray.actionStatus)))
                              Accessible.announce(statusRow.kind === "error" ? "Error: " + xray.errorText : xray.actionStatus)
           }
 
@@ -742,6 +744,7 @@ Panel {
                 Accessible.role: Accessible.Grouping
                 Accessible.name: "Mode: " + (xray.mode === "tun" ? "TUN, all system traffic" : "proxy")
                 Accessible.description: "Options: proxy, TUN. h and l switch"
+                Accessible.focusable: true
                 Accessible.focused: cursorIndex >= 0
                 focusable: false
                 foreground: root.foreground
@@ -780,6 +783,7 @@ Panel {
                 Accessible.role: Accessible.Grouping
                 Accessible.name: "Route: " + (xray.region ? xray.region.name + " sites go direct" : "everything through the VPN")
                 Accessible.description: "Options: all through the VPN, one country direct. h and l switch"
+                Accessible.focusable: true
                 Accessible.focused: cursorIndex >= 0
                 focusable: false
                 foreground: root.foreground
@@ -797,6 +801,10 @@ Panel {
                 bordered: true
                 opacity: xray.busy ? 0.45 : 1.0
                 hasCursor: root.cursorRow === "route" && root.chipIndex === 2
+                Accessible.focusable: true
+                Accessible.focused: hasCursor
+                Accessible.expandable: true
+                Accessible.expanded: root.regionsOpen
                 enabled: xray.regions.length > 0
                 fontFamily: root.fontFamily
                 fontSize: Style.font.caption
@@ -824,6 +832,8 @@ Panel {
                   hasCursor: root.cursorRow === "regions" && root.chipIndex === index
                   Accessible.role: Accessible.Button
                   Accessible.name: modelData.name + (selected ? ", direct now" : "")
+                  Accessible.focusable: true
+                  Accessible.focused: hasCursor
                   tooltipText: modelData.name + ": sites and IPs go direct"
                                + (xray.geo ? "" : " (domains only: no geo data installed)")
                   bordered: true
@@ -881,6 +891,7 @@ Panel {
                 Accessible.role: Accessible.CheckBox
                 Accessible.name: "Ad blocking"
                 Accessible.checked: xray.adblock
+                Accessible.focusable: true
                 Accessible.focused: hasCursor
               }
 
@@ -928,7 +939,7 @@ Panel {
                 var r = root.cursorRow, c = root.chipIndex
                 if (r === "mode") return c === 1
                   ? (xray.tunInstalled ? "TUN: all system traffic through the VPN"
-                                       : "TUN: all traffic · the first switch asks a password")
+                                       : "TUN: all traffic · the first switch asks your password once")
                   : "PROXY: apps using the system proxy"
                 if (r === "route") return c === 0 ? "ALL: everything through the VPN, LAN stays local"
                   : c === 1 ? (root.routeRegion ? root.routeRegion.code.toUpperCase() + " sites go direct, the rest via VPN"
@@ -1113,6 +1124,8 @@ Panel {
                   onClicked: root.subsOpen = !root.subsOpen
                   Accessible.role: Accessible.Button
                   Accessible.name: (root.subsShown ? "Collapse" : "Expand") + " subscriptions"
+                  Accessible.expandable: true
+                  Accessible.expanded: root.subsShown
                   Accessible.onPressAction: root.subsOpen = !root.subsOpen
                 }
               }
@@ -1167,6 +1180,7 @@ Panel {
               visible: root.subsShown && xray.importNote !== ""
               width: parent.width
               text: xray.importNote
+              onTextChanged: if (text !== "") Accessible.announce(text)
               color: xray.importing ? root.dim : root.errorColor
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
@@ -1322,6 +1336,7 @@ Panel {
     Accessible.role: Accessible.Button
     Accessible.name: a11yName !== "" ? a11yName : label
     Accessible.description: tooltip
+    Accessible.focusable: true
     Accessible.focused: hasCursor
     Accessible.onPressAction: if (enabled) clicked()
   }

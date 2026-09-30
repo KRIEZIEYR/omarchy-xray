@@ -240,7 +240,7 @@ function heroLine(state) {
   var t = state.touch
   if (!t) return "Checking…"
   var n = connectedNode(t)
-  var mode = state.mode === "tun" ? " (TUN)" : ""
+  var mode = state.mode === "tun" ? " (TUN)" : " (proxy)"
   if (n) {
     if (n.key === "auto") return "Connected" + mode + " · Auto" + (state.autoPick ? " → " + state.autoPick : "")
     return "Connected" + mode + " · " + n.name
