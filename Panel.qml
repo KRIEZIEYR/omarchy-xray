@@ -80,10 +80,22 @@ Panel {
       : nodeIndex === visibleNodes.length ? "subs" : "sub"
   readonly property int cursorSub: cursorRow === "sub" ? nodeIndex - visibleNodes.length - 1 : -1
   // The country chip only changes DIRECT's country; hidden while ALL is on.
-  readonly property bool countryChipShown: xray.regions.length > 0
+  // One copy of what each chip does: its tooltip and the keyboard hint line
+  // (kept short enough for that single line).
+  readonly property var modeOptions: [
+    { value: "proxy", label: "PROXY", tooltip: "Apps that use the system proxy go through the VPN" },
+    { value: "tun", label: "TUN", tooltip: xray.tunInstalled ? "All system traffic goes through the VPN"
+                                                            : "All traffic via the VPN · first switch asks your password" }
+  ]
+  readonly property var routeOptions: [
+    { value: "global", label: "ALL", tooltip: "Everything through the VPN, except your local network" },
+    { value: "direct", label: routeRegion ? routeRegion.code.toUpperCase() + " DIRECT" : "DIRECT",
+      tooltip: routeRegion ? routeRegion.name + " sites go direct, the rest via the VPN"
+                           : "One country's sites go direct, not through the VPN" }
+  ]
 
   function chipCount(row) {
-    return row === "mode" ? 2 : row === "route" ? (countryChipShown ? 3 : 2)
+    return row === "mode" ? 2 : row === "route" ? 3
          : row === "regions" ? xray.regions.length
          : row === "subs" ? (xray.subs.length > 0 ? 2 : 1) : row === "sub" ? 2 : 1
   }
@@ -603,8 +615,7 @@ Panel {
             Layout.alignment: Qt.AlignVCenter
             text: statusRow.kind === "action" ? xray.actionStatus
                   : statusRow.kind === "error" ? "󰀦 " + xray.errorText
-                  : statusRow.kind === "none" ? ""
-                  : !statusRow.live ? (xray.connected ? "Measuring traffic…" : "Not connected")
+                  : !statusRow.live ? "Measuring traffic…"
                   : "󰁅 " + Model.formatSpeed(xray.traffic.downSpeed)
                     + "   󰁝 " + Model.formatSpeed(xray.traffic.upSpeed)
                     + "   ·   Downloaded " + Model.formatBytes(xray.traffic.downTotal)
@@ -619,7 +630,7 @@ Panel {
                              : statusRow.kind === "action" ? xray.actionStatus
                              : statusRow.live ? "Download " + Model.formatSpeed(xray.traffic.downSpeed)
                                                 + ", upload " + Model.formatSpeed(xray.traffic.upSpeed)
-                             : xray.connected ? "Measuring traffic" : "Not connected"
+                             : "Measuring traffic"
             onTextChanged: if (statusRow.kind === "error"
                                || (statusRow.kind === "action" && !/^Testing \d/.test(xray.actionStatus)))
                              Accessible.announce(statusRow.kind === "error" ? "Error: " + xray.errorText : xray.actionStatus)
@@ -638,7 +649,7 @@ Panel {
         // away. Shown once the keyboard is used (and on first run); `?`
         // hides or shows them. Mouse users get the keys in tooltips.
         Column {
-          visible: root.firstRun || (xray.reachable && (root.keysUsed || root.keyboardUser) && !root.legendHidden)
+          visible: root.firstRun || (xray.reachable && root.keyboardUser && !root.legendHidden)
           width: parent.width
           spacing: Style.space(4)
 
@@ -731,13 +742,7 @@ Panel {
               }
 
               ButtonGroup {
-                options: [
-                  { value: "proxy", label: "PROXY",
-                    tooltip: "Apps that use the system proxy go through the VPN (socks 127.0.0.1:20170, http :20171)" },
-                  { value: "tun", label: "TUN",
-                    tooltip: xray.tunInstalled ? "All system traffic goes through the VPN"
-                           : "All system traffic goes through the VPN. The first switch asks for your password once" }
-                ]
+                options: root.modeOptions
                 value: xray.mode
                 cursorIndex: root.cursorRow === "mode" ? root.chipIndex : -1
                 // the kit's chips carry no accessible names; the group says the state
@@ -771,13 +776,7 @@ Panel {
               }
 
               ButtonGroup {
-                options: [
-                  { value: "global", label: "ALL",
-                    tooltip: "Everything goes through the VPN, except your local network" },
-                  { value: "direct", label: root.routeRegion ? root.routeRegion.code.toUpperCase() + " DIRECT" : "DIRECT",
-                    tooltip: root.routeRegion ? root.routeRegion.name + ": its sites and IPs go direct, not through the VPN"
-                                              : "Send one country's sites and IPs direct, not through the VPN" }
-                ]
+                options: root.routeOptions
                 value: xray.region ? "direct" : "global"
                 cursorIndex: root.cursorRow === "route" && root.chipIndex < 2 ? root.chipIndex : -1
                 Accessible.role: Accessible.Grouping
@@ -795,7 +794,6 @@ Panel {
               }
 
               Button {
-                visible: root.countryChipShown
                 text: root.regionsOpen ? "󰅃" : "󰅀"
                 tooltipText: "Change the direct country"
                 bordered: true
@@ -931,18 +929,12 @@ Panel {
             Text {
               id: chipHint
               textFormat: Text.PlainText
-              visible: (root.keysUsed || root.keyboardUser) && !root.firstRun
+              visible: root.keyboardUser && !root.firstRun
               width: parent.width
               text: {
                 var r = root.cursorRow, c = root.chipIndex
-                if (r === "mode") return c === 1
-                  ? (xray.tunInstalled ? "TUN: all system traffic through the VPN"
-                                       : "TUN: all traffic · the first switch asks your password once")
-                  : "PROXY: apps using the system proxy"
-                if (r === "route") return c === 0 ? "ALL: everything through the VPN, LAN stays local"
-                  : c === 1 ? (root.routeRegion ? root.routeRegion.code.toUpperCase() + " sites go direct, the rest via VPN"
-                                                : "DIRECT: one country's sites skip the VPN")
-                  : "Change the direct country"
+                if (r === "mode") return root.modeOptions[c].tooltip
+                if (r === "route") return c < 2 ? root.routeOptions[c].tooltip : "Change the direct country"
                 if (r === "ads") return xray.geo ? "ADBLOCK: known ad and tracker domains" : "ADBLOCK needs the geo data packages"
                 if (r === "hero") return xray.blocked ? "Enter turns it off and lifts the kill switch"
                                           : xray.connected ? "Enter disconnects" : "Enter connects"

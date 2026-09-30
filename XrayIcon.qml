@@ -56,25 +56,18 @@ Item {
         ctx.lineTo(0.5 * w, 0.64 * h)
         ctx.lineTo(0.65 * w, 0.34 * h)
       }
-      // the filled part: all of it, or the lower half
-      function fillArea() {
-        if (!root.half) return
-        ctx.beginPath()
-        ctx.rect(0, 0.5 * h, w, h)
-        ctx.clip()
-      }
-
       shield()
       ctx.stroke()
+      // Filled: the whole shield or (proxy) its lower half, V cut out; the
+      // upper half stays hollow so "half" reads even at bar size.
       if (root.filled) {
-        ctx.save(); fillArea(); shield(); ctx.fillStyle = root.color; ctx.fill(); ctx.restore()
-      }
-      // the V: drawn on an empty shield, cut out of the fill; a half shield
-      // keeps its upper half hollow so it reads as half even at bar size
-      if (!root.filled) { vee(); ctx.stroke() }
-      if (root.filled) {
-        ctx.save(); fillArea(); ctx.globalCompositeOperation = "destination-out"; vee(); ctx.stroke(); ctx.restore()
-      }
+        ctx.save()
+        if (root.half) { ctx.beginPath(); ctx.rect(0, 0.5 * h, w, h); ctx.clip() }
+        shield(); ctx.fillStyle = root.color; ctx.fill()
+        ctx.globalCompositeOperation = "destination-out"
+        vee(); ctx.stroke()
+        ctx.restore()
+      } else { vee(); ctx.stroke() }
     }
 
     onWidthChanged: canvas.requestPaint()

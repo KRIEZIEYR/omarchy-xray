@@ -1339,8 +1339,8 @@ def load_custom():
     return c
 
 
-def _route_lines(v6=False):
-    r = sh(IP, "-6" if v6 else "-4", "-o", "route", "show", "default", timeout=10)
+def _route_lines():
+    r = sh(IP, "-4", "-o", "route", "show", "default", timeout=10)
     return [l.split() for l in (r.stdout or "").splitlines() if l.strip()]
 
 
@@ -2037,8 +2037,6 @@ def cmd_test(keys):
         signal.signal(signal.SIGTERM, old[0])
         signal.signal(signal.SIGINT, old[1])
         _kill_all()
-    _cfg_dir()
-    atomic_write(LAT, json.dumps({k: str(v)[:32] for k, v in lat.items()}), 0o600)
     out({"ok": True, "latency": lat, "stopped": bool(_STOP)})
 
 
@@ -2127,8 +2125,7 @@ def cmd_status():
     dropped = wanted and not running and any(u.get("SubState") in ("auto-restart", "failed")
                                              for u in relevant)
     blocked = dropped and tun_mode and sctl("is-active", TUN_SERVICE).stdout.strip() == "active"
-    restarts = sum(int(u.get("NRestarts") or 0) for u in relevant
-                   if str(u.get("NRestarts") or "0").isdigit())
+    restarts = sum(int(u["NRestarts"]) for u in relevant if u.get("NRestarts", "").isdigit())
     now = int(time.time())
     nodes = []
     auto_tags = []
@@ -2257,10 +2254,6 @@ def cmd_doctor():
     networkd = sctl("is-active", "systemd-networkd").stdout.strip() == "active"
     add("networkd ignores xray0", not networkd or NETWORKD_FILE.is_file(),
         "networkd active" if networkd else "networkd not used")
-    legacy = sh(IP, "rule", "show", timeout=10).stdout
-    stale = bool(re.search(r"^5(190|199):", legacy, re.M))
-    add("no v2 TUN leftovers (ip rules 5190/5199)", not stale,
-        "reboot clears them (they are not persistent)" if stale else "")
     ua, ta = running_units()
     add("service running", ua or ta, "tun" if ta else ("proxy" if ua else "stopped"))
     add("default route", default_dev() is not None, default_dev() or "none")
@@ -2530,8 +2523,7 @@ def _rebind():
         return False
     write_config(st)
     uctl("restart", SERVICE)
-    import fcntl
-    fcntl.flock(_LOCK_FD, fcntl.LOCK_UN)
+    os.close(_LOCK_FD)                   # releases the lock
     return True
 
 
@@ -2543,7 +2535,7 @@ LOCKED_COMMANDS = {"import", "subremove", "update", "select", "mode", "routing",
 _LOCK_FD = None
 
 
-def _lock(wait=False):
+def _lock():
     """One state-changing command at a time (an update saving its node list
     must not undo a node switch made meanwhile). `off` never takes it."""
     global _LOCK_FD
@@ -2551,7 +2543,7 @@ def _lock(wait=False):
     _cfg_dir()
     fd = os.open(str(CFG / ".lock"), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         os.close(fd)
         return False

@@ -57,14 +57,6 @@ Item {
   readonly property bool coreRunning: touch !== null && touch.running === true
   readonly property string autoPickName: traffic ? Model.autoPickName(autoMembers, touch ? touch.nodes : [], traffic.autoPick) : ""
 
-  readonly property string connectedNodeName: {
-    if (!touch || connectedCount === 0) return ""
-    for (var i = 0; i < touch.nodes.length; i++)
-      if (touch.connectedKeys[touch.nodes[i].key] === true)
-        return touch.nodes[i].key === "auto" && autoPickName !== "" ? autoPickName : touch.nodes[i].name
-    return ""
-  }
-
   // "connecting" | "switching" | "disconnecting" while a connection change runs.
   property string pending: ""
 
