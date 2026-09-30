@@ -803,15 +803,13 @@ Panel {
                 hasCursor: root.cursorRow === "route" && root.chipIndex === 2
                 Accessible.focusable: true
                 Accessible.focused: hasCursor
-                Accessible.expandable: true
-                Accessible.expanded: root.regionsOpen
                 enabled: xray.regions.length > 0
                 fontFamily: root.fontFamily
                 fontSize: Style.font.caption
                 onClicked: root.regionsOpen = !root.regionsOpen
                 onHovered: function(h) { if (h) root.cursorActive = false }
                 Accessible.role: Accessible.Button
-                Accessible.name: "Change the direct country"
+                Accessible.name: root.regionsOpen ? "Hide the country list" : "Change the direct country"
               }
 
               Item { Layout.fillWidth: true }
@@ -1124,8 +1122,6 @@ Panel {
                   onClicked: root.subsOpen = !root.subsOpen
                   Accessible.role: Accessible.Button
                   Accessible.name: (root.subsShown ? "Collapse" : "Expand") + " subscriptions"
-                  Accessible.expandable: true
-                  Accessible.expanded: root.subsShown
                   Accessible.onPressAction: root.subsOpen = !root.subsOpen
                 }
               }
