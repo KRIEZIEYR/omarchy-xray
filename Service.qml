@@ -20,6 +20,9 @@ Item {
   // --- observable state ---------------------------------------------------
   property bool reachable: false        // manager answered
   property bool installed: true         // manager found
+  property bool _quietNext: false
+  property bool _wasUp: false
+  property string _dropText: ""
   property string lastError: ""         // last failed user action; cleared by the next one or a healthy poll
   property double _errorAt: 0
   onLastErrorChanged: _errorAt = Date.now()
@@ -70,6 +73,7 @@ Item {
   readonly property var _heroInput: ({
     pending: pending,
     target: connectTarget ? connectTarget.name : "",
+    hasSubs: subs.length > 0,
     unreachable: !reachable,
     touch: touch,
     mode: mode,
@@ -170,10 +174,13 @@ Item {
       lastError = "That text is too long (2048 characters at most)"
       return false
     }
+    var quiet = _quietNext
+    _quietNext = false
     var env = {}
     for (var k in baseEnv) env[k] = null
     if (extraEnv) for (var x in extraEnv) env[x] = extraEnv[x]
-    if (slot === _action || slot === _long) lastError = ""
+    // a background job (auto-update) must not wipe an error the user has not seen
+    if ((slot === _action || slot === _long) && !quiet) lastError = ""
     slot._terminating = false
     slot._done = done
     slot.environment = env
@@ -311,8 +318,26 @@ Item {
     }
     if (d.updateDue === true && !busy && !panelOpen && Date.now() - _lastAutoUpdate > 600000) {
       _lastAutoUpdate = Date.now()
+      _quietNext = true
       updateSubscriptions()
     }
+    if (testing && d.testProgress && d.testProgress.total > 0)
+      actionStatus = "Testing " + d.testProgress.done + "/" + d.testProgress.total + "…"
+
+    // The tunnel went down without being asked to (units still enabled):
+    // say so loudly, once. With the kill switch TUN traffic is blocked meanwhile.
+    var up = connected
+    if (_wasUp && !up && d.wanted === true && !busy && pending === "") {
+      _dropText = mode === "tun" ? "VPN dropped: traffic is blocked until it reconnects or you turn it off"
+                                 : "VPN dropped: apps using the proxy are offline until it reconnects"
+      lastError = _dropText
+      Quickshell.execDetached(["notify-send", "-u", "critical", "-a", "Xray", "VPN dropped", _dropText])
+    } else if (up && _dropText !== "") {
+      if (lastError === _dropText) lastError = ""
+      _dropText = ""
+      Quickshell.execDetached(["notify-send", "-u", "low", "-a", "Xray", "VPN reconnected"])
+    }
+    _wasUp = up
   }
 
   // --- actions ------------------------------------------------------------
@@ -376,7 +401,8 @@ Item {
   function toggleConnection(lastKey) {
     if (connected) { disconnect(); return }
     var target = Model.pickConnectTarget(touch || {}, lastKey)
-    if (target === null) { lastError = "No nodes yet: add a subscription URL first"; return }
+    if (target === null) { lastError = subs.length > 0 ? "No usable nodes: every link was skipped (see below)"
+                                                    : "No nodes yet: add a subscription URL first"; return }
     connectNode(target)
   }
 

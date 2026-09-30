@@ -20,6 +20,9 @@ Panel {
   // and out as the pointer crosses rows and buttons, resizing the panel.
   property bool keysUsed: false
   property bool legendHidden: false      // `?` — remembered while the shell runs
+  property bool keyboardUser: false      // keys were used in an earlier open: no layout jump
+  onKeysUsedChanged: if (keysUsed) keyboardUser = true
+  readonly property bool filterFocused: nodeList.headerItem !== null && nodeList.headerItem.search.activeFocus
   property int nodeIndex: 0
   property string filterQuery: ""
   property bool regionsOpen: false
@@ -293,7 +296,11 @@ Panel {
 
   // Commands take Ctrl so a bare letter is always the start of a search.
   function runCtrl(k) {
-    if (k === "t") xray.testNodes(root.visibleNodes)
+    if (k === "t") {
+      if (root.filterQuery !== "" && root.visibleNodes.length === 0) xray.flash("Nothing to test: the filter matches no node")
+      else xray.testNodes(root.visibleNodes)
+    }
+    else if (k === "l") xray.openLogs()
     else if (k === "r") xray.updateSubscriptions()             // Ctrl+U/W stay text editing
     else if (k === "o") xray.openWebUi()
     else if (k === "a") root.focusSubUrl()
@@ -306,7 +313,7 @@ Panel {
   function startTypeAhead(t) {
     var search = nodeList.headerItem ? nodeList.headerItem.search : null
     if (!search) return
-    if (t !== "/") root.filterQuery = t
+    if (t !== "/") search.text = t          // the field's onTextChanged sets filterQuery
     search.forceActiveFocus()
     search.cursorPosition = search.text.length
   }
@@ -450,6 +457,7 @@ Panel {
           iconSize: Style.space(11)
           color: root.barIconColor
           filled: root.tunnelUp
+          half: xray.mode !== "tun"   // proxy covers only some apps
           warning: !xray.reachable || xray.errorText !== ""
           badgeColor: root.errorColor
           // ~11 s of a slow breath, then a still bright outline: a password
@@ -541,6 +549,7 @@ Panel {
               iconSize: Style.font.display
               color: root.tunnelUp ? root.onColor : hero.foreground
               filled: root.tunnelUp
+              half: xray.mode !== "tun"   // proxy covers only some apps
               warning: !xray.reachable
           badgeColor: root.errorColor
             }
@@ -548,7 +557,7 @@ Panel {
           trailingControl: Component {
             ToggleSwitch {
               id: powerSwitch
-              visible: !root.firstRun            // nothing to connect to yet
+              visible: !root.firstRun && xray.reachable   // nothing to connect to (yet)
               checked: root.onTarget
               busy: xray.toggleBusy
               opacity: xray.toggleBusy ? 0.5 : 1.0
@@ -606,7 +615,8 @@ Panel {
                              : statusRow.live ? "Download " + Model.formatSpeed(xray.traffic.downSpeed)
                                                 + ", upload " + Model.formatSpeed(xray.traffic.upSpeed)
                              : xray.connected ? "Measuring traffic" : "Not connected"
-            onTextChanged: if (statusRow.kind === "action" || statusRow.kind === "error") Accessible.announce(Accessible.name)
+            onTextChanged: if (statusRow.kind === "action" || statusRow.kind === "error")
+                             Accessible.announce(statusRow.kind === "error" ? "Error: " + xray.errorText : xray.actionStatus)
           }
 
           TextActionButton {
@@ -622,15 +632,16 @@ Panel {
         // away. Shown once the keyboard is used (and on first run); `?`
         // hides or shows them. Mouse users get the keys in tooltips.
         Column {
-          visible: root.firstRun || (xray.reachable && root.keysUsed && !root.legendHidden)
+          visible: root.firstRun || (xray.reachable && (root.keysUsed || root.keyboardUser) && !root.legendHidden)
           width: parent.width
           spacing: Style.space(4)
 
           Repeater {
             model: root.firstRun ? [["", "Enter adds the subscription · Esc twice closes"]]
-                   : [["MOVE", "j/k · h/l · Home switch · Enter · / filter"],
+                   : [["MOVE", root.filterFocused ? "↑/↓ nodes · Enter connect · Esc back to list"
+                                                  : "j/k · h/l · Enter apply · Home switch · ? hide"],
                       ["ACT", "Ctrl+C connect · Ctrl+T test · Ctrl+R update"],
-                      ["MANAGE", "Ctrl+A add sub · Ctrl+O config · ? hide"]]
+                      ["MANAGE", "Ctrl+A add sub · Ctrl+O config · Ctrl+L logs"]]
             delegate: RowLayout {
               required property var modelData
               width: parent ? parent.width : 0
@@ -837,32 +848,6 @@ Panel {
               wrapMode: Text.WordWrap
             }
 
-            // Keyboard users never see hover tooltips: the chip under the
-            // cursor explains itself here (and to a screen reader).
-            Text {
-              id: chipHint
-              textFormat: Text.PlainText
-              visible: text !== ""
-              width: parent.width
-              text: {
-                var r = root.cursorRow, c = root.chipIndex
-                if (r === "mode") return c === 1
-                  ? (xray.tunInstalled ? "TUN: all system traffic goes through the VPN"
-                                       : "TUN: all system traffic through the VPN · the first switch asks for your password")
-                  : "PROXY: apps that use the system proxy go through the VPN"
-                if (r === "route") return c === 0 ? "ALL: everything through the VPN except your local network"
-                  : c === 1 ? (root.routeRegion ? root.routeRegion.name + " sites go direct, the rest through the VPN"
-                                                : "DIRECT: one country's sites skip the VPN")
-                  : "Change the direct country"
-                return ""
-              }
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              wrapMode: Text.WordWrap
-              onTextChanged: if (text !== "") Accessible.announce(text)
-            }
-
             RowLayout {
               width: parent.width
               spacing: Style.space(8)
@@ -923,6 +908,36 @@ Panel {
                   fontFamily: root.fontFamily
                 }
               }
+            }
+
+            // Keyboard users never see hover tooltips: the chip under the
+            // cursor explains itself here (and to a screen reader). One fixed
+            // line below the settings, kept once the keyboard is in use, so
+            // no row moves when the cursor crosses them.
+            Text {
+              id: chipHint
+              textFormat: Text.PlainText
+              visible: (root.keysUsed || root.keyboardUser) && !root.firstRun
+              width: parent.width
+              text: {
+                var r = root.cursorRow, c = root.chipIndex
+                if (r === "mode") return c === 1
+                  ? (xray.tunInstalled ? "TUN: all system traffic through the VPN"
+                                       : "TUN: all traffic · the first switch asks a password")
+                  : "PROXY: apps using the system proxy"
+                if (r === "route") return c === 0 ? "ALL: everything through the VPN, LAN stays local"
+                  : c === 1 ? (root.routeRegion ? root.routeRegion.code.toUpperCase() + " sites go direct, the rest via VPN"
+                                                : "DIRECT: one country's sites skip the VPN")
+                  : "Change the direct country"
+                if (r === "ads") return xray.geo ? "ADBLOCK: known ad and tracker domains" : "ADBLOCK needs the geo data packages"
+                if (r === "hero") return xray.connected ? "Enter disconnects" : "Enter connects"
+                return " "                                // keeps the line's height
+              }
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              elide: Text.ElideRight
+              onTextChanged: if (text.trim() !== "") Accessible.announce(text)
             }
           }
 
@@ -991,24 +1006,23 @@ Panel {
                     event.accepted = true
                     return
                   }
+                  // Esc clears and hands the keys back to the list (a second
+                  // Esc there closes); Enter connects and does the same
                   if (event.key === Qt.Key_Escape) {
-                    if (text !== "") text = ""
-                    else root.close()
+                    text = ""
+                    keyCatcher.forceActiveFocus()
                     event.accepted = true
                     return
                   }
-                  if (event.key === Qt.Key_Down) {
-                    root.moveNodeCursor(1)
-                    event.accepted = true
-                    return
-                  }
-                  if (event.key === Qt.Key_Up) {
-                    root.moveNodeCursor(-1)
+                  if (event.key === Qt.Key_Down || event.key === Qt.Key_Up) {
+                    if (!root.cursorActive) root.cursorActive = true      // show it on the first node
+                    else root.moveNodeCursor(event.key === Qt.Key_Down ? 1 : -1)
                     event.accepted = true
                     return
                   }
                   if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                     root.activateCursor()
+                    keyCatcher.forceActiveFocus()
                     event.accepted = true
                   }
                 }
@@ -1228,6 +1242,7 @@ Panel {
                     Layout.preferredWidth: Math.ceil(confirmMetrics.advanceWidth) + 2 * Style.spacing.controlPaddingX
                     label: armed ? "Confirm" : "Remove"
                     a11yName: (armed ? "Confirm removing " : "Remove ") + (subRow.sub.title || subRow.sub.host)
+                    onArmedChanged: if (armed) Accessible.announce("Press again to remove " + (subRow.sub.title || subRow.sub.host))
                     // armed reads as a state, not only as a different word
                     bordered: armed
                     selected: armed

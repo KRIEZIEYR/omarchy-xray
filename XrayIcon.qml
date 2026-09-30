@@ -15,6 +15,8 @@ Item {
   // Connected state by shape, not hue: a solid shield with the V cut out
   // stays distinct in monochrome themes where "on" and "off" share a grey.
   property bool filled: false
+  // proxy mode protects only apps that use the system proxy: half a shield
+  property bool half: false
   property color badgeColor: Color.urgent
 
   width: iconSize
@@ -39,28 +41,39 @@ Item {
       ctx.lineJoin = "round"
       ctx.lineCap = "round"
 
-      // Shield outline
-      ctx.beginPath()
-      ctx.moveTo(0.16 * w, 0.18 * h)
-      ctx.lineTo(0.84 * w, 0.18 * h)
-      ctx.lineTo(0.84 * w, 0.46 * h)
-      ctx.quadraticCurveTo(0.84 * w, 0.72 * h, 0.5 * w, 0.9 * h)
-      ctx.quadraticCurveTo(0.16 * w, 0.72 * h, 0.16 * w, 0.46 * h)
-      ctx.closePath()
-      ctx.stroke()
-      if (root.filled) {
-        ctx.fillStyle = root.color
-        ctx.fill()
-        ctx.globalCompositeOperation = "destination-out"
+      function shield() {
+        ctx.beginPath()
+        ctx.moveTo(0.16 * w, 0.18 * h)
+        ctx.lineTo(0.84 * w, 0.18 * h)
+        ctx.lineTo(0.84 * w, 0.46 * h)
+        ctx.quadraticCurveTo(0.84 * w, 0.72 * h, 0.5 * w, 0.9 * h)
+        ctx.quadraticCurveTo(0.16 * w, 0.72 * h, 0.16 * w, 0.46 * h)
+        ctx.closePath()
+      }
+      function vee() {
+        ctx.beginPath()
+        ctx.moveTo(0.35 * w, 0.34 * h)
+        ctx.lineTo(0.5 * w, 0.64 * h)
+        ctx.lineTo(0.65 * w, 0.34 * h)
+      }
+      // the filled part: all of it, or the lower half
+      function fillArea() {
+        if (!root.half) return
+        ctx.beginPath()
+        ctx.rect(0, 0.5 * h, w, h)
+        ctx.clip()
       }
 
-      // The V
-      ctx.beginPath()
-      ctx.moveTo(0.35 * w, 0.34 * h)
-      ctx.lineTo(0.5 * w, 0.64 * h)
-      ctx.lineTo(0.65 * w, 0.34 * h)
+      shield()
       ctx.stroke()
-      ctx.globalCompositeOperation = "source-over"
+      if (root.filled) {
+        ctx.save(); fillArea(); shield(); ctx.fillStyle = root.color; ctx.fill(); ctx.restore()
+      }
+      // the V: drawn where the shield is empty, cut out where it is filled
+      if (!root.filled || root.half) { vee(); ctx.stroke() }
+      if (root.filled) {
+        ctx.save(); fillArea(); ctx.globalCompositeOperation = "destination-out"; vee(); ctx.stroke(); ctx.restore()
+      }
     }
 
     onWidthChanged: canvas.requestPaint()
@@ -71,6 +84,7 @@ Item {
     target: root
     function onColorChanged() { canvas.requestPaint() }
     function onFilledChanged() { canvas.requestPaint() }
+    function onHalfChanged() { canvas.requestPaint() }
   }
 
   BorderSurface {

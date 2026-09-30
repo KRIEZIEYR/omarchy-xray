@@ -101,7 +101,7 @@ module.exports = function ({ Xray, assert, eq }) {
     const ta = Xray.groupsFromStatus(Object.assign({}, status, { connectedKey: 'auto' }), 1000, NOW)
     eq('hero auto', Xray.heroLine({ touch: ta, autoPick: 'DE' }), 'Connected · Auto → DE')
     const off = Xray.groupsFromStatus(Object.assign({}, status, { running: false }), 1000, NOW)
-    eq('hero disconnected', Xray.heroLine({ touch: off }), 'Disconnected')
+    eq('hero disconnected', Xray.heroLine({ touch: off }), 'Off')
   }
   eq('hero unreachable', Xray.heroLine({ unreachable: true }), 'Xray manager unreachable')
   eq('hero checking', Xray.heroLine({}), 'Checking…')
@@ -117,11 +117,12 @@ module.exports = function ({ Xray, assert, eq }) {
     eq('title auto', Xray.heroTitle({ touch: ta }), 'Auto — best ping')
     const off = Xray.groupsFromStatus(Object.assign({}, status, { running: false }), 1000, NOW)
     eq('title off', Xray.heroTitle({ touch: off }), 'Off')
-    eq('state off', Xray.heroState({ touch: off }), 'Disconnected · proxy')
-    eq('state off tun', Xray.heroState({ touch: off, mode: 'tun' }), 'Disconnected · TUN')
+    eq('state off', Xray.heroState({ touch: off }), 'proxy')
+    eq('state off tun', Xray.heroState({ touch: off, mode: 'tun' }), 'TUN')
     eq('title off with target', Xray.heroTitle({ touch: off, target: 'DE' }), 'Off')
     eq('title while connecting', Xray.heroTitle({ touch: off, target: 'DE', pending: 'connecting' }), 'DE')
-    eq('state off names target', Xray.heroState({ touch: off, target: 'DE', mode: 'tun' }), '→ DE · TUN')
+    eq('state off names target', Xray.heroState({ touch: off, target: 'DE', mode: 'tun' }), 'TUN → DE')
+    eq('state skipped nodes', Xray.heroState({ touch: { nodes: [], connectedKeys: {} }, hasSubs: true }), 'No usable nodes · see below')
   }
   eq('state unreachable', Xray.heroState({ unreachable: true }), 'Manager unreachable')
   eq('state checking', Xray.heroState({}), 'Checking…')
@@ -130,7 +131,7 @@ module.exports = function ({ Xray, assert, eq }) {
   eq('state no subscription', Xray.heroState({ touch: { nodes: [], connectedKeys: {} } }), 'No subscription yet')
   eq('state connecting', Xray.heroState({ touch: { nodes: [], connectedKeys: {} }, pending: 'connecting' }), 'Connecting…')
   eq('state disconnecting', Xray.heroState({ touch: { nodes: [], connectedKeys: {} }, pending: 'disconnecting' }), 'Disconnecting…')
-  eq('state unknown pending ignored', Xray.heroState({ touch: { nodes: [{ key: 'k' }], connectedKeys: {} }, pending: 'x' }), 'Disconnected · proxy')
+  eq('state unknown pending ignored', Xray.heroState({ touch: { nodes: [{ key: 'k' }], connectedKeys: {} }, pending: 'x' }), 'proxy')
 
   /* ---- names are tidied; the fastest measured node is known ---- */
   {

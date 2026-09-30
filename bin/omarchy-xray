@@ -426,7 +426,10 @@ def t2s_unit_text():
             "[Service]\n"
             "ExecStartPre=%(sc)s start --no-ask-password %(tun)s\n"
             "ExecStart=%(self)s tun-run\n"
-            "ExecStopPost=-%(sc)s stop --no-ask-password %(tun)s\n"
+            # A crash keeps the root unit, so traffic stays in xray0 (blocked)
+            # while systemd restarts tun2socks; only a deliberate stop - off,
+            # a switch to proxy - removes the device and its routes.
+            "ExecStopPost=-/bin/sh -c '[ \"$$SERVICE_RESULT\" = success ] && exec %(sc)s stop --no-ask-password %(tun)s'\n"
             "NoNewPrivileges=true\n"
             "Restart=on-failure\n"
             "RestartSec=3\n\n"
@@ -1995,6 +1998,8 @@ def cmd_test(keys):
     # active tunnel (unprivileged SO_BINDTODEVICE, Linux >= 5.7).
     iface = default_dev() if tun_active() else None
     rundir = runtime_dir()
+    progress = pathlib.Path(rundir) / "test-progress.json"
+    done = 0
     lat = load_json(LAT, {})
     ids = {n["id"] for n in st["nodes"]}
     lat = {k: v for k, v in lat.items() if k in ids}
@@ -2020,7 +2025,15 @@ def cmd_test(keys):
             for n, r in zip(batch, res):
                 lat[n["id"]] = r
                 print("%-32s %s" % (n["name"][:32], r), file=sys.stderr)
+            done += len(batch)
+            _cfg_dir()
+            atomic_write(LAT, json.dumps({k: str(v)[:32] for k, v in lat.items()}), 0o600)
+            atomic_write(progress, json.dumps({"done": done, "total": len(nodes)}), 0o600)
     finally:
+        try:
+            progress.unlink()
+        except OSError:
+            pass
         signal.signal(signal.SIGTERM, old[0])
         signal.signal(signal.SIGINT, old[1])
         _kill_all()
@@ -2078,6 +2091,11 @@ def net_label(n):
     return "/".join(parts)[:64]
 
 
+def _test_progress():
+    p = load_json(pathlib.Path(runtime_dir()) / "test-progress.json", {})
+    return p if isinstance(p.get("done"), int) and isinstance(p.get("total"), int) else None
+
+
 def cmd_status():
     st = load_state()
     lat = load_json(LAT, {})
@@ -2132,6 +2150,9 @@ def cmd_status():
         "geo": asset_dir() is not None,
         "xray": os.path.isfile(XRAY),
         "tunInstalled": tun_installed(),
+        # off disables the units; a crash leaves them enabled - that is a drop
+        "wanted": uctl("is-enabled", SERVICE).stdout.strip() == "enabled",
+        "testProgress": _test_progress(),
         "hasUrl": bool(st["subs"]),
         "subs": subs,
         "skipped": st["skipped"],

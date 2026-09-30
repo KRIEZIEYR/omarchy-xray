@@ -243,8 +243,8 @@ function heroLine(state) {
     if (n.key === "auto") return "Connected" + mode + " · Auto" + (state.autoPick ? " → " + state.autoPick : "")
     return "Connected" + mode + " · " + n.name
   }
-  if (t.running) return "Ready · not connected"
-  return "Disconnected"
+  if (t.running) return "Off · xray running"
+  return "Off"
 }
 
 // Panel hero: the exit you are on leads; the state is a short caption.
@@ -273,7 +273,8 @@ function heroState(state) {
   var mode = state.mode === "tun" ? "TUN" : "proxy"
   // proxy mode only covers apps that use the system proxy: say so every time
   if (connectedNode(t)) return state.mode === "tun" ? "Connected · TUN" : "Connected · system-proxy apps"
-  if (!t.nodes || t.nodes.length === 0) return "No subscription yet"
-  if (t.running) return "Ready · not connected"
-  return state.target ? "→ " + state.target + " · " + mode : "Disconnected · " + mode
+  if (!t.nodes || t.nodes.length === 0) return state.hasSubs ? "No usable nodes · see below" : "No subscription yet"
+  if (t.running) return "Off · xray running"
+  // the mode leads: a long node name is what gets cut, never the mode
+  return state.target ? mode + " → " + state.target : mode
 }

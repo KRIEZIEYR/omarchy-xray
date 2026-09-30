@@ -580,8 +580,9 @@ class TunInstall(Base):
         self.assertIn("ExecStartPre=%s start --no-ask-password omarchy-xray-tun.service\n"
                       % M.SYSTEMCTL, t)
         self.assertIn("ExecStart=%s tun-run\n" % M.SELF, t)
-        self.assertIn("ExecStopPost=-%s stop --no-ask-password omarchy-xray-tun.service\n"
-                      % M.SYSTEMCTL, t)
+        # kill switch: only a successful (deliberate) stop removes the device
+        self.assertIn("ExecStopPost=-/bin/sh -c '[ \"$$SERVICE_RESULT\" = success ] && exec %s stop "
+                      "--no-ask-password omarchy-xray-tun.service'\n" % M.SYSTEMCTL, t)
         self.assertIn("NoNewPrivileges=true\n", t)
 
     def test_polkit_rule_scope(self):
