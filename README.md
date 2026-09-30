@@ -195,9 +195,16 @@ prompt, or `sudo omarchy-xray tun-install` from a terminal:
 | `/etc/systemd/system/omarchy-xray-tun.service` | root **oneshot** that runs only `ip`, `udevadm` and `resolvectl` with fixed arguments: creates `xray0` owned by your uid (`ip tuntap add … user <uid>`), `198.18.0.1/30` (+ a ULA /126), routes (below) and resolved DNS for `xray0`; stopping it deletes the device and its rules. Ownership is explicit: `xray0` carries the alias `omarchy-xray` and only a device with it is ever deleted, a foreign `xray0` makes the start refuse (preflight), a failed start rolls back through the same cleanup, and rules are removed by their exact spec (pref + selector + table), never by number alone; `sh` appears only to wrap two such `ip` checks. `CapabilityBoundingSet=CAP_NET_ADMIN`, `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome` and more |
 | `/etc/polkit-1/rules.d/49-omarchy-xray.rules` | lets **only your user** `start`/`stop`/`restart` **only that unit** without a password |
 | `/etc/systemd/network/10-omarchy-xray.network` | only if systemd-networkd is active: keeps networkd away from `xray0` |
+| `/var/lib/omarchy-xray/tun-install.json` | the record: your uid and the SHA-256 of each file above as written |
 
 The setup reads nothing but your uid (from `PKEXEC_UID`/`SUDO_UID`) and
 writes its files all-or-nothing (a failed write restores the previous ones).
+It replaces or removes only files it wrote for you and that are unchanged
+since — per the record, or byte-identical to what it would write for you
+(installs from before the record). Before any stop, write or delete it checks
+every file: another user's setup, or a foreign, locally changed or symlinked
+file, makes setup refuse with nothing changed. `tun-remove` refuses on a
+foreign unit and otherwise keeps (and names) any foreign or changed file.
 No third-party binary ever runs as root or with capabilities, so there is
 nothing to pin or re-attest after an xray or tun2socks update. This script is
 never run as root again. No setcap, no sudoers. Undo with
@@ -292,7 +299,7 @@ Run `omarchy-xray restart` after editing.
 
 - Xray and tun2socks never run as root or with a capability, in either mode.
   TUN mode is opt-in; its one-time setup is the only privileged step and
-  installs the three files above — root afterwards runs only `ip`, `udevadm`
+  installs the files above and records them — root afterwards runs only `ip`, `udevadm`
   and `resolvectl` with fixed arguments (plus `sh` wrapping two `ip` ownership checks); the polkit rule is scoped to one
   user, one unit and three verbs. No setcap, no sudoers.
 - The manager refuses to run as root except for `tun-install`/`tun-uninstall`,
