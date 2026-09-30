@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 import urllib.parse
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -631,6 +632,110 @@ class TunInstall(Base):
         finally:
             os.chmod(rules, 0o755)
             M.SYS_UNIT, M.POLKIT_RULE = saved
+
+
+class TunOwnership(Base):
+    """tun-install/tun-uninstall touch only what they wrote for this user."""
+
+    def setUp(self):
+        super().setUp()
+        saved = {k: getattr(M, k) for k in ("SYS_UNIT", "POLKIT_RULE", "NETWORKD_FILE",
+                                              "TUN_RECORD", "ROOT", "sh")}
+        self.addCleanup(lambda: [setattr(M, k, v) for k, v in saved.items()])
+        etc = self.tmp / "etc"
+        M.SYS_UNIT = etc / "system" / M.TUN_SERVICE
+        M.POLKIT_RULE = etc / "rules.d" / "49-omarchy-xray.rules"
+        M.NETWORKD_FILE = etc / "network" / "10-omarchy-xray.network"
+        M.TUN_RECORD = self.tmp / "var" / "tun-install.json"
+        M.ROOT = os.getuid()                       # "root" is us: the files stay in tmp
+        self.calls = []
+
+        def fake_sh(*cmd, **kw):                   # never touch the real systemd
+            self.calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "inactive\n", "")
+        M.sh = fake_sh
+        os.environ["SUDO_UID"] = str(os.getuid())
+        self.addCleanup(os.environ.pop, "SUDO_UID", None)
+        chown = unittest.mock.patch("os.chown")
+        chown.start()
+        self.addCleanup(chown.stop)
+
+    def run_json(self, fn):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            fn()
+        return json.loads(buf.getvalue().strip().splitlines()[-1])
+
+    def stops(self):
+        return [c for c in self.calls if "stop" in c]
+
+    def test_install_records_what_it_wrote_and_reinstalls(self):
+        self.run_json(M.cmd_tun_install)
+        rec = json.loads(M.TUN_RECORD.read_text())
+        self.assertEqual(rec["uid"], os.getuid())
+        for path in (M.SYS_UNIT, M.POLKIT_RULE):
+            self.assertEqual(rec["files"][str(path)], M._sha(path.read_text()))
+        self.assertFalse(M.NETWORKD_FILE.exists())         # networkd inactive
+        self.run_json(M.cmd_tun_install)                    # ours: replaced again
+        self.assertEqual(len(self.stops()), 2)
+
+    def test_install_refuses_foreign_changed_or_linked_files(self):
+        M.SYS_UNIT.parent.mkdir(parents=True)
+        M.SYS_UNIT.write_text("[Service]\nExecStart=/usr/bin/true\n")   # someone else's unit
+        with self.assertRaises(SystemExit):
+            self.run_json(M.cmd_tun_install)
+        self.assertEqual(M.SYS_UNIT.read_text(), "[Service]\nExecStart=/usr/bin/true\n")
+        self.assertFalse(M.TUN_RECORD.exists())
+        self.assertEqual(self.stops(), [])                  # not even stopped
+        M.SYS_UNIT.unlink()
+        self.run_json(M.cmd_tun_install)
+        M.POLKIT_RULE.write_text(M.POLKIT_RULE.read_text() + "// local edit\n")
+        with self.assertRaises(SystemExit):
+            self.run_json(M.cmd_tun_install)                 # changed since we wrote it
+        self.assertTrue(M.POLKIT_RULE.read_text().endswith("// local edit\n"))
+        M.POLKIT_RULE.unlink()
+        M.POLKIT_RULE.symlink_to(self.tmp / "elsewhere")
+        with self.assertRaises(SystemExit):
+            self.run_json(M.cmd_tun_install)
+        self.assertTrue(M.POLKIT_RULE.is_symlink())
+
+    def test_another_users_setup_is_left_alone(self):
+        self.run_json(M.cmd_tun_install)
+        rec = json.loads(M.TUN_RECORD.read_text())
+        rec["uid"] += 1
+        M.TUN_RECORD.write_text(json.dumps(rec))
+        before = M.SYS_UNIT.read_text()
+        for fn in (M.cmd_tun_install, M.cmd_tun_uninstall):
+            with self.subTest(fn=fn.__name__), self.assertRaises(SystemExit):
+                self.run_json(fn)
+        self.assertEqual(M.SYS_UNIT.read_text(), before)
+
+    def test_uninstall_removes_only_what_is_ours(self):
+        self.run_json(M.cmd_tun_install)
+        M.NETWORKD_FILE.parent.mkdir(parents=True)
+        M.NETWORKD_FILE.write_text("[Match]\nName=other0\n")          # not ours
+        res = self.run_json(M.cmd_tun_uninstall)
+        self.assertEqual(sorted(res["removed"]), sorted([str(M.SYS_UNIT), str(M.POLKIT_RULE)]))
+        self.assertEqual(res["kept"], [str(M.NETWORKD_FILE)])
+        self.assertTrue(M.NETWORKD_FILE.exists())
+        self.assertFalse(M.TUN_RECORD.exists())
+
+    def test_uninstall_refuses_a_foreign_unit(self):
+        self.run_json(M.cmd_tun_install)
+        M.SYS_UNIT.write_text("[Service]\nExecStart=/usr/bin/true\n")
+        with self.assertRaises(SystemExit):
+            self.run_json(M.cmd_tun_uninstall)
+        self.assertTrue(M.SYS_UNIT.exists() and M.POLKIT_RULE.exists())
+        self.assertEqual(len(self.stops()), 1)             # install's stop only
+
+    def test_setup_without_a_record_adopts_identical_files(self):
+        # installs from before the record existed: identical content is ours
+        self.run_json(M.cmd_tun_install)
+        M.TUN_RECORD.unlink()
+        self.run_json(M.cmd_tun_install)
+        M.TUN_RECORD.unlink()
+        res = self.run_json(M.cmd_tun_uninstall)
+        self.assertEqual(len(res["removed"]), 2)
 
 
 class Hardening(Base):

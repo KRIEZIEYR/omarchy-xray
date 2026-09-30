@@ -72,6 +72,10 @@ T2S_UNIT = UNIT_DIR / T2S_SERVICE
 SYS_UNIT = pathlib.Path("/etc/systemd/system") / TUN_SERVICE
 POLKIT_RULE = pathlib.Path("/etc/polkit-1/rules.d/49-omarchy-xray.rules")
 NETWORKD_FILE = pathlib.Path("/etc/systemd/network/10-omarchy-xray.network")
+# What tun-install wrote and for whom (root-owned): the only files it may
+# later replace or delete are these, unchanged since.
+TUN_RECORD = pathlib.Path("/var/lib/omarchy-xray/tun-install.json")
+ROOT = 0                          # owner of everything tun-install writes
 OMARCHY_SHELL = "/usr/share/omarchy/shell"
 OMARCHY_POLKIT = pathlib.Path(OMARCHY_SHELL, "plugins/polkit/manifest.json")
 
@@ -2375,7 +2379,7 @@ def _invoking_user():
 def _root_write(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(path, text, 0o644)
-    os.chown(path, 0, 0)
+    os.chown(path, ROOT, ROOT)
 
 
 def _root_write_all(pairs):
@@ -2398,20 +2402,78 @@ def _root_write_all(pairs):
         die("TUN setup failed writing %s (%s) — previous state restored" % (path, e.strerror or e))
 
 
+def _sha(text):
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def _tun_record():
+    """{"uid", "user", "files": {path: sha256}} from the last tun-install, or
+    {} when there is none. Only a root-owned regular file counts."""
+    try:
+        text = read_nofollow(TUN_RECORD, 65536)
+        if text is None or os.lstat(TUN_RECORD).st_uid != ROOT:
+            return {}
+        rec = json.loads(text)
+    except (ValueError, OSError):
+        return {}
+    ok = isinstance(rec, dict) and isinstance(rec.get("uid"), int) and isinstance(rec.get("files"), dict)
+    return rec if ok else {}
+
+
+def _managed(pw):
+    """(path, text) of every file tun-install writes for this user; the unit
+    is None when a system tool is missing (it cannot be generated)."""
+    ip, udevadm, resolvectl = tool("ip"), tool("udevadm"), tool("resolvectl")
+    unit = tun_unit_text(pw.pw_uid, ip, udevadm, resolvectl) if ip else None
+    return [(SYS_UNIT, unit), (POLKIT_RULE, polkit_rule_text(pw.pw_name)), (NETWORKD_FILE, NETWORKD_TEXT)]
+
+
+def _ours(path, text, rec, uid):
+    """May root replace or delete `path`? Only when it is absent, byte-for-byte
+    what tun-install writes for this user, or exactly what the record says we
+    wrote for this user. A link, a changed file or another user's is foreign."""
+    try:
+        cur = read_nofollow(path, 1024 * 1024)
+    except ValueError:
+        return False
+    if cur is None:
+        return True
+    if text is not None and cur == text:
+        return True
+    return rec.get("uid") == uid and rec["files"].get(str(path)) == _sha(cur)
+
+
+def _foreign(pw, paths):
+    """Paths among `paths` that are not ours, after refusing another user's setup."""
+    rec = _tun_record()
+    if rec and rec["uid"] != pw.pw_uid:
+        die("TUN mode is set up for another user (%s) — run tun-remove as that user first; nothing was changed"
+            % str(rec.get("user") or rec["uid"])[:32])
+    return rec, [str(p) for p, t in _managed(pw) if p in paths and not _ours(p, t, rec, pw.pw_uid)]
+
+
 def cmd_tun_install():
     """[root] Write the TUN system unit, the polkit rule and (with networkd)
-    an Unmanaged drop-in. Inputs: the invoking uid only; no user files read."""
-    if os.geteuid() != 0:
+    an Unmanaged drop-in, plus a record of them. Inputs: the invoking uid only;
+    no user files read. Refuses to replace anything it did not write."""
+    if os.geteuid() != ROOT:
         die("tun-install must run as root — use: omarchy-xray tun-setup")
     pw = _invoking_user()
-    ip, udevadm, resolvectl = tool("ip"), tool("udevadm"), tool("resolvectl")
-    if not ip:
+    managed = dict(_managed(pw))
+    if managed[SYS_UNIT] is None:
         die("ip (iproute2) not found")
     networkd = sh(SYSTEMCTL, "is-active", "systemd-networkd").stdout.strip() == "active"
-    sh(SYSTEMCTL, "stop", TUN_SERVICE)       # a running unit (a v3.0 one runs xray)
-    _root_write_all([(SYS_UNIT, tun_unit_text(pw.pw_uid, ip, udevadm, resolvectl)),
-                     (POLKIT_RULE, polkit_rule_text(pw.pw_name))]
-                    + ([(NETWORKD_FILE, NETWORKD_TEXT)] if networkd else []))
+    want = [SYS_UNIT, POLKIT_RULE] + ([NETWORKD_FILE] if networkd else [])
+    rec, foreign = _foreign(pw, want)
+    if foreign:
+        die("refusing to replace %s: not written by omarchy-xray for %s, or changed since — "
+            "review and remove it yourself, then run tun-setup again; nothing was changed"
+            % (", ".join(foreign), pw.pw_name))
+    sh(SYSTEMCTL, "stop", TUN_SERVICE)       # ours (or absent): a running old unit
+    files = {k: v for k, v in rec.get("files", {}).items() if pathlib.Path(k).exists()}
+    files.update({str(p): _sha(managed[p]) for p in want})
+    record = json.dumps({"uid": pw.pw_uid, "user": pw.pw_name, "files": files}, indent=1) + "\n"
+    _root_write_all([(p, managed[p]) for p in want] + [(TUN_RECORD, record)])
     if networkd:
         nc = tool("networkctl")
         if nc:
@@ -2422,20 +2484,33 @@ def cmd_tun_install():
 
 
 def cmd_tun_uninstall():
-    if os.geteuid() != 0:
+    """[root] Remove what tun-install wrote for the invoking user. A foreign or
+    changed unit stops everything; other foreign or changed files are kept."""
+    if os.geteuid() != ROOT:
         die("tun-uninstall must run as root — use: omarchy-xray tun-remove")
-    sh(SYSTEMCTL, "stop", TUN_SERVICE)
-    removed = []
-    for p in (SYS_UNIT, POLKIT_RULE, NETWORKD_FILE):
-        try:
+    pw = _invoking_user()
+    paths = (SYS_UNIT, POLKIT_RULE, NETWORKD_FILE)
+    _, foreign = _foreign(pw, paths)
+    if str(SYS_UNIT) in foreign:
+        die("refusing: %s was not written by omarchy-xray for %s, or changed since — nothing was removed"
+            % (SYS_UNIT, pw.pw_name))
+    if SYS_UNIT.exists():
+        sh(SYSTEMCTL, "stop", TUN_SERVICE)
+    removed, kept = [], []
+    for p in paths:
+        if str(p) in foreign:
+            kept.append(str(p))
+        elif os.path.lexists(p):
             p.unlink()
             removed.append(str(p))
-        except FileNotFoundError:
-            pass
+    try:
+        TUN_RECORD.unlink()                    # whatever was kept is not ours any more
+    except FileNotFoundError:
+        pass
     sh(SYSTEMCTL, "daemon-reload")
     if str(NETWORKD_FILE) in removed and tool("networkctl"):
         sh(tool("networkctl"), "reload")
-    out({"ok": True, "removed": removed})
+    out({"ok": True, "removed": removed, "kept": kept})
 
 
 def _escalate(verb):
@@ -2451,6 +2526,15 @@ def _escalate(verb):
     return r.returncode, r.stdout, r.stderr
 
 
+def _escalated_error(rc, so, se):
+    """Why the privileged half failed: its JSON error, else stderr's tail."""
+    try:
+        msg = json.loads(so.strip().splitlines()[-1]).get("error", "")
+    except Exception:
+        msg = _last_lines(se, n=2)
+    return msg or {127: "not authorized, or no password prompt available"}.get(rc, "exit %d" % rc)
+
+
 def cmd_tun_setup():
     if not T2S:
         die(T2S_HINT)
@@ -2458,14 +2542,8 @@ def cmd_tun_setup():
     if rc == 126:
         die("TUN setup cancelled: nothing was changed")
     if rc != 0:
-        reason = {127: "not authorized, or no password prompt available"}.get(rc, "")
-        msg = ""
-        try:
-            msg = json.loads(so.strip().splitlines()[-1]).get("error", "")
-        except Exception:
-            msg = _last_lines(se, n=2)
         die("TUN setup failed (%s). Run it in a terminal instead: sudo %s tun-install"
-            % (msg or reason or "exit %d" % rc, SELF))
+            % (_escalated_error(rc, so, se), SELF))
     write_user_units()
     out({"ok": True, "tunInstalled": tun_installed()})
 
@@ -2475,7 +2553,8 @@ def _tun_remove(st):
         stop_service()
     rc, so, se = _escalate("tun-uninstall")
     if rc != 0:
-        die("TUN removal failed — run manually: sudo %s tun-uninstall" % SELF)
+        die("TUN removal failed (%s) — run manually: sudo %s tun-uninstall"
+            % (_escalated_error(rc, so, se), SELF))
     uctl("disable", T2S_SERVICE)
     if st["mode"] == "tun":
         st["mode"] = "proxy"
