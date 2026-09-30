@@ -944,7 +944,7 @@ Panel {
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
               elide: Text.ElideRight
-              onTextChanged: if (text.trim() !== "") Accessible.announce(text)
+              onTextChanged: function() { if (text.trim() !== "") Accessible.announce(text) }
             }
           }
 
@@ -1168,7 +1168,7 @@ Panel {
               visible: root.subsShown && xray.importNote !== ""
               width: parent.width
               text: xray.importNote
-              onTextChanged: if (text !== "") Accessible.announce(text)
+              onTextChanged: function() { if (text !== "") Accessible.announce(text) }
               color: xray.importing ? root.dim : root.errorColor
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
