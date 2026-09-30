@@ -97,7 +97,8 @@ Panel {
   function chipCount(row) {
     return row === "mode" ? 2 : row === "route" ? 3
          : row === "regions" ? xray.regions.length
-         : row === "subs" ? (xray.subs.length > 0 ? 2 : 1) : row === "sub" ? 2 : 1
+         : row === "subs" ? (xray.subs.length > 0 ? 2 : 1)
+         : row === "sub" ? (xray.subs[cursorSub] && xray.subs[cursorSub].local ? 1 : 2) : 1
   }
 
   function currentChip(row) {
@@ -127,7 +128,8 @@ Panel {
     else if (r === "ads") { if (xray.geo || xray.adblock) xray.setAdblock(!xray.adblock) }
     else if (r === "subs") { if (chipIndex === 0) xray.openWebUi(); else xray.updateSubscriptions() }
     else if (r === "sub" && xray.subs[cursorSub]) {
-      if (chipIndex === 0) xray.updateSub(xray.subs[cursorSub].index)
+      // the Manual group has no Update: its only chip is Remove
+      if (chipIndex === 0 && !xray.subs[cursorSub].local) xray.updateSub(xray.subs[cursorSub].index)
       else armRemove(cursorSub)
     }
   }
@@ -590,7 +592,7 @@ Panel {
                 visible: powerSwitch.containsMouse
                 text: xray.blocked ? "Turn off: lifts the kill switch, traffic goes direct"
                       : xray.connected ? "Disconnect"
-                      : xray.connectTarget ? "Connect to " + xray.connectTarget.name + " (Ctrl+C)" : "Add a subscription first"
+                      : xray.connectTarget ? "Connect to " + xray.connectTarget.name + " (Ctrl+C)" : "Add a subscription or a server first"
                 fontFamily: root.fontFamily
               }
             }
@@ -654,7 +656,7 @@ Panel {
           spacing: Style.space(4)
 
           Repeater {
-            model: root.firstRun ? [["", "Enter adds the subscription · Esc twice closes"]]
+            model: root.firstRun ? [["", "Enter adds it · Esc twice closes"]]
                    : root.filterFocused ? [["FILTER", "↑/↓ · Enter connect · Ctrl+T test · Esc clear"]]
                    : root.urlFocused ? [["URL", "Enter adds it · Esc back to the list"]]
                    : [["MOVE", "j/k · h/l · Enter apply · Home switch · ? hide"],
@@ -1050,8 +1052,8 @@ Panel {
               width: parent.width
               text: xray.touch === null ? "Loading…"
                     : root.filterQuery !== "" ? "No nodes match “" + root.filterQuery + "” — Esc clears the filter"
-                    : root.firstRun ? "Paste the subscription URL from your VPN provider below."
-                    : "No nodes yet — add a subscription URL below."
+                    : root.firstRun ? "Paste your subscription URL below, or a single server: a vless://, vmess://, trojan://, ss:// or hysteria2:// link, or its Xray JSON config."
+                    : "No nodes yet — add a subscription, a link or Xray JSON below."
               wrapMode: Text.WordWrap
               color: root.dim
               font.family: root.fontFamily
@@ -1143,10 +1145,10 @@ Panel {
               RowField {
                 id: subUrlField
                 icon: "󰌹"
-                Accessible.name: "Subscription URL"
+                Accessible.name: "Subscription URL, server link or Xray JSON"
                 Layout.fillWidth: true
                 foreground: root.foreground
-                placeholderText: "Paste a subscription URL (https://…)"
+                placeholderText: "Subscription URL, vless:// link or Xray JSON"
                 onAccepted: if (text.trim() !== "") root.importSub()
                 onTextChanged: if (!xray.importing) xray.importNote = ""
                 Keys.onEscapePressed: function(event) {
@@ -1235,6 +1237,7 @@ Panel {
                   }
 
                   TextActionButton {
+                    visible: !subRow.sub.local            // Manual: nothing to download
                     label: "Update"
                     a11yName: "Update " + (subRow.sub.title || subRow.sub.host)
                     tooltip: "Download this subscription again"
@@ -1256,9 +1259,10 @@ Panel {
                     selected: armed
                     tint: armed ? root.errorColor : root.foreground
                     tooltip: armed ? "Click again to remove " + (subRow.sub.title || subRow.sub.host) + " and its nodes"
+                                   : subRow.sub.local ? "Remove every server added by hand"
                                    : "Remove this subscription and its nodes"
                     enabled: !xray.busy
-                    hasCursor: root.cursorSub === subRow.index && root.chipIndex === 1
+                    hasCursor: root.cursorSub === subRow.index && root.chipIndex === (subRow.sub.local ? 0 : 1)
                     onClicked: root.armRemove(subRow.index)
                   }
                 }

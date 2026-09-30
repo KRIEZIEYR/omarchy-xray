@@ -3,9 +3,11 @@
 
 Subcommands (run as your user; the manager refuses to run as root except for
 the two explicit TUN install steps):
-  import [-]         add a subscription and fetch nodes. The URL is read from
-                     $OMARCHY_XRAY_SUB_URL or stdin when the arg is "-", so
-                     secrets never appear in argv.
+  import [-]         add a subscription (https:// URL) or servers (share links
+                     such as vless:// or ss://, or Xray JSON: a config, a list
+                     of configs or one outbound) to the "Manual" group. The
+                     text is read from $OMARCHY_XRAY_SUB_URL or stdin when the
+                     arg is "-", so secrets never appear in argv.
   subremove <key>    remove a subscription by index or host
   update [index]     re-fetch every subscription (or one), rebuild config
   select <key>       switch node: node key (k…), n<index>, "auto" or a name
@@ -150,6 +152,7 @@ MAX_REDIRECTS = 5
 MAX_LINKS = 5000                  # lines scanned per subscription body
 MAX_LINE = 16384                  # chars per link line (ML-KEM keys are long)
 MAX_URL_LEN = 2048
+MAX_PASTE = 120 * 1024            # pasted links/JSON (fits one environment string)
 MAX_SUBS = 64
 MAX_NODES = 2000                  # total nodes kept across all subscriptions
 MAX_STR = 256                     # per-string node-field bound
@@ -479,7 +482,8 @@ def load_state():
     for s in st.get("subs", []) if isinstance(st.get("subs"), list) else []:
         if isinstance(s, str):
             s = {"url": s}                       # v2 stored bare URLs
-        if isinstance(s, dict) and isinstance(s.get("url"), str):
+        if isinstance(s, dict) and (isinstance(s.get("url"), str) or (
+                isinstance(s.get("local"), list) and all(isinstance(t, str) for t in s["local"]))):
             subs.append(s)
     st["subs"] = subs[:MAX_SUBS]
     nodes = st.get("nodes") if isinstance(st.get("nodes"), list) else []
@@ -1162,6 +1166,8 @@ def nodes_from_body(body, sub_index, skipped):
     items = []
     if kind == "json":
         for cfg in (data if isinstance(data, list) else [data])[:MAX_LINKS]:
+            if isinstance(cfg, dict) and "protocol" in cfg and "outbounds" not in cfg:
+                cfg = {"outbounds": [cfg]}             # one outbound, not a whole config
             try:
                 items.append(node_from_json_config(cfg))
             except Skip as e:
@@ -1258,18 +1264,21 @@ def fetch_subs(st, only=None):
         if only is not None and i != only:
             nodes.extend(n for n in st["nodes"] if n.get("sub") == i)
             continue
-        url = sub["url"]
+        url = sub.get("url")
         try:
-            try:
-                body, headers = fetch(url)
-            except (RuntimeError, OSError):
-                if not running:
-                    raise
-                body, headers = fetch(url, via_proxy=True)   # direct blocked? try the tunnel
-            got = nodes_from_body(body, i, skipped)
-            sub["info"] = parse_userinfo(headers.get("subscription-userinfo"))
-            sub["title"] = parse_title(headers.get("profile-title"))
-            sub["interval"] = parse_interval(headers.get("profile-update-interval"))
+            if url is None:                        # Manual group: parse what was pasted
+                got = [n for t in sub["local"] for n in nodes_from_body(t.encode(), i, skipped)]
+            else:
+                try:
+                    body, headers = fetch(url)
+                except (RuntimeError, OSError):
+                    if not running:
+                        raise
+                    body, headers = fetch(url, via_proxy=True)   # direct blocked? try the tunnel
+                got = nodes_from_body(body, i, skipped)
+                sub["info"] = parse_userinfo(headers.get("subscription-userinfo"))
+                sub["title"] = parse_title(headers.get("profile-title"))
+                sub["interval"] = parse_interval(headers.get("profile-update-interval"))
             sub["fetched"] = int(time.time())
             sub["error"] = "" if got else "no usable nodes"
             nodes.extend(got)
@@ -1644,8 +1653,8 @@ def apply_system_proxy(st, on):
 # --- commands: subscriptions -------------------------------------------------
 
 def secret_url_from_arg(arg):
-    """Subscription URL without argv exposure: `import -` reads
-    $OMARCHY_XRAY_SUB_URL first, then stdin (refuses to block on a tty)."""
+    """What to import (URL, links or JSON) without argv exposure: `import -`
+    reads $OMARCHY_XRAY_SUB_URL first, then stdin (refuses to block on a tty)."""
     if arg == "-" or not arg:
         env = os.environ.get("OMARCHY_XRAY_SUB_URL", "").strip()
         os.environ.pop("OMARCHY_XRAY_SUB_URL", None)
@@ -1656,10 +1665,10 @@ def secret_url_from_arg(arg):
                 die("usage: OMARCHY_XRAY_SUB_URL=<url> omarchy-xray import -"
                     "  (or pipe the URL on stdin)")
             try:
-                data = sys.stdin.read(MAX_URL_LEN + 256)
+                data = sys.stdin.read(MAX_PASTE + 1)
             except Exception:
                 data = ""
-            data = (data or "").strip()[:MAX_URL_LEN + 1]
+            data = (data or "").strip()
             if data:
                 return data
         die("usage: omarchy-xray import -  (with $OMARCHY_XRAY_SUB_URL or stdin)")
@@ -1684,12 +1693,16 @@ def _prev(st):
 
 def cmd_import(arg):
     url = secret_url_from_arg(arg)
+    if len(url) > MAX_PASTE:
+        die("too long to import (over %d KiB)" % (MAX_PASTE // 1024))
+    if not re.fullmatch(r"https?://\S+", url, re.I):
+        return _import_manual(url)
     try:
         check_https_url(url)
     except ValueError as e:
         die(str(e))
     st = load_state()
-    if not any(s["url"] == url for s in st["subs"]):
+    if not any(s.get("url") == url for s in st["subs"]):
         if len(st["subs"]) >= MAX_SUBS:
             die("too many subscriptions")
         st["subs"].append({"url": url})
@@ -1703,6 +1716,33 @@ def cmd_import(arg):
          "skipped": st["skipped"]})
 
 
+def _import_manual(text):
+    """Share links or Xray JSON into the Manual group (one per state). Only
+    text with at least one server the core accepts is kept."""
+    skipped = {}
+    got = core_filter(nodes_from_body(text.encode(), 0, skipped), skipped)
+    if not got:
+        die("no usable server in the pasted text" + (": " + ", ".join(skipped)[:200] if skipped else ""))
+    st = load_state()
+    i = next((i for i, s in enumerate(st["subs"]) if "local" in s), None)
+    if i is None:
+        if len(st["subs"]) >= MAX_SUBS:
+            die("too many subscriptions")
+        st["subs"].append({"local": [], "title": "Manual"})
+        i = len(st["subs"]) - 1
+    local = st["subs"][i]["local"]
+    if text not in local:
+        if sum(map(len, local)) + len(text) > MAX_SUB_BYTES:
+            die("the Manual group is full — remove it or use a subscription")
+        local.append(text)
+    save_state(st)
+    prev = _prev(st)
+    st["nodes"] = fetch_subs(st, only=i)
+    rebuild(st, *prev)
+    out({"ok": True, "manual": len(got), "subs": len(st["subs"]), "nodes": len(st["nodes"]),
+         "skipped": skipped})
+
+
 def cmd_subremove(key):
     st = load_state()
     k = str(key or "").strip()
@@ -1711,7 +1751,7 @@ def cmd_subremove(key):
     else:
         kl = k.lower()
         hits = [i for i, s in enumerate(st["subs"])
-                if kl and kl in (urllib.parse.urlsplit(s["url"]).hostname or "").lower()]
+                if kl and kl in (urllib.parse.urlsplit(s.get("url", "")).hostname or "").lower()]
         if not hits:
             die("no subscription matches: " + k[:128])
         if len(hits) > 1:
@@ -2146,11 +2186,12 @@ def cmd_status():
     for i, s in enumerate(st["subs"]):
         interval = s.get("interval") or DEFAULT_UPDATE_HOURS
         fetched = int(s.get("fetched") or 0)
-        if fetched and now - fetched > interval * 3600:
+        local = "url" not in s                     # the Manual group: nothing to download
+        if fetched and not local and now - fetched > interval * 3600:
             due = True
-        subs.append({"index": i,
-                     "host": urllib.parse.urlsplit(s["url"]).hostname or "subscription",
-                     "url": redact_url(s["url"]), "title": s.get("title", ""),
+        subs.append({"index": i, "local": local,
+                     "host": "manual" if local else urllib.parse.urlsplit(s["url"]).hostname or "subscription",
+                     "url": "" if local else redact_url(s["url"]), "title": s.get("title", ""),
                      "info": s.get("info", {}), "fetched": fetched,
                      "error": s.get("error", "")})
     sel = st["selected"]

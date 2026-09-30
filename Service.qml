@@ -83,6 +83,7 @@ Item {
   readonly property int outCap: 524288
   readonly property int maxNodes: 1000
   readonly property int maxInput: 2048
+  readonly property int maxPaste: 120 * 1024   // links or Xray JSON (the manager's MAX_PASTE)
   // Shipped next to this file: `omarchy plugin add` clones the repo as is.
   readonly property string manager: decodeURIComponent(String(Qt.resolvedUrl("bin/omarchy-xray")).replace(/^file:\/\//, ""))
 
@@ -259,7 +260,7 @@ Item {
   function opName(label) {
     var names = { "select": "Switching nodes", "start": "Connecting", "disconnect": "Disconnecting",
                   "latency test": "The latency test", "update": "The subscription update",
-                  "import": "Adding the subscription", "remove": "Removing the subscription",
+                  "import": "Adding", "remove": "Removing the subscription",
                   "mode switch": "Switching mode", "TUN setup": "TUN setup", "routing": "Applying routing",
                   "adblock": "Applying ad blocking", "status": "Reading status", "stats": "Reading traffic" }
     return names[label] || "The last command"
@@ -414,7 +415,7 @@ Item {
     if (connected || blocked || dropped) { disconnect(); return }
     var target = Model.pickConnectTarget(touch || {}, lastKey)
     if (target === null) { lastError = subs.length > 0 ? "No usable nodes: every link was skipped (see below)"
-                                                    : "No nodes yet: add a subscription URL first"; return }
+                                                    : "No nodes yet: add a subscription or a server link first"; return }
     connectNode(target)
   }
 
@@ -490,21 +491,26 @@ Item {
   readonly property bool importing: _long.running && _long._label === "import"
 
   function importUrl(url, onDone) {
-    // The URL is a secret: bounded, https-only, passed via the environment
-    // (never argv — argv is world-visible via ps).
+    // A subscription URL, share links or Xray JSON: all secrets, bounded and
+    // passed via the environment (never argv — argv is world-visible via ps).
+    // The manager tells them apart and explains what it refuses.
     var u = String(url || "").trim()
     if (u === "") return
-    var bad = u.length > maxInput ? "That URL is too long (over " + maxInput + " characters)"
-            : !/^https:\/\//i.test(u) ? "Subscription URL must start with https://" : ""
+    var sub = /^https?:\/\/\S+$/i.test(u)
+    var bad = u.length > (sub ? maxInput : maxPaste) ? "That is too long to add" : ""
     if (bad !== "") { lastError = bad; importNote = bad; return }
+    var busyText = sub ? "Downloading the subscription…" : "Checking the servers…"
     runLong([manager, "import", "-"], "import", 240000,
-            function(d) { return "Subscription added: " + (d.nodes || 0) + " nodes available" },
-            "Downloading the subscription…", { OMARCHY_XRAY_SUB_URL: u },
+            function(d) {
+              return d.manual ? "Added " + d.manual + (d.manual === 1 ? " server" : " servers") + " to Manual"
+                              : "Subscription added: " + (d.nodes || 0) + " nodes available"
+            },
+            busyText, { OMARCHY_XRAY_SUB_URL: u },
             function(resp) {
               importNote = resp.ok ? "" : lastError
               if (onDone) onDone(resp.ok)
             })
-    if (importing) importNote = "Downloading the subscription…"
+    if (importing) importNote = busyText
   }
 
   function subRemove(index) {

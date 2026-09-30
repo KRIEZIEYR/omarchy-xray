@@ -22,6 +22,9 @@ commands and reads JSON back.
 - every node from your subscriptions, grouped per subscription, filter as you type
 - **VLESS, VMess, Trojan, Shadowsocks (incl. 2022), Hysteria2** share links,
   plus Xray-JSON subscriptions (Remnawave/Marzban style)
+- no subscription? paste single servers instead: share links (`vless://`,
+  `ss://`, …) or an Xray JSON config (a whole config, a list of configs or one
+  outbound); they collect in a **Manual** group
 - **every transport the current Xray core supports** (see the table below)
 - **Auto** node: Xray's observatory + `leastPing` balancer picks the best live node
 - **proxy mode** (no privileges) and **TUN mode** (whole system, one-time setup)
@@ -96,8 +99,9 @@ omarchy plugin add https://github.com/KRIEZIEYR/omarchy-xray.git --enable
 ```
 
 Then click the shield in the bar: on first run the panel asks for your
-subscription URL (it reaches the manager through the environment, never
-argv). That is all proxy mode needs. For TUN, pick **TUN** in the panel: the
+subscription URL — or paste single servers into the same field: share links
+(one per line) or an Xray JSON config. Whatever you paste reaches the manager
+through the environment, never argv, and is kept only in `state.json` (`0600`). That is all proxy mode needs. For TUN, pick **TUN** in the panel: the
 first time it asks for your password once (see [TUN mode](#tun-mode)).
 
 There is no install script. Until you connect, nothing exists outside the
@@ -149,6 +153,7 @@ ln -s ~/.config/omarchy/plugins/krieziey.omarchy-xray/bin/omarchy-xray ~/.local/
 
 ```bash
 export OMARCHY_XRAY_SUB_URL=<url>; omarchy-xray import -   # add a subscription (also: pipe URL on stdin)
+wl-paste | omarchy-xray import -    # or servers: share links / Xray JSON go to the Manual group
 omarchy-xray status                 # JSON state (what the widget reads; URLs redacted)
 omarchy-xray select Finland         # switch by name substring, key (k…), n<index> or "auto"
 omarchy-xray on | off | restart
@@ -298,8 +303,9 @@ Run `omarchy-xray restart` after editing.
   HTTPS), 2 MiB streaming cap, strict per-protocol link validation with
   count/string bounds (2000 nodes, 5000 lines), malformed links skipped.
 - Secrets: `~/.config/omarchy-xray/` is `0700`, `state.json`/`config.json`
-  are atomic `0600` no-follow writes; `import -` reads the URL from
-  `$OMARCHY_XRAY_SUB_URL`/stdin; a URL in argv is refused (argv is world-readable)
+  are atomic `0600` no-follow writes; `import -` reads the URL (or pasted
+  links/JSON, 120 KiB cap) from `$OMARCHY_XRAY_SUB_URL`/stdin; a URL in argv is
+  refused (argv is world-readable)
   (status/errors show `host/***` only). Temporary test configs live in
   `$XDG_RUNTIME_DIR/omarchy-xray` (`0700`).
 - Loopback-only listeners: socks 20170, http 20171, metrics 15491.

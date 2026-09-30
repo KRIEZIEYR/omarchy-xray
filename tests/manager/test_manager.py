@@ -715,6 +715,82 @@ class LatencyTest(Base):
         self.assertTrue(json.loads(buf.getvalue())["stopped"])
 
 
+class ManualServers(Base):
+    """Share links and Xray JSON pasted into the import field."""
+
+    def setUp(self):
+        super().setUp()
+        self._stubs = {k: getattr(M, k) for k in ("write_config", "running_units", "fetch")}
+        M.write_config = lambda st: None
+        M.running_units = lambda: (False, False)
+
+        def no_network(*a, **kw):
+            raise OSError("offline")
+        M.fetch = no_network
+
+    def tearDown(self):
+        for k, v in self._stubs.items():
+            setattr(M, k, v)
+        super().tearDown()
+
+    def imp(self, text):
+        os.environ["OMARCHY_XRAY_SUB_URL"] = text
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            M.cmd_import("-")
+        return json.loads(buf.getvalue())
+
+    def test_links_collect_in_one_manual_group(self):
+        M.save_state(self.state([self.node("trojan-ws")]))
+        two = LINKS["vless-ws-tls"] + "\n" + LINKS["ss-sip002"]
+        self.assertEqual(self.imp(two)["manual"], 2)
+        self.imp(LINKS["hy2-obfs"])
+        self.imp(two)                                    # the same paste twice: kept once
+        st = M.load_state()
+        self.assertEqual(st["subs"][1], {"local": [two, LINKS["hy2-obfs"]], "title": "Manual",
+                                         "fetched": st["subs"][1]["fetched"], "error": ""})
+        self.assertEqual(sorted(n["name"] for n in st["nodes"] if n["sub"] == 1),
+                         ["HY2", "SS", "WS"])
+        self.assertEqual([n["name"] for n in st["nodes"] if n["sub"] == 0], ["Trojan"])
+
+    def test_xray_json_config_and_bare_outbound(self):
+        ob = {"protocol": "vless", "tag": "proxy",
+              "settings": {"vnext": [{"address": "j.example.com", "port": 443,
+                                      "users": [{"id": UUID, "encryption": "none"}]}]},
+              "streamSettings": {"network": "ws", "security": "tls",
+                                 "wsSettings": {"path": "/j"}}}
+        full = json.dumps({"remarks": "From JSON", "inbounds": [],
+                           "outbounds": [ob, {"tag": "direct", "protocol": "freedom"}]}, indent=2)
+        self.assertEqual(self.imp(full)["manual"], 1)    # multi-line, as pasted
+        bare = dict(ob, streamSettings=dict(ob["streamSettings"], wsSettings={"path": "/k"}))
+        self.imp(json.dumps(bare))
+        names = sorted(n["name"] for n in M.load_state()["nodes"])
+        self.assertEqual(names, ["From JSON", "j.example.com"])
+
+    def test_nothing_usable_is_refused_and_not_stored(self):
+        M.save_state(self.state([self.node("trojan-ws")]))
+        for text in ("hello", "foo://bar", "{\"outbounds\": [{\"protocol\": \"freedom\"}]}",
+                     "http://sub.example.com/x"):
+            with self.subTest(text=text), self.assertRaises(SystemExit):
+                self.imp(text)
+        self.assertEqual(len(M.load_state()["subs"]), 1)
+
+    def test_status_and_update_keep_the_text_private_and_offline(self):
+        M.save_state(self.state([self.node("trojan-ws")]))
+        self.imp(LINKS["vless-ws-tls"])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            M.cmd_status()
+        data = json.loads(buf.getvalue())
+        self.assertNotIn(UUID, buf.getvalue())
+        self.assertEqual((data["subs"][1]["local"], data["subs"][1]["url"]), (True, ""))
+        self.assertFalse(data["subs"][0]["local"])
+        st = M.load_state()
+        nodes = M.fetch_subs(st)                          # the URL fails, Manual is parsed
+        self.assertEqual(sorted(n["name"] for n in nodes), ["Trojan", "WS"])
+        self.assertEqual(st["subs"][1]["error"], "")
+
+
 class StatusShape(Base):
     def test_status_json(self):
         ns = [self.node("vless-ws-tls"), self.node("hy2-obfs")]
