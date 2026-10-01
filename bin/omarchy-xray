@@ -2452,6 +2452,28 @@ def _foreign(pw, paths):
     return rec, [str(p) for p, t in _managed(pw) if p in paths and not _ours(p, t, rec, pw.pw_uid)]
 
 
+def _loaded_tun_unit():
+    """(loaded, why_foreign) for what systemd has loaded as TUN_SERVICE. Ours
+    only when loaded from SYS_UNIT itself with no drop-ins: a unit of that name
+    from another directory, a transient, masked or broken one, or one with
+    drop-ins is someone else's and root never stops it. Nothing loaded and
+    nothing running is (False, None)."""
+    r = sh(SYSTEMCTL, "show", "--property=LoadState,ActiveState,FragmentPath,DropInPaths", TUN_SERVICE)
+    if r.returncode != 0:
+        return True, "systemctl show failed: %s" % _last_lines(r.stderr, n=1)
+    p = dict(line.split("=", 1) for line in r.stdout.splitlines() if "=" in line)
+    load, frag, drop = p.get("LoadState", ""), p.get("FragmentPath", ""), p.get("DropInPaths", "").strip()
+    if load == "not-found" and p.get("ActiveState") in ("inactive", "failed") and not drop:
+        return False, None
+    if load != "loaded":
+        return True, "LoadState=%s" % (load or "unknown")
+    if frag != str(SYS_UNIT):
+        return True, "loaded from %s" % (frag or "no unit file (transient)")
+    if drop:
+        return True, "drop-ins: %s" % drop[:200]
+    return True, None
+
+
 def cmd_tun_install():
     """[root] Write the TUN system unit, the polkit rule and (with networkd)
     an Unmanaged drop-in, plus a record of them. Inputs: the invoking uid only;
@@ -2469,7 +2491,12 @@ def cmd_tun_install():
         die("refusing to replace %s: not written by omarchy-xray for %s, or changed since — "
             "review and remove it yourself, then run tun-setup again; nothing was changed"
             % (", ".join(foreign), pw.pw_name))
-    sh(SYSTEMCTL, "stop", TUN_SERVICE)       # ours (or absent): a running old unit
+    loaded, why = _loaded_tun_unit()
+    if why:
+        die("refusing: the loaded %s is not the one omarchy-xray writes (%s) — "
+            "review it yourself, then run tun-setup again; nothing was changed" % (TUN_SERVICE, why))
+    if loaded:
+        sh(SYSTEMCTL, "stop", TUN_SERVICE)   # our previous unit, from SYS_UNIT
     files = {k: v for k, v in rec.get("files", {}).items() if pathlib.Path(k).exists()}
     files.update({str(p): _sha(managed[p]) for p in want})
     record = json.dumps({"uid": pw.pw_uid, "user": pw.pw_name, "files": files}, indent=1) + "\n"
@@ -2494,7 +2521,11 @@ def cmd_tun_uninstall():
     if str(SYS_UNIT) in foreign:
         die("refusing: %s was not written by omarchy-xray for %s, or changed since — nothing was removed"
             % (SYS_UNIT, pw.pw_name))
-    if SYS_UNIT.exists():
+    loaded, why = _loaded_tun_unit()
+    if why:
+        die("refusing: the loaded %s is not the one omarchy-xray writes (%s) — nothing was removed"
+            % (TUN_SERVICE, why))
+    if loaded:
         sh(SYSTEMCTL, "stop", TUN_SERVICE)
     removed, kept = [], []
     for p in paths:

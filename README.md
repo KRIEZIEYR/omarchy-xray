@@ -198,8 +198,13 @@ It replaces or removes only files it wrote for you and that are unchanged
 since — per the record, or byte-identical to what it would write for you
 (installs from before the record). Before any stop, write or delete it checks
 every file: another user's setup, or a foreign, locally changed or symlinked
-file, makes setup refuse with nothing changed. `tun-remove` refuses on a
-foreign unit and otherwise keeps (and names) any foreign or changed file.
+file, makes setup refuse with nothing changed. It also asks systemd what it
+has loaded as `omarchy-xray-tun.service` and stops it only when that is
+exactly `/etc/systemd/system/omarchy-xray-tun.service` with no drop-ins; a unit
+of that name from another directory, a transient or masked one, or one with
+drop-ins makes setup (and `tun-remove`) refuse without stopping anything.
+`tun-remove` refuses on a foreign unit and otherwise keeps (and names) any
+foreign or changed file.
 No third-party binary ever runs as root or with capabilities, so there is
 nothing to pin or re-attest after an xray or tun2socks update. This script is
 never run as root again. No setcap, no sudoers. Undo with

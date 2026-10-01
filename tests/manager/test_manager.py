@@ -649,9 +649,17 @@ class TunOwnership(Base):
         M.TUN_RECORD = self.tmp / "var" / "tun-install.json"
         M.ROOT = os.getuid()                       # "root" is us: the files stay in tmp
         self.calls = []
+        self.loaded = None                         # override what systemd has loaded
 
         def fake_sh(*cmd, **kw):                   # never touch the real systemd
             self.calls.append(cmd)
+            if "show" in cmd:
+                props = self.loaded or (
+                    {"LoadState": "loaded", "ActiveState": "active", "FragmentPath": str(M.SYS_UNIT)}
+                    if M.SYS_UNIT.exists() else {"LoadState": "not-found", "ActiveState": "inactive"})
+                props = {"FragmentPath": "", "DropInPaths": "", **props}
+                return subprocess.CompletedProcess(
+                    cmd, 0, "".join("%s=%s\n" % kv for kv in props.items()), "")
             return subprocess.CompletedProcess(cmd, 0, "inactive\n", "")
         M.sh = fake_sh
         os.environ["SUDO_UID"] = str(os.getuid())
@@ -677,7 +685,7 @@ class TunOwnership(Base):
             self.assertEqual(rec["files"][str(path)], M._sha(path.read_text()))
         self.assertFalse(M.NETWORKD_FILE.exists())         # networkd inactive
         self.run_json(M.cmd_tun_install)                    # ours: replaced again
-        self.assertEqual(len(self.stops()), 2)
+        self.assertEqual(len(self.stops()), 1)              # nothing loaded the first time
 
     def test_install_refuses_foreign_changed_or_linked_files(self):
         M.SYS_UNIT.parent.mkdir(parents=True)
@@ -726,7 +734,34 @@ class TunOwnership(Base):
         with self.assertRaises(SystemExit):
             self.run_json(M.cmd_tun_uninstall)
         self.assertTrue(M.SYS_UNIT.exists() and M.POLKIT_RULE.exists())
-        self.assertEqual(len(self.stops()), 1)             # install's stop only
+        self.assertEqual(self.stops(), [])                  # nothing was loaded at install
+
+    def test_a_foreign_loaded_unit_is_never_stopped(self):
+        # /etc/systemd/system has no unit, but systemd loaded one of that name
+        # from elsewhere, or ours carries someone's drop-in: hands off.
+        other = "/run/systemd/system/" + M.TUN_SERVICE
+        cases = [
+            {"LoadState": "loaded", "ActiveState": "active", "FragmentPath": other},
+            {"LoadState": "loaded", "ActiveState": "active", "FragmentPath": ""},   # transient
+            {"LoadState": "masked", "ActiveState": "inactive", "FragmentPath": "/dev/null"},
+            {"LoadState": "not-found", "ActiveState": "active"},                    # file gone, running
+            {"LoadState": "loaded", "ActiveState": "active", "FragmentPath": str(M.SYS_UNIT),
+             "DropInPaths": "/etc/systemd/system/%s.d/x.conf" % M.TUN_SERVICE},
+        ]
+        for props in cases:
+            with self.subTest(props=props):
+                self.loaded = props
+                with self.assertRaises(SystemExit):
+                    self.run_json(M.cmd_tun_install)
+                self.assertEqual(self.stops(), [])
+                self.assertFalse(M.SYS_UNIT.exists() or M.TUN_RECORD.exists())
+        self.loaded = None
+        self.run_json(M.cmd_tun_install)
+        self.loaded = cases[0]
+        with self.assertRaises(SystemExit):
+            self.run_json(M.cmd_tun_uninstall)
+        self.assertEqual(self.stops(), [])
+        self.assertTrue(M.SYS_UNIT.exists() and M.TUN_RECORD.exists())
 
     def test_setup_without_a_record_adopts_identical_files(self):
         # installs from before the record existed: identical content is ours
