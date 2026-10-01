@@ -26,6 +26,7 @@ the two explicit TUN install steps):
   tun-install        [root] what tun-setup runs: writes the system unit, the
   tun-uninstall      [root] polkit rule and the networkd drop-in (and removes)
   tun-run            [user unit] tun2socks on xray0 + follow the default route
+  tun-unit <start|stop>  [user unit] start/stop the root unit, only if it is ours
 
 Security model:
   - xray never gets a capability, in either mode: a systemd *user* unit runs it.
@@ -424,24 +425,24 @@ def user_unit_text():
 def t2s_unit_text():
     # The root unit's device lives exactly as long as this unit: start it
     # first, stop it last (ExecStopPost also runs after a failed start).
+    # Both go through `tun-unit`, which acts only on our own root unit.
     return ("[Unit]\n"
             "Description=omarchy-xray TUN mode: tun2socks on %(dev)s (no privileges)\n"
             "Wants=%(xray)s\n"
             "After=%(xray)s\n\n"
             "[Service]\n"
-            "ExecStartPre=%(sc)s start --no-ask-password %(tun)s\n"
+            "ExecStartPre=%(self)s tun-unit start\n"
             "ExecStart=%(self)s tun-run\n"
             # A crash keeps the root unit, so traffic stays in xray0 (blocked)
             # while systemd restarts tun2socks; only a deliberate stop - off,
             # a switch to proxy - removes the device and its routes.
-            "ExecStopPost=-/bin/sh -c '[ \"$$SERVICE_RESULT\" = success ] && exec %(sc)s stop --no-ask-password %(tun)s'\n"
+            "ExecStopPost=-/bin/sh -c '[ \"$$SERVICE_RESULT\" = success ] && exec %(self)s tun-unit stop'\n"
             "NoNewPrivileges=true\n"
             "Restart=on-failure\n"
             "RestartSec=3\n\n"
             "[Install]\n"
             "WantedBy=default.target\n") % {
-                "dev": TUN_NAME, "xray": SERVICE, "sc": SYSTEMCTL, "tun": TUN_SERVICE,
-                "self": SELF}
+                "dev": TUN_NAME, "xray": SERVICE, "self": SELF}
 
 
 def write_user_units():
@@ -1600,10 +1601,13 @@ def start_service(st):
 
 def stop_service():
     if T2S_UNIT.exists():
+        write_user_units()          # older tun2socks units stopped the root unit unchecked
         uctl("disable", "--now", T2S_SERVICE)        # its stop deletes the device
     ok = uctl("disable", "--now", SERVICE).returncode == 0
-    # the device outlived tun2socks (started by hand, or a v3.0 unit)
-    if SYS_UNIT.is_file() and sctl("is-active", TUN_SERVICE).stdout.strip() == "active":
+    # the device outlived tun2socks (started by hand, or a v3.0 unit): stop
+    # the root unit only when it is ours; someone else's is never touched
+    loaded, why = tun_unit_check(os.getuid())
+    if loaded and not why and sctl("is-active", TUN_SERVICE).stdout.strip() == "active":
         ok = sctl("stop", TUN_SERVICE, timeout=60).returncode == 0 and ok
     return ok
 
@@ -2456,9 +2460,10 @@ def _loaded_tun_unit():
     """(loaded, why_foreign) for what systemd has loaded as TUN_SERVICE. Ours
     only when loaded from SYS_UNIT itself with no drop-ins: a unit of that name
     from another directory, a transient, masked or broken one, or one with
-    drop-ins is someone else's and root never stops it. Nothing loaded and
+    drop-ins is someone else's and is never stopped. Nothing loaded and
     nothing running is (False, None)."""
-    r = sh(SYSTEMCTL, "show", "--property=LoadState,ActiveState,FragmentPath,DropInPaths", TUN_SERVICE)
+    r = sh(SYSTEMCTL, "show", "--property=LoadState,ActiveState,FragmentPath,DropInPaths,NeedDaemonReload",
+           TUN_SERVICE)
     if r.returncode != 0:
         return True, "systemctl show failed: %s" % _last_lines(r.stderr, n=1)
     p = dict(line.split("=", 1) for line in r.stdout.splitlines() if "=" in line)
@@ -2471,7 +2476,47 @@ def _loaded_tun_unit():
         return True, "loaded from %s" % (frag or "no unit file (transient)")
     if drop:
         return True, "drop-ins: %s" % drop[:200]
+    if p.get("NeedDaemonReload") == "yes":
+        return True, "%s changed on disk since systemd loaded it" % SYS_UNIT
     return True, None
+
+
+def tun_unit_check(uid):
+    """(loaded, why_foreign) for TUN_SERVICE as seen by `uid`. Every start and
+    stop of the root unit, by root or by the user, goes through this. Ours
+    means: what systemd loaded is SYS_UNIT itself with no drop-ins
+    (_loaded_tun_unit), and SYS_UNIT is what tun-install wrote for this uid
+    (the record, or byte-identical), not another user's setup."""
+    loaded, why = _loaded_tun_unit()
+    if why or not (loaded or os.path.lexists(SYS_UNIT)):
+        return loaded, why
+    rec = _tun_record()
+    if rec and rec["uid"] != uid:
+        return loaded, "set up for another user (%s)" % str(rec.get("user") or rec["uid"])[:32]
+    ip = tool("ip")
+    text = tun_unit_text(uid, ip, tool("udevadm"), tool("resolvectl")) if ip else None
+    if not os.path.lexists(SYS_UNIT) or not _ours(SYS_UNIT, text, rec, uid):
+        return loaded, "%s was not written by omarchy-xray for uid %d, or changed since" % (SYS_UNIT, uid)
+    return loaded, None
+
+
+def cmd_tun_unit(verb):
+    """[user unit] Start or stop the root unit through polkit, only when it
+    is ours (tun_unit_check); a foreign one is refused, never touched."""
+    if verb not in ("start", "stop"):
+        die("usage: omarchy-xray tun-unit <start|stop>")
+    loaded, why = tun_unit_check(os.getuid())
+    if why:
+        die("refusing to %s %s: %s — review it, then run omarchy-xray tun-setup" % (verb, TUN_SERVICE, why))
+    if verb == "stop" and not loaded:
+        out({"ok": True, "stopped": False})
+        return
+    if verb == "start" and not tun_installed():
+        die(TUN_SETUP_HINT)
+    r = sctl(verb, TUN_SERVICE, timeout=60)
+    if r.returncode != 0:
+        die("%s %s failed: %s" % (verb, TUN_SERVICE, _last_lines(r.stderr) or "denied"))
+    out({"ok": True})
 
 
 def cmd_tun_install():
@@ -2491,7 +2536,7 @@ def cmd_tun_install():
         die("refusing to replace %s: not written by omarchy-xray for %s, or changed since — "
             "review and remove it yourself, then run tun-setup again; nothing was changed"
             % (", ".join(foreign), pw.pw_name))
-    loaded, why = _loaded_tun_unit()
+    loaded, why = tun_unit_check(pw.pw_uid)
     if why:
         die("refusing: the loaded %s is not the one omarchy-xray writes (%s) — "
             "review it yourself, then run tun-setup again; nothing was changed" % (TUN_SERVICE, why))
@@ -2521,7 +2566,7 @@ def cmd_tun_uninstall():
     if str(SYS_UNIT) in foreign:
         die("refusing: %s was not written by omarchy-xray for %s, or changed since — nothing was removed"
             % (SYS_UNIT, pw.pw_name))
-    loaded, why = _loaded_tun_unit()
+    loaded, why = tun_unit_check(pw.pw_uid)
     if why:
         die("refusing: the loaded %s is not the one omarchy-xray writes (%s) — nothing was removed"
             % (TUN_SERVICE, why))
@@ -2698,6 +2743,7 @@ def main():
         "logs": lambda: cmd_logs(arg or "40"),
         "doctor": cmd_doctor,
         "tun-run": cmd_tun_run,
+        "tun-unit": lambda: cmd_tun_unit(arg),
         "cleanup": cmd_cleanup,
         "tun-setup": cmd_tun_setup,
         "tun-remove": cmd_tun_remove,
