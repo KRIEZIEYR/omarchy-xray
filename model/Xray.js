@@ -259,10 +259,10 @@ function heroTitle(state) {
   if (!n && state && (state.pending === "connecting" || state.pending === "switching") && state.target)
     return state.target
   if (!n) {
-    // "Off" leads; the node a connect would use goes in the caption, so a
+    // "Not protected" leads; the node a connect would use goes in the caption, so a
     // node name never looks like a live (or dead) connection.
     var t = state && state.touch
-    return t && t.nodes && t.nodes.length > 0 ? "Off" : "Xray"
+    return t && t.nodes && t.nodes.length > 0 ? "Not protected" : "Xray"
   }
   if (n.key === "auto") return state.autoPick ? "Auto → " + state.autoPick : n.name
   return n.name
@@ -281,8 +281,7 @@ function heroState(state) {
   // proxy mode only covers apps that use the system proxy: say so every time
   if (connectedNode(t)) return state.mode === "tun" ? "Connected · TUN" : "Connected · system-proxy apps"
   if (!t.nodes || t.nodes.length === 0) return state.hasSubs ? "No usable nodes · see below" : "No subscription yet"
-  if (t.running) return "Off · not protected"
   // the mode leads: a long node name is what gets cut, never the mode
   // protection leads: an arrow here read like a live route
-  return "Not protected · " + mode + (state.target ? ", next " + state.target : "")
+  return mode + (state.target ? " · next " + state.target : "")
 }
