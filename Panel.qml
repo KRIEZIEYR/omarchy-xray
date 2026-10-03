@@ -67,8 +67,21 @@ Panel {
   // above the nodes (nodeIndex < 0, -1 = the last one), the node rows
   // (0..n-1), then the subscriptions (header, then one row each).
   // h/l pick a chip inside a row, Enter applies it.
+  // Mode, route and adblock are set-and-forget: one summary row until opened,
+  // so the nodes start right under the switch.
+  property bool settingsOpen: false      // remembered while the shell runs
   readonly property var settingRows: !xray.reachable || firstRun ? []
-      : regionsOpen ? ["hero", "mode", "route", "regions", "ads"] : ["hero", "mode", "route", "ads"]
+      : !settingsOpen ? ["hero", "settings"]
+      : regionsOpen ? ["hero", "settings", "mode", "route", "regions", "ads"] : ["hero", "settings", "mode", "route", "ads"]
+  readonly property string settingsSummary: (xray.mode === "tun" ? "TUN" : "PROXY")
+      + " · " + (xray.region ? xray.region.code.toUpperCase() + " DIRECT" : "ALL")
+      + (xray.adblock ? " · ADBLOCK" : "")
+  function toggleSettings() {
+    var onRow = cursorRow === "settings"
+    if (settingsOpen) regionsOpen = false
+    settingsOpen = !settingsOpen
+    if (onRow) nodeIndex = settingRows.indexOf("settings") - settingRows.length
+  }
   readonly property int footerRows: xray.reachable ? 1 + (subsShown ? xray.subs.length : 0) : 0
   property int chipIndex: 0
   readonly property string cursorRow: !cursorActive ? ""
@@ -118,7 +131,8 @@ Panel {
 
   function activateChip() {
     var r = cursorRow
-    if (r === "hero") xray.toggleConnection(root.lastNodeKey)
+    if (r === "hero") requestToggle()
+    else if (r === "settings") toggleSettings()
     else if (r === "mode") chooseMode(chipIndex === 1 ? "tun" : "proxy")
     else if (r === "route") {
       if (chipIndex < 2) chooseRoute(chipIndex === 1 ? "direct" : "global")
@@ -158,6 +172,17 @@ Panel {
     nodeIndex = abs - len
   }
   readonly property string lastNodeKey: settings ? String(settings.lastNodeKey || "") : ""
+
+  // Off while the kill switch holds lets traffic out unprotected, so it takes
+  // a second press within 4 s, like Remove. Every on/off path comes here.
+  property bool killArmed: false
+  Timer { id: killDisarm; interval: 4000; onTriggered: root.killArmed = false }
+  onKillArmedChanged: if (killArmed) xray.flash("Kill switch is holding: press again to turn off, traffic would go direct")
+  function requestToggle() {
+    if (xray.blocked && !killArmed) { killArmed = true; killDisarm.restart(); return }
+    killArmed = false
+    xray.toggleConnection(root.lastNodeKey)
+  }
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color urgent: bar ? bar.urgent : Color.urgent
@@ -320,8 +345,8 @@ Panel {
     else if (k === "o") xray.openWebUi()
     else if (k === "a") root.focusSubUrl()
     else if (k === "c") {
-      if (xray.connected) xray.flash("Already connected · Home, then Enter disconnects")
-      else if (!root.onTarget) xray.toggleConnection(root.lastNodeKey)
+      // a toggle, as the switch and the bar's right-click
+      if (!xray.toggleBusy) root.requestToggle()
     }
   }
 
@@ -490,7 +515,7 @@ Panel {
       }
     }
     onPressed: function(buttonCode) {
-      if (buttonCode === Qt.RightButton) xray.toggleConnection(root.lastNodeKey)
+      if (buttonCode === Qt.RightButton) root.requestToggle()
       else if (buttonCode === Qt.MiddleButton) xray.refresh()
       else root.toggle()
     }
@@ -567,8 +592,8 @@ Panel {
               color: root.tunnelUp ? root.onColor : hero.foreground
               filled: root.tunnelUp
               half: xray.mode !== "tun"   // proxy covers only some apps
-              warning: !xray.reachable
-          badgeColor: root.errorColor
+              warning: !xray.reachable || xray.errorText !== "" || xray.subsTrouble
+              badgeColor: root.errorColor
             }
           }
           trailingControl: Component {
@@ -580,18 +605,22 @@ Panel {
               opacity: xray.toggleBusy ? 0.5 : 1.0
               hasCursor: root.cursorRow === "hero"
               foreground: hero.foreground
-              onToggled: xray.toggleConnection(root.lastNodeKey)
+              onToggled: root.requestToggle()
               onHovered: function(h) { if (h) root.cursorActive = false }
               Accessible.role: Accessible.CheckBox
-              Accessible.name: "VPN connection"
-              Accessible.checked: root.onTarget
+              Accessible.name: "VPN connection, " + (xray.blocked ? "blocked by the kill switch"
+                               : xray.dropped ? "dropped, reconnecting"
+                               : root.tunnelUp ? (xray.mode === "tun" ? "on, whole system" : "on, proxy apps only")
+                               : root.onTarget ? "connecting" : "off")
+              Accessible.checked: checked
               Accessible.focusable: true
               Accessible.focused: hasCursor
 
               PanelToolTip {
                 visible: powerSwitch.containsMouse
-                text: xray.blocked ? "Turn off: lifts the kill switch, traffic goes direct"
-                      : xray.connected ? "Disconnect"
+                text: root.killArmed ? "Click again: traffic goes direct, unprotected"
+                      : xray.blocked ? "Kill switch: nothing leaks while it reconnects. Turning off lets traffic go direct"
+                      : xray.connected ? "Disconnect (Ctrl+C)"
                       : xray.connectTarget ? "Connect to " + xray.connectTarget.name + " (Ctrl+C)" : "Add a subscription or a server first"
                 fontFamily: root.fontFamily
               }
@@ -660,7 +689,7 @@ Panel {
                    : root.filterFocused ? [["FILTER", "↑/↓ · Enter connect · Ctrl+T test · Esc clear"]]
                    : root.urlFocused ? [["URL", "Enter adds it · Esc back to the list"]]
                    : [["MOVE", "j/k · h/l · Enter apply · Home switch · ? hide"],
-                      ["ACT", "Ctrl+C connect · Ctrl+T test · Ctrl+R update"],
+                      ["ACT", "Ctrl+C on/off · Ctrl+T test · Ctrl+R update"],
                       ["MANAGE", "Ctrl+A add sub · Ctrl+O config · Ctrl+L logs"]]
             delegate: RowLayout {
               required property var modelData
@@ -726,8 +755,32 @@ Panel {
 
           // Mode and route are set-and-forget: a compact label/chips form that
           // stays quieter than the connect switch and the node list.
-          Column {
+          RowLayout {
             visible: xray.reachable && !root.firstRun
+            width: parent.width
+            spacing: Style.space(8)
+
+            PanelSectionHeader {
+              text: "SETTINGS"
+              Layout.preferredWidth: root.settingLabelWidth
+              Layout.alignment: Qt.AlignVCenter
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            TextActionButton {
+              label: root.settingsSummary + (root.settingsOpen ? "  󰅃" : "  󰅀")
+              a11yName: (root.settingsOpen ? "Hide settings. " : "Show settings. ") + "Now: " + root.settingsSummary
+              tooltip: root.settingsOpen ? "Hide mode, route and ad blocking" : "Change mode, route or ad blocking"
+              hasCursor: root.cursorRow === "settings"
+              onClicked: root.toggleSettings()
+            }
+
+            Item { Layout.fillWidth: true }
+          }
+
+          Column {
+            visible: xray.reachable && !root.firstRun && root.settingsOpen
             width: parent.width
             spacing: Style.space(8)
 
@@ -937,8 +990,10 @@ Panel {
                 var r = root.cursorRow, c = root.chipIndex
                 if (r === "mode") return root.modeOptions[c].tooltip
                 if (r === "route") return c < 2 ? root.routeOptions[c].tooltip : "Change the direct country"
+                if (r === "settings") return root.settingsOpen ? "Enter hides the settings" : "Enter shows mode, route and ad blocking"
                 if (r === "ads") return xray.geo ? "ADBLOCK: known ad and tracker domains" : "ADBLOCK needs the geo data packages"
-                if (r === "hero") return xray.blocked ? "Enter turns it off and lifts the kill switch"
+                if (r === "hero") return root.killArmed ? "Enter again: traffic goes direct, unprotected"
+                                          : xray.blocked ? "Waiting is safe: nothing leaks. Enter twice turns it off"
                                           : xray.connected ? "Enter disconnects" : "Enter connects"
                 return " "                                // keeps the line's height
               }
