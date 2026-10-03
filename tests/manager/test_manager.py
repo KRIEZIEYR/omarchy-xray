@@ -587,12 +587,13 @@ class TunInstall(Base):
 
     def test_t2s_unit_text(self):
         t = M.t2s_unit_text()
-        self.assertIn("ExecStartPre=%s start --no-ask-password omarchy-xray-tun.service\n"
-                      % M.SYSTEMCTL, t)
+        # the root unit is started/stopped only through the ownership check
+        self.assertIn("ExecStartPre=%s tun-unit start\n" % M.SELF, t)
         self.assertIn("ExecStart=%s tun-run\n" % M.SELF, t)
         # kill switch: only a successful (deliberate) stop removes the device
-        self.assertIn("ExecStopPost=-/bin/sh -c '[ \"$$SERVICE_RESULT\" = success ] && exec %s stop "
-                      "--no-ask-password omarchy-xray-tun.service'\n" % M.SYSTEMCTL, t)
+        self.assertIn("ExecStopPost=-/bin/sh -c '[ \"$$SERVICE_RESULT\" = success ] && exec %s "
+                      "tun-unit stop'\n" % M.SELF, t)
+        self.assertNotIn(M.SYSTEMCTL, t)
         self.assertIn("NoNewPrivileges=true\n", t)
 
     def test_polkit_rule_scope(self):
@@ -649,9 +650,20 @@ class TunOwnership(Base):
         M.TUN_RECORD = self.tmp / "var" / "tun-install.json"
         M.ROOT = os.getuid()                       # "root" is us: the files stay in tmp
         self.calls = []
+        self.loaded = None                         # override what systemd has loaded
+        self.active = False                        # is-active answer for the root unit
 
         def fake_sh(*cmd, **kw):                   # never touch the real systemd
             self.calls.append(cmd)
+            if "show" in cmd:
+                props = self.loaded or (
+                    {"LoadState": "loaded", "ActiveState": "active", "FragmentPath": str(M.SYS_UNIT)}
+                    if M.SYS_UNIT.exists() else {"LoadState": "not-found", "ActiveState": "inactive"})
+                props = {"FragmentPath": "", "DropInPaths": "", **props}
+                return subprocess.CompletedProcess(
+                    cmd, 0, "".join("%s=%s\n" % kv for kv in props.items()), "")
+            if "is-active" in cmd and M.TUN_SERVICE in cmd:
+                return subprocess.CompletedProcess(cmd, 0, "active\n" if self.active else "inactive\n", "")
             return subprocess.CompletedProcess(cmd, 0, "inactive\n", "")
         M.sh = fake_sh
         os.environ["SUDO_UID"] = str(os.getuid())
@@ -669,6 +681,9 @@ class TunOwnership(Base):
     def stops(self):
         return [c for c in self.calls if "stop" in c]
 
+    def root_unit_stops(self):
+        return [c for c in self.calls if "stop" in c and M.TUN_SERVICE in c]
+
     def test_install_records_what_it_wrote_and_reinstalls(self):
         self.run_json(M.cmd_tun_install)
         rec = json.loads(M.TUN_RECORD.read_text())
@@ -677,7 +692,7 @@ class TunOwnership(Base):
             self.assertEqual(rec["files"][str(path)], M._sha(path.read_text()))
         self.assertFalse(M.NETWORKD_FILE.exists())         # networkd inactive
         self.run_json(M.cmd_tun_install)                    # ours: replaced again
-        self.assertEqual(len(self.stops()), 2)
+        self.assertEqual(len(self.stops()), 1)              # nothing loaded the first time
 
     def test_install_refuses_foreign_changed_or_linked_files(self):
         M.SYS_UNIT.parent.mkdir(parents=True)
@@ -726,7 +741,93 @@ class TunOwnership(Base):
         with self.assertRaises(SystemExit):
             self.run_json(M.cmd_tun_uninstall)
         self.assertTrue(M.SYS_UNIT.exists() and M.POLKIT_RULE.exists())
-        self.assertEqual(len(self.stops()), 1)             # install's stop only
+        self.assertEqual(self.stops(), [])                  # nothing was loaded at install
+
+    def test_a_foreign_loaded_unit_is_never_stopped(self):
+        # /etc/systemd/system has no unit, but systemd loaded one of that name
+        # from elsewhere, or ours carries someone's drop-in: hands off.
+        other = "/run/systemd/system/" + M.TUN_SERVICE
+        cases = [
+            {"LoadState": "loaded", "ActiveState": "active", "FragmentPath": other},
+            {"LoadState": "loaded", "ActiveState": "active", "FragmentPath": ""},   # transient
+            {"LoadState": "masked", "ActiveState": "inactive", "FragmentPath": "/dev/null"},
+            {"LoadState": "not-found", "ActiveState": "active"},                    # file gone, running
+            {"LoadState": "loaded", "ActiveState": "active", "FragmentPath": str(M.SYS_UNIT),
+             "DropInPaths": "/etc/systemd/system/%s.d/x.conf" % M.TUN_SERVICE},
+        ]
+        for props in cases:
+            with self.subTest(props=props):
+                self.loaded = props
+                with self.assertRaises(SystemExit):
+                    self.run_json(M.cmd_tun_install)
+                self.assertEqual(self.stops(), [])
+                self.assertFalse(M.SYS_UNIT.exists() or M.TUN_RECORD.exists())
+        self.loaded = None
+        self.run_json(M.cmd_tun_install)
+        self.loaded = cases[0]
+        with self.assertRaises(SystemExit):
+            self.run_json(M.cmd_tun_uninstall)
+        self.assertEqual(self.stops(), [])
+        self.assertTrue(M.SYS_UNIT.exists() and M.TUN_RECORD.exists())
+
+    def test_user_paths_never_stop_a_foreign_unit(self):
+        # off, cleanup and tun-remove (stop_service) and the tun2socks unit's
+        # ExecStartPre/ExecStopPost (tun-unit) act only on our own root unit.
+        self.active = True
+        other = "/run/systemd/system/" + M.TUN_SERVICE
+        foreign_loaded = [
+            {"LoadState": "loaded", "ActiveState": "active", "FragmentPath": other},
+            {"LoadState": "loaded", "ActiveState": "active", "FragmentPath": str(M.SYS_UNIT),
+             "DropInPaths": "/etc/systemd/system/%s.d/x.conf" % M.TUN_SERVICE},
+            {"LoadState": "loaded", "ActiveState": "active", "FragmentPath": str(M.SYS_UNIT),
+             "NeedDaemonReload": "yes"},
+        ]
+        for props in foreign_loaded:
+            with self.subTest(props=props):
+                self.loaded = props
+                M.stop_service()
+                for verb in ("start", "stop"):
+                    with self.assertRaises(SystemExit):
+                        self.run_json(lambda: M.cmd_tun_unit(verb))
+                self.assertEqual(self.root_unit_stops(), [])
+        # loaded from our path, but the file there is not what we wrote
+        self.loaded = None
+        M.SYS_UNIT.parent.mkdir(parents=True)
+        M.SYS_UNIT.write_text("[Service]\nExecStart=/usr/bin/true\n")
+        M.stop_service()
+        with self.assertRaises(SystemExit):
+            self.run_json(lambda: M.cmd_tun_unit("stop"))
+        self.assertEqual(self.root_unit_stops(), [])
+        # ours, but another user's setup
+        M.SYS_UNIT.unlink()
+        self.run_json(M.cmd_tun_install)
+        rec = json.loads(M.TUN_RECORD.read_text())
+        rec["uid"] += 1
+        M.TUN_RECORD.write_text(json.dumps(rec))
+        M.stop_service()
+        self.assertEqual(self.root_unit_stops(), [])
+
+    def test_user_paths_stop_our_own_unit(self):
+        self.run_json(M.cmd_tun_install)
+        self.calls.clear()
+        self.active = True
+        M.stop_service()
+        self.assertEqual(len(self.root_unit_stops()), 1)
+        self.assertTrue(self.run_json(lambda: M.cmd_tun_unit("stop"))["ok"])
+        self.assertEqual(len(self.root_unit_stops()), 2)
+        M.SYS_UNIT.unlink()                                 # nothing of that name loaded
+        self.assertFalse(self.run_json(lambda: M.cmd_tun_unit("stop"))["stopped"])
+
+    def test_off_rewrites_an_old_tun2socks_unit_first(self):
+        # a pre-check unit would stop the root unit straight from systemctl
+        M.UNIT_DIR.mkdir(parents=True)
+        M.T2S_UNIT.write_text("[Service]\nExecStopPost=%s stop --no-ask-password %s\n"
+                              % (M.SYSTEMCTL, M.TUN_SERVICE))
+        M.stop_service()
+        self.assertEqual(M.T2S_UNIT.read_text(), M.t2s_unit_text())
+        reload_at = self.calls.index((M.SYSTEMCTL, "--user", "daemon-reload"))
+        stop_at = self.calls.index((M.SYSTEMCTL, "--user", "disable", "--now", M.T2S_SERVICE))
+        self.assertLess(reload_at, stop_at)
 
     def test_setup_without_a_record_adopts_identical_files(self):
         # installs from before the record existed: identical content is ours

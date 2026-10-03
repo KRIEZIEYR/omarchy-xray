@@ -205,12 +205,24 @@ since — per the record, or byte-identical to what it would write for you
 every file: another user's setup, or a foreign, locally changed or symlinked
 file, makes setup refuse with nothing changed. `tun-remove` refuses on a
 foreign unit and otherwise keeps (and names) any foreign or changed file.
+
+Every start or stop of `omarchy-xray-tun.service` goes through one check:
+setup, `tun-remove`, `off`, `cleanup` and the tun2socks unit's start/stop hooks
+(`omarchy-xray tun-unit start|stop`). The check asks systemd what it has loaded
+under that name and acts only when it was loaded from
+`/etc/systemd/system/omarchy-xray-tun.service` with no drop-ins and has not
+changed on disk since, and that file is the one tun-install wrote for your uid
+(per the record, or byte-identical). A unit of that name from another
+directory, a transient or masked one, one with drop-ins, a changed file or
+another user's setup is never started or stopped: setup and `tun-remove`
+refuse with nothing changed, `off` leaves it alone.
 No third-party binary ever runs as root or with capabilities, so there is
 nothing to pin or re-attest after an xray or tun2socks update. This script is
 never run as root again. No setcap, no sudoers. Undo with
 `omarchy-xray tun-remove`.
 
-The user unit `omarchy-xray-tun2socks.service` starts the root unit, runs
+The user unit `omarchy-xray-tun2socks.service` starts the root unit (through
+the check above), runs
 `omarchy-xray tun-run` (tun2socks on `xray0` → xray's socks port) and stops the
 root unit when it stops, so the device lives exactly as long as TUN mode.
 
