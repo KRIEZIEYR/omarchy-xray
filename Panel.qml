@@ -1504,8 +1504,7 @@ Panel {
     // Auto's "address" is its member count; other rows keep transport in the tooltip.
     // the node the switch would connect to: the caption's "Next" made visible
     readonly property bool isNext: !!node && !xray.connected && !!xray.connectTarget && node.key === xray.connectTarget.key
-    readonly property string meta: !node ? "" : (isNext ? "next" : "") + (isNext && node.key === "auto" ? " · " : "")
-                                                 + (node.key === "auto" ? node.address : "")
+    readonly property string meta: !node || node.key !== "auto" ? "" : node.address
     readonly property bool fastest: !!node && node.key === root.fastestKey
 
     hasCursor: root.cursorActive && root.nodeIndex === globalIndex
