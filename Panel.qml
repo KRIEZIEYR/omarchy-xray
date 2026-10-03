@@ -534,7 +534,7 @@ Panel {
       Item {
         XrayIcon {
           anchors.centerIn: parent
-          iconSize: Style.space(11)
+          iconSize: Style.space(13)
           color: root.barIconColor
           filled: root.tunnelUp
           half: xray.mode !== "tun"   // proxy covers only some apps
@@ -624,14 +624,22 @@ Panel {
           foreground: root.foreground
           fontFamily: root.fontFamily
           iconOpacity: root.onTarget ? 1.0 : 0.5
+          // the icon sits centred in the column left of the settings chips, so
+          // the title lines up with them
           iconComponent: Component {
+            Item {
+            implicitWidth: root.settingLabelWidth + Style.space(8) - Style.space(14)
+            implicitHeight: heroIcon.height
             XrayIcon {
-              iconSize: Style.font.display
+              id: heroIcon
+              anchors.centerIn: parent
+              iconSize: Math.round(Style.font.display * 1.25)
               color: root.tunnelUp ? root.onColor : hero.foreground
               filled: root.tunnelUp
               half: xray.mode !== "tun"   // proxy covers only some apps
               warning: !xray.reachable || xray.errorText !== "" || xray.subsTrouble
               badgeColor: root.errorColor
+            }
             }
           }
           trailingControl: Component {
