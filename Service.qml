@@ -41,6 +41,7 @@ Item {
     return null
   }
   property bool adblock: false
+  property string dns: "cloudflare"
   property bool geo: false
   property bool tunInstalled: false
   property var subs: []
@@ -263,7 +264,7 @@ Item {
                   "latency test": "The latency test", "update": "The subscription update",
                   "import": "Adding", "remove": "Removing the subscription",
                   "mode switch": "Switching mode", "TUN setup": "TUN setup", "routing": "Applying routing",
-                  "adblock": "Applying ad blocking", "status": "Reading status", "stats": "Reading traffic" }
+                  "adblock": "Applying ad blocking", "dns": "Changing DNS", "status": "Reading status", "stats": "Reading traffic" }
     return names[label] || "The last command"
   }
 
@@ -304,6 +305,7 @@ Item {
     routing = String(d.routing || "global")
     if (regions.length === 0 && d.regions && d.regions.slice) regions = d.regions.slice(0, 32)   // static list
     adblock = d.adblock === true
+    if (typeof d.dns === "string") dns = d.dns
     geo = d.geo === true
     tunInstalled = d.tunInstalled === true
     skippedText = Model.skippedLabel(d.skipped)
@@ -561,6 +563,10 @@ Item {
     for (var i = 0; i < regions.length; i++)
       if (preset === regions[i].code + "-direct") return regions[i].name
     return preset.substring(0, 2).toUpperCase()
+  }
+
+  function setDns(name) {
+    runLong([manager, "dns", name], "dns", 120000, "DNS: " + name, "Changing DNS…")
   }
 
   function setAdblock(on) {

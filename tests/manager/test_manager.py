@@ -443,6 +443,20 @@ class ConfigBuilding(Base):
         proxy = M.build_config(self.state(ns))
         self.assertNotIn("interface", json.dumps(proxy))
 
+    def test_dns_preset_reaches_the_tun_config(self):
+        ns = self.nodes()
+        M.CFG.mkdir(parents=True, exist_ok=True)
+        M.CONF.write_text(json.dumps({"outbounds": [
+            {"tag": "direct", "streamSettings": {"sockopt": {"interface": "eth0"}}}]}))
+        for name, url in M.DNS_PRESETS.items():
+            with self.subTest(dns=name):
+                conf = M.build_config(self.state(ns, mode="tun", dns=name))
+                self.assertEqual(conf["dns"]["servers"][-1], url)
+        conf = M.build_config(self.state(ns, mode="tun"))       # older state: no key
+        self.assertEqual(conf["dns"]["servers"][-1], M.DNS_PRESETS["cloudflare"])
+        with self.assertRaises(SystemExit):
+            M.cmd_dns("evil.example")
+
     def test_rebind_follows_default_route(self):
         if not HAVE_XRAY:
             self.skipTest("no xray core")

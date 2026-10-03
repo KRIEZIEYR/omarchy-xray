@@ -72,7 +72,7 @@ Panel {
   property bool settingsOpen: false      // remembered while the shell runs
   readonly property var settingRows: !xray.reachable || firstRun ? []
       : !settingsOpen ? ["hero", "settings"]
-      : regionsOpen ? ["hero", "settings", "mode", "route", "regions", "ads"] : ["hero", "settings", "mode", "route", "ads"]
+      : regionsOpen ? ["hero", "settings", "mode", "route", "regions", "ads", "dns"] : ["hero", "settings", "mode", "route", "ads", "dns"]
   readonly property string settingsSummary: (xray.mode === "tun" ? "TUN" : "PROXY apps only")
       + " · " + (xray.region ? xray.region.code.toUpperCase() + " DIRECT" : "ALL")
       + (xray.adblock ? " · ADBLOCK" : "")
@@ -102,6 +102,7 @@ Panel {
     if (r === "route") return c === 2 ? "Change the direct country" : "Route " + (c === 1 ? "direct" : "all")
     if (r === "regions") return xray.regions[c] ? xray.regions[c].name : ""
     if (r === "ads") return "Ad blocking " + (xray.adblock ? "on" : "off")
+    if (r === "dns") return "DNS " + (dnsOptions[c] ? dnsOptions[c].tooltip : "")
     if (r === "subs") return c === 0 ? "Open folder" : "Update all"
     if (r === "sub") { var s = xray.subs[cursorSub]; return s ? (s.title || s.host) : "" }
     return ""
@@ -119,6 +120,22 @@ Panel {
     { value: "tun", label: "TUN", tooltip: xray.tunInstalled ? "All system traffic goes through the VPN"
                                                             : "All traffic via the VPN · first switch asks your password" }
   ]
+  // DNS over HTTPS through the tunnel; only TUN sends the system's lookups there
+  readonly property var dnsOptions: [
+    { value: "cloudflare", label: "CF", tooltip: "Cloudflare 1.1.1.1" },
+    { value: "google", label: "GOOGLE", tooltip: "Google 8.8.8.8" },
+    { value: "quad9", label: "QUAD9", tooltip: "Quad9 9.9.9.9, blocks known malware domains" },
+    { value: "adguard", label: "ADGUARD", tooltip: "AdGuard, filters ads and trackers" }
+  ]
+  function dnsIndex() {
+    for (var i = 0; i < dnsOptions.length; i++) if (dnsOptions[i].value === xray.dns) return i
+    return 0
+  }
+  function chooseDns(v) {
+    if (xray.busy) { xray.busyRefused(); return }
+    if (v !== xray.dns) xray.setDns(v)
+  }
+
   readonly property var routeOptions: [
     { value: "global", label: "ALL", tooltip: "Everything through the VPN, except your local network" },
     { value: "direct", label: routeRegion ? routeRegion.code.toUpperCase() + " DIRECT" : "DIRECT",
@@ -127,7 +144,7 @@ Panel {
   ]
 
   function chipCount(row) {
-    return row === "mode" ? 2 : row === "route" ? 3
+    return row === "mode" ? 2 : row === "route" ? 3 : row === "dns" ? dnsOptions.length
          : row === "regions" ? xray.regions.length
          : row === "subs" ? (xray.subs.length > 0 ? 2 : 1)
          : row === "sub" ? (xray.subs[cursorSub] && xray.subs[cursorSub].local ? 1 : 2) : 1
@@ -136,6 +153,7 @@ Panel {
   function currentChip(row) {
     if (row === "mode") return xray.mode === "tun" ? 1 : 0
     if (row === "route") return xray.region ? 1 : 0
+    if (row === "dns") return dnsIndex()
     if (row !== "regions") return 0
     for (var i = 0; i < xray.regions.length; i++)
       if (xray.routing === xray.regions[i].code + "-direct") return i
@@ -159,6 +177,7 @@ Panel {
     }
     else if (r === "regions" && xray.regions[chipIndex]) pickRegion(xray.regions[chipIndex].code)
     else if (r === "ads") { if (xray.geo || xray.adblock) xray.setAdblock(!xray.adblock) }
+    else if (r === "dns" && dnsOptions[chipIndex]) chooseDns(dnsOptions[chipIndex].value)
     else if (r === "subs") { if (chipIndex === 0) xray.openWebUi(); else xray.updateSubscriptions() }
     else if (r === "sub" && xray.subs[cursorSub]) {
       // the Manual group has no Update: its only chip is Remove
@@ -752,6 +771,7 @@ Panel {
             if (r === "mode") return root.modeOptions[c].tooltip
             if (r === "route") return c < 2 ? root.routeOptions[c].tooltip : "Change the direct country"
             if (r === "settings") return root.settingsOpen ? "Enter hides the settings" : "Enter shows mode, route and ad blocking"
+            if (r === "dns") return root.dnsOptions[c].tooltip + (xray.mode === "tun" ? "" : " · used in TUN mode")
             if (r === "ads") return xray.geo ? "ADBLOCK: known ad and tracker domains" : "ADBLOCK needs the geo data packages"
             if (r === "hero") return root.killArmed ? "Enter again: traffic goes direct, unprotected"
                                       : xray.blocked ? "Waiting is safe: nothing leaks. Enter, then Enter again, turns it off"
@@ -1065,6 +1085,35 @@ Panel {
                   fontFamily: root.fontFamily
                 }
               }
+            }
+
+            RowLayout {
+              width: parent.width
+              spacing: Style.space(8)
+
+              PanelSectionHeader {
+                text: "DNS"
+                Layout.preferredWidth: root.settingLabelWidth
+                Layout.alignment: Qt.AlignVCenter
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+
+              ChipGroup {
+                options: root.dnsOptions
+                value: xray.dns
+                cursorIndex: root.cursorRow === "dns" ? root.chipIndex : -1
+                Accessible.role: Accessible.Grouping
+                Accessible.name: "DNS: " + root.dnsOptions[root.dnsIndex()].tooltip
+                Accessible.description: "Options: Cloudflare, Google, Quad9, AdGuard. h and l switch"
+                Accessible.focusable: true
+                Accessible.focused: cursorIndex >= 0
+                opacity: xray.busy ? 0.45 : 1.0
+                onChanged: function(v) { root.chooseDns(v) }
+                onHovered: function(i, h) { if (h) root.cursorActive = false }
+              }
+
+              Item { Layout.fillWidth: true }
             }
 
           }

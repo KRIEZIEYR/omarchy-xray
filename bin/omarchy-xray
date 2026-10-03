@@ -15,6 +15,7 @@ the two explicit TUN install steps):
   mode <proxy|tun>   switch mode (TUN needs the one-time `tun-setup`)
   routing <preset>   global | <region>-direct (ru by kz uz tm cn ir tr ae sa eg pk vn mm)
   adblock <on|off>   block geosite:category-ads-all
+  dns <preset>       DNS the TUN uses, through the tunnel: cloudflare, google, quad9, adguard
   on | off | restart start / stop / restart the tunnel
   test [key…]        latency-test nodes (batched, parallel, bounded)
   stats              traffic totals + speed (JSON, from xray metrics)
@@ -127,7 +128,14 @@ TUN_MARK = "omarchy-xray"      # xray0's alias: marks the device as ours
 # Marks a system unit of this layout (v3.0 ran xray itself with CAP_NET_ADMIN).
 TUN_LAYOUT = "# layout: root device + unprivileged tun2socks"
 PROBE = "https://www.gstatic.com/generate_204"
-REMOTE_DNS = "https://1.1.1.1/dns-query"
+# DNS over HTTPS by IP (no bootstrap lookup needed), sent through the tunnel.
+DNS_PRESETS = {
+    "cloudflare": "https://1.1.1.1/dns-query",
+    "google": "https://8.8.8.8/dns-query",
+    "quad9": "https://9.9.9.9/dns-query",
+    "adguard": "https://94.140.14.14/dns-query",     # also filters ads and trackers
+}
+REMOTE_DNS = DNS_PRESETS["cloudflare"]
 PRIVATE = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16",
            "127.0.0.0/8", "::1/128", "fc00::/7", "fe80::/10"]
 # Direct-routing regions (countries with heavy censorship): the chosen one's
@@ -508,6 +516,8 @@ def load_state():
     if st.get("routing") != "global" and not region_of(st.get("routing")):
         st["routing"] = "global"
     st["adblock"] = st.get("adblock") is True
+    if st.get("dns") not in DNS_PRESETS:
+        st["dns"] = "cloudflare"
     if not isinstance(st.get("skipped"), dict):
         st["skipped"] = {}
     st["version"] = 3
@@ -1480,7 +1490,7 @@ def build_config(st, custom=None):
             for b in bootstrap_dns(custom):
                 servers.append({"address": b, "domains": ["full:" + h for h in hosts],
                                 "skipFallback": True, "tag": "dns-bootstrap"})
-        servers.append(REMOTE_DNS)
+        servers.append(DNS_PRESETS.get(st.get("dns"), REMOTE_DNS))
         conf["dns"] = {"servers": servers, "tag": "dns-internal"}
         rules += [{"inboundTag": ["socks-in"], "port": "53", "outboundTag": "dns-out"},
                   {"inboundTag": ["dns-bootstrap"], "outboundTag": "direct"},
@@ -1920,6 +1930,18 @@ def cmd_adblock(value):
     out({"ok": True, "adblock": st["adblock"]})
 
 
+def cmd_dns(name):
+    if name not in DNS_PRESETS:
+        die("dns must be one of: " + ", ".join(DNS_PRESETS))
+    st = load_state()
+    st["dns"] = name
+    if st["nodes"]:
+        write_config(st)
+    save_state(st)
+    restart_if_running(st)
+    out({"ok": True, "dns": name})
+
+
 # --- latency test ------------------------------------------------------------
 
 _PROCS = set()
@@ -2220,6 +2242,7 @@ def cmd_status():
                      "flag": "".join(chr(0x1F1E6 + ord(ch) - 97) for ch in c)}
                     for c, v in REGIONS.items()],
         "adblock": st["adblock"],
+        "dns": st["dns"],
         "geo": asset_dir() is not None,
         "xray": os.path.isfile(XRAY),
         "tunInstalled": tun_installed(),
@@ -2736,7 +2759,7 @@ def _rebind():
 # --- main --------------------------------------------------------------------
 
 ROOT_COMMANDS = {"tun-install", "tun-uninstall"}
-LOCKED_COMMANDS = {"import", "subremove", "update", "select", "mode", "routing", "adblock",
+LOCKED_COMMANDS = {"import", "subremove", "update", "select", "mode", "routing", "adblock", "dns",
                    "on", "restart", "tun-remove", "cleanup"}
 _LOCK_FD = None
 
@@ -2760,7 +2783,7 @@ def _lock():
 def main():
     args = sys.argv[1:]
     if not args:
-        die("usage: omarchy-xray <import|subremove|update|select|mode|routing|adblock|on|off|"
+        die("usage: omarchy-xray <import|subremove|update|select|mode|routing|adblock|dns|on|off|"
             "restart|test|stats|status|logs|doctor|tun-setup|tun-remove|cleanup> [arg]")
     cmd, rest = args[0], args[1:]
     arg = rest[0] if rest else ""
@@ -2776,6 +2799,7 @@ def main():
         "mode": lambda: cmd_mode(arg),
         "routing": lambda: cmd_routing(arg),
         "adblock": lambda: cmd_adblock(arg),
+        "dns": lambda: cmd_dns(arg),
         "on": cmd_on,
         "off": cmd_off,
         "restart": cmd_restart,
