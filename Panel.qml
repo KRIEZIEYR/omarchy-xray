@@ -654,6 +654,13 @@ Panel {
             Item {
             implicitWidth: heroIcon.width + Style.space(6)
             implicitHeight: heroIcon.height
+            // the keys live here for mouse users, out of the way
+            MouseArea { id: heroIconHover; anchors.fill: parent; hoverEnabled: true }
+            PanelToolTip {
+              visible: heroIconHover.containsMouse
+              text: "Keys: Ctrl+C on/off · type to filter · j/k move · Enter apply · ? all keys"
+              fontFamily: root.fontFamily
+            }
             XrayIcon {
               id: heroIcon
               anchors.centerIn: parent
@@ -791,7 +798,7 @@ Panel {
 
         // Keys in three groups, pinned so they are never a list's length
         // away. Shown once the keyboard is used (and on first run); `?`
-        // hides or shows them. Before that, one line closes the list.
+        // hides or shows them. Before that, the hero icon's tooltip has them.
         Column {
           visible: root.firstRun || (xray.reachable && root.keyboardUser && !root.legendHidden)
           width: parent.width
@@ -1478,17 +1485,6 @@ Panel {
               }
             }
             }
-          }
-
-          Text {
-            textFormat: Text.PlainText
-            visible: xray.reachable && !root.firstRun && !root.keyboardUser
-            width: parent.width
-            text: "Keys: Ctrl+C on/off · type to filter · ? all keys"
-            color: root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-            wrapMode: Text.WordWrap
           }
         }
       }
