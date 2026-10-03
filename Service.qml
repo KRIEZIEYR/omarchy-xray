@@ -270,7 +270,7 @@ Item {
   }
 
   function busyRefused() {
-    if (testing) { flash("A latency test is running: stop it (Ctrl+T) to change settings"); return }
+    if (testing) return          // the settings are dimmed; the Test button says Stop
     var slot = _long.running ? _long : _action
     flash(opName(slot._label) + " is still running. Try again in a moment")
   }
@@ -422,11 +422,9 @@ Item {
     if (!run(_action, [manager, "on"], function(resp) {
       _actionDeadline.stop()
       pending = ""
-      if (!resp.ok) { actionStatus = ""; lastError = "Couldn't connect: " + (resp.message || "no details") }
-      // proxy mode reaches apps through their proxy settings: ones already
-      // running may not re-read them; TUN says nothing, the hero shows it
-      else if (mode !== "tun") flash("Apps already open may need a restart")
-      else actionStatus = ""
+      // the hero shows it; the PROXY chip's tooltip says open apps may need a restart
+      actionStatus = ""
+      if (!resp.ok) lastError = "Couldn't connect: " + (resp.message || "no details")
       refresh()
     })) { busyRefused(); return }
     if (!chained) {

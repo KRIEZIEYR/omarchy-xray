@@ -117,7 +117,7 @@ Panel {
   // One copy of what each chip does: its tooltip and the keyboard hint line
   // (kept short enough for that single line).
   readonly property var modeOptions: [
-    { value: "proxy", label: "PROXY", tooltip: "Apps that use the system proxy go through the VPN" },
+    { value: "proxy", label: "PROXY", tooltip: "Apps that use the system proxy go through the VPN · apps already open may need a restart" },
     { value: "tun", label: "TUN", tooltip: xray.tunInstalled ? "All system traffic goes through the VPN"
                                                             : "All traffic via the VPN · first switch asks your password" }
   ]
