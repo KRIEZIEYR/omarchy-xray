@@ -1055,7 +1055,7 @@ Panel {
                 Accessible.name: "Filter nodes"
                 Layout.fillWidth: true
                 foreground: root.foreground
-                placeholderText: "Filter — type, or / first for h j k l"
+                placeholderText: "Filter nodes: just start typing"
                 text: root.filterQuery
                 onTextChanged: {
                   root.filterQuery = text
@@ -1176,7 +1176,7 @@ Panel {
               }
 
               TextActionButton {
-                label: "Config"
+                label: "Open folder"
                 tooltip: "Open the config folder (~/.config/omarchy-xray, where custom.json lives) (Ctrl+O)"
                 hasCursor: root.cursorRow === "subs" && root.chipIndex === 0
                 onClicked: xray.openWebUi()
