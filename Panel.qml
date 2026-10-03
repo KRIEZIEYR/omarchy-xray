@@ -391,7 +391,7 @@ Panel {
     if (cursorRow !== "node") { activateChip(); return }
     ensureCursor()
     var node = selectedNode()
-    if (node) xray.connectNode(node)
+    if (node) xray.selectNode(node)
   }
 
   property real nowMs: Date.now()
@@ -768,7 +768,7 @@ Panel {
 
           Repeater {
             model: root.firstRun ? [["", "Enter adds it · Esc twice closes"]]
-                   : root.filterFocused ? [["FILTER", "↑/↓ · Enter connect · Ctrl+T test · Esc clear"]]
+                   : root.filterFocused ? [["FILTER", "↑/↓ · Enter select · Ctrl+T test · Esc clear"]]
                    : root.urlFocused ? [["URL", "Enter adds it · Esc back to the list"]]
                    : [["MOVE", "j/k · h/l · Enter apply · Home switch · ? hide"],
                       ["ACT", "Ctrl+C on/off · Ctrl+T test · Ctrl+R update"],
@@ -1130,7 +1130,7 @@ Panel {
                     return
                   }
                   // Esc clears and hands the keys back to the list (a second
-                  // Esc there closes); Enter connects and does the same
+                  // Esc there closes); Enter selects and does the same
                   if (event.key === Qt.Key_Escape) {
                     text = ""
                     keyCatcher.forceActiveFocus()
@@ -1511,6 +1511,8 @@ Panel {
     // Auto's "address" is its member count; other rows keep transport in the tooltip.
     readonly property string meta: !node || node.key !== "auto" ? "" : node.address
     readonly property bool fastest: !!node && node.key === root.fastestKey
+    // off: the node the switch will use lights up too
+    readonly property bool isChosen: !!node && !xray.connected && !!xray.connectTarget && node.key === xray.connectTarget.key
 
     hasCursor: root.cursorActive && root.nodeIndex === globalIndex
     current: isConnected
@@ -1520,12 +1522,12 @@ Panel {
     width: parent ? parent.width : 0
     implicitHeight: rowInner.implicitHeight + Style.spacing.rowPaddingX
     Accessible.role: Accessible.Button
-    Accessible.name: node ? node.name + (isConnected ? ", connected" : "") + (latencyText !== "" ? ", " + latencyText : "")
+    Accessible.name: node ? node.name + (isConnected ? ", connected" : isChosen ? ", selected" : "") + (latencyText !== "" ? ", " + latencyText : "")
                             + (fastest ? ", fastest" : "") : ""
     // the panel's own cursor is the focus a screen reader should follow
     Accessible.focusable: true
     Accessible.focused: hasCursor
-    Accessible.onPressAction: if (node) xray.connectNode(node)
+    Accessible.onPressAction: if (node) xray.selectNode(node)
 
     MouseArea {
       id: nodeMouse
@@ -1539,7 +1541,7 @@ Panel {
       onClicked: function(mouse) {
         if (!nodeRow.node) return
         if (mouse.button === Qt.RightButton) xray.testNode(nodeRow.node)
-        else xray.connectNode(nodeRow.node)
+        else xray.selectNode(nodeRow.node)
       }
     }
 
@@ -1554,7 +1556,7 @@ Panel {
 
       Text {
         textFormat: Text.PlainText
-        text: nodeRow.isConnected ? "󰐾" : "󰐽"
+        text: nodeRow.isConnected || nodeRow.isChosen ? "󰐾" : "󰐽"
         Accessible.ignored: true                  // the row's name says "connected"
         color: nodeRow.isConnected ? root.foreground : root.dim
         font.family: root.fontFamily
@@ -1604,7 +1606,7 @@ Panel {
       visible: nodeMouse.containsMouse && !!nodeRow.node
       text: (nodeRow.node && nodeRow.node.key !== "auto" && nodeRow.node.address
                ? nodeRow.node.address + (nodeRow.node.net ? " · " + nodeRow.node.net : "") + (nodeRow.fastest ? " · fastest" : "") + "\n" : "")
-            + (nodeRow.isConnected ? "Connected · right-click to test latency" : "Click to connect · right-click to test latency")
+            + (nodeRow.isConnected ? "Connected · right-click to test latency" : xray.connected ? "Click to switch · right-click to test latency" : "Click to select · right-click to test latency")
       fontFamily: root.fontFamily
     }
   }

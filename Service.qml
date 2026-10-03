@@ -352,6 +352,15 @@ Item {
 
   // --- actions ------------------------------------------------------------
 
+  // Picking a node in the list: switches while the tunnel runs, otherwise
+  // only remembers it for the switch (no surprise connection).
+  function selectNode(node) {
+    if (!node || !node.key) return
+    if (coreRunning || connected || pending !== "") { connectNode(node); return }
+    persistLastNode(node.key)
+    flash(scrub(node.name) + " selected · the switch connects")
+  }
+
   function connectNode(node) {
     if (!node || !node.key) return
     if (_long.running && !testing) { busyRefused(); return }   // an update or mode switch owns the state
