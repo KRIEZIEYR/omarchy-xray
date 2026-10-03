@@ -71,7 +71,7 @@ Panel {
   // so the nodes start right under the switch.
   property bool settingsOpen: false      // remembered while the shell runs
   readonly property var settingRows: !xray.reachable || firstRun ? []
-      : ["hero", "settings"].concat(settingsOpen ? ["mode", "route"].concat(regionsOpen ? ["regions"] : [], ["ads", "dns", "login"]) : [])
+      : ["hero", "settings"].concat(settingsOpen ? ["mode", "route"].concat(regionsOpen ? ["regions"] : [], ["dns", "ads", "login"]) : [])
   readonly property string settingsSummary: (xray.mode === "tun" ? "TUN" : "PROXY apps only")
       + " · " + (xray.region ? xray.region.code.toUpperCase() + " DIRECT" : "ALL")
       + (xray.adblock ? " · ADBLOCK" : "")
@@ -1020,6 +1020,35 @@ Panel {
               spacing: Style.space(8)
 
               PanelSectionHeader {
+                text: "DNS"
+                Layout.preferredWidth: root.settingLabelWidth
+                Layout.alignment: Qt.AlignVCenter
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+
+              ChipGroup {
+                options: root.dnsOptions
+                value: xray.dns
+                cursorIndex: root.cursorRow === "dns" ? root.chipIndex : -1
+                Accessible.role: Accessible.Grouping
+                Accessible.name: "DNS: " + root.dnsOptions[root.dnsIndex()].tooltip
+                Accessible.description: "Options: Cloudflare, Google, Quad9, AdGuard, system. h and l switch"
+                Accessible.focusable: true
+                Accessible.focused: cursorIndex >= 0
+                opacity: xray.busy ? 0.45 : 1.0
+                onChanged: function(v) { root.chooseDns(v) }
+                onHovered: function(i, h) { if (h) root.cursorActive = false }
+              }
+
+              Item { Layout.fillWidth: true }
+            }
+
+            RowLayout {
+              width: parent.width
+              spacing: Style.space(8)
+
+              PanelSectionHeader {
                 id: adblockLabel
                 text: "ADBLOCK"
                 Layout.preferredWidth: root.settingLabelWidth
@@ -1078,34 +1107,6 @@ Panel {
               }
             }
 
-            RowLayout {
-              width: parent.width
-              spacing: Style.space(8)
-
-              PanelSectionHeader {
-                text: "DNS"
-                Layout.preferredWidth: root.settingLabelWidth
-                Layout.alignment: Qt.AlignVCenter
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-              }
-
-              ChipGroup {
-                options: root.dnsOptions
-                value: xray.dns
-                cursorIndex: root.cursorRow === "dns" ? root.chipIndex : -1
-                Accessible.role: Accessible.Grouping
-                Accessible.name: "DNS: " + root.dnsOptions[root.dnsIndex()].tooltip
-                Accessible.description: "Options: Cloudflare, Google, Quad9, AdGuard, system. h and l switch"
-                Accessible.focusable: true
-                Accessible.focused: cursorIndex >= 0
-                opacity: xray.busy ? 0.45 : 1.0
-                onChanged: function(v) { root.chooseDns(v) }
-                onHovered: function(i, h) { if (h) root.cursorActive = false }
-              }
-
-              Item { Layout.fillWidth: true }
-            }
 
             RowLayout {
               width: parent.width
