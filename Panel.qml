@@ -534,7 +534,7 @@ Panel {
       Item {
         XrayIcon {
           anchors.centerIn: parent
-          iconSize: Style.space(13)
+          iconSize: Style.space(14)
           color: root.barIconColor
           filled: root.tunnelUp
           half: xray.mode !== "tun"   // proxy covers only some apps
@@ -624,11 +624,10 @@ Panel {
           foreground: root.foreground
           fontFamily: root.fontFamily
           iconOpacity: root.onTarget ? 1.0 : 0.5
-          // the icon sits centred in the column left of the settings chips, so
-          // the title lines up with them
+          // a narrow box: the icon close to the edge and to the title
           iconComponent: Component {
             Item {
-            implicitWidth: root.settingLabelWidth + Style.space(8) - Style.space(14)
+            implicitWidth: heroIcon.width + Style.space(6)
             implicitHeight: heroIcon.height
             XrayIcon {
               id: heroIcon

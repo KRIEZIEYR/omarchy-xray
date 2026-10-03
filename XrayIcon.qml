@@ -52,7 +52,7 @@ Item {
       function inner() { ctx.beginPath(); arch(8, 16, 7.5, 18.5); arch(11, 13, 12, 18.5) }
       function half(right) { ctx.beginPath(); ctx.rect(right ? 12 * k : 0, 0, 12 * k, 24 * k); ctx.clip() }
 
-      ctx.translate(0, -0.6 * k)   // the drawing spans y 2.75..21.75: centre it in the box
+      ctx.translate(0, -1.1 * k)   // the drawing sits low (y 2.75..21.75); the ground line reads heavy, so lift it a bit past centre
       outer(); ctx.stroke()
       ctx.beginPath(); ctx.moveTo(2 * k, 21 * k); ctx.lineTo(22 * k, 21 * k); ctx.stroke()   // ground
       if (root.filled) {
