@@ -76,6 +76,7 @@ Panel {
   readonly property string settingsSummary: (xray.mode === "tun" ? "TUN" : "PROXY apps only")
       + " · " + (xray.region ? xray.region.code.toUpperCase() + " DIRECT" : "ALL")
       + (xray.adblock ? " · ADBLOCK" : "")
+      + " · DNS " + dnsOptions[dnsIndex()].label
   function toggleSettings() {
     var onRow = cursorRow === "settings"
     if (settingsOpen) regionsOpen = false
