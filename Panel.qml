@@ -169,19 +169,19 @@ Panel {
 
   // Removal can't be undone (the URL is a secret the user would have to find
   // again), so it takes a second press on the same spot within 4 s.
-  // Armed by the subscription's own index, so a reload in between can never
-  // turn the second press into removing another one.
-  property int armedSub: -1
+  // Armed by the subscription itself (index and host), so a reload in between
+  // can never turn the second press into removing another one.
+  property string armedSub: ""
+  function subKey(s) { return s ? s.index + "|" + (s.url || s.host || "") : "" }
   Timer {
     id: disarmTimer; interval: 4000
-    onTriggered: { root.armedSub = -1; Accessible.announce("Remove cancelled") }
+    onTriggered: { root.armedSub = ""; Accessible.announce("Remove cancelled") }
   }
-  Connections { target: xray; function onSubsChanged() { root.armedSub = -1 } }
   function armRemove(i) {
     var s = xray.subs[i]
     if (!s) return
-    if (armedSub === s.index) { armedSub = -1; disarmTimer.stop(); xray.subRemove(s.index); return }
-    armedSub = s.index
+    if (armedSub === subKey(s)) { armedSub = ""; disarmTimer.stop(); xray.subRemove(s.index); return }
+    armedSub = subKey(s)
     disarmTimer.restart()
   }
 
@@ -1354,7 +1354,7 @@ Panel {
 
                   TextActionButton {
                     id: removeButton
-                    readonly property bool armed: !!subRow.sub && root.armedSub === subRow.sub.index
+                    readonly property bool armed: !!subRow.sub && root.armedSub === root.subKey(subRow.sub)
                     // same width armed or not, so "Update" never shifts
                     Layout.preferredWidth: Math.ceil(confirmMetrics.advanceWidth) + 2 * Style.spacing.controlPaddingX
                     label: armed ? "Confirm" : "Remove"
