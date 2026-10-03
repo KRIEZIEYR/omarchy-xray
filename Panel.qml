@@ -539,6 +539,7 @@ Panel {
           // outline in every state: brightness says on/off (the button dims
           // when off), a fill at bar size only blurs the arches
           filled: false
+          simple: true
           warning: !xray.reachable || xray.errorText !== "" || xray.subsTrouble
           badgeColor: root.errorColor
           // ~11 s of a slow breath, then a still bright outline: a password

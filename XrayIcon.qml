@@ -18,6 +18,8 @@ Item {
   property bool filled: false
   // proxy mode protects only apps that use the system proxy: half a tunnel
   property bool half: false
+  // bar size: two arches, outer and one inner (three blur together)
+  property bool simple: false
   property color badgeColor: Color.urgent
 
   width: iconSize
@@ -49,7 +51,11 @@ Item {
         ctx.lineTo(x1 * k, bottom * k)
       }
       function outer() { ctx.beginPath(); arch(4.5, 19.5, 3.5, 18.5); ctx.closePath() }
-      function inner() { ctx.beginPath(); arch(7, 17, 6, 18.5); arch(10.5, 13.5, 10, 18.5) }   // small inner opening
+      function inner() {
+        ctx.beginPath()
+        if (root.simple) { arch(9, 15, 9, 18.5); return }
+        arch(7, 17, 6, 18.5); arch(10.5, 13.5, 10, 18.5)
+      }   // small inner opening
       function half(right) { ctx.beginPath(); ctx.rect(right ? 12 * k : 0, 0, 12 * k, 24 * k); ctx.clip() }
 
       ctx.translate(0, -1.1 * k)   // the drawing sits low (y 2.75..21.75); the ground line reads heavy, so lift it a bit past centre
@@ -76,6 +82,7 @@ Item {
     function onColorChanged() { canvas.requestPaint() }
     function onFilledChanged() { canvas.requestPaint() }
     function onHalfChanged() { canvas.requestPaint() }
+    function onSimpleChanged() { canvas.requestPaint() }
   }
 
   BorderSurface {
