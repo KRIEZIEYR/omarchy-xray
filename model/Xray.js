@@ -245,13 +245,15 @@ function heroLine(state) {
     if (n.key === "auto") return "Connected" + mode + " · Auto" + (state.autoPick ? " → " + state.autoPick : "")
     return "Connected" + mode + " · " + n.name
   }
-  if (t.running) return "Off · xray running"
+  if (t.running) return "Off · not protected"
   return "Off"
 }
 
 // Panel hero: the exit you are on leads; the state is a short caption.
 function heroTitle(state) {
   if (state && state.blocked) return "Blocked"
+  // a unit crashed while wanted: the switch stays on, so the title must not say Off
+  if (state && state.dropped) return "Reconnecting"
   var n = state ? connectedNode(state.touch) : null
   // while connecting the switch is already on: the title names where it goes
   if (!n && state && (state.pending === "connecting" || state.pending === "switching") && state.target)
@@ -268,8 +270,9 @@ function heroTitle(state) {
 
 function heroState(state) {
   if (!state) return "…"
-  if (state.unreachable) return "Manager unreachable"
-  if (state.blocked) return "Kill switch · reconnecting"
+  if (state.unreachable) return "Manager not answering · run omarchy-xray doctor"
+  if (state.blocked) return "Kill switch · nothing leaks meanwhile"
+  if (state.dropped) return "Dropped · restarting the tunnel"
   var pending = { connecting: "Connecting…", switching: "Switching…", disconnecting: "Disconnecting…" }
   if (pending[state.pending]) return pending[state.pending]
   var t = state.touch
@@ -278,7 +281,7 @@ function heroState(state) {
   // proxy mode only covers apps that use the system proxy: say so every time
   if (connectedNode(t)) return state.mode === "tun" ? "Connected · TUN" : "Connected · system-proxy apps"
   if (!t.nodes || t.nodes.length === 0) return state.hasSubs ? "No usable nodes · see below" : "No subscription yet"
-  if (t.running) return "Off · xray running"
+  if (t.running) return "Off · not protected"
   // the mode leads: a long node name is what gets cut, never the mode
   return state.target ? mode + " → " + state.target : mode
 }

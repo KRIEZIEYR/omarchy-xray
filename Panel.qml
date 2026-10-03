@@ -680,7 +680,7 @@ Panel {
         // away. Shown once the keyboard is used (and on first run); `?`
         // hides or shows them. Mouse users get the keys in tooltips.
         Column {
-          visible: root.firstRun || (xray.reachable && root.keyboardUser && !root.legendHidden)
+          visible: root.firstRun || (xray.reachable && !root.legendHidden)
           width: parent.width
           spacing: Style.space(4)
 
@@ -688,6 +688,7 @@ Panel {
             model: root.firstRun ? [["", "Enter adds it · Esc twice closes"]]
                    : root.filterFocused ? [["FILTER", "↑/↓ · Enter connect · Ctrl+T test · Esc clear"]]
                    : root.urlFocused ? [["URL", "Enter adds it · Esc back to the list"]]
+                   : !root.keyboardUser ? [["KEYS", "Ctrl+C on/off · type to filter · j/k move · ? hide"]]
                    : [["MOVE", "j/k · h/l · Enter apply · Home switch · ? hide"],
                       ["ACT", "Ctrl+C on/off · Ctrl+T test · Ctrl+R update"],
                       ["MANAGE", "Ctrl+A add sub · Ctrl+O config · Ctrl+L logs"]]
@@ -1176,14 +1177,15 @@ Panel {
               }
 
               TextActionButton {
+                visible: root.subsShown
                 label: "Open folder"
-                tooltip: "Open the config folder (~/.config/omarchy-xray, where custom.json lives) (Ctrl+O)"
+                tooltip: "Open ~/.config/omarchy-xray, where custom.json lives · Ctrl+O"
                 hasCursor: root.cursorRow === "subs" && root.chipIndex === 0
                 onClicked: xray.openWebUi()
               }
 
               TextActionButton {
-                visible: xray.subs.length > 0
+                visible: root.subsShown && xray.subs.length > 0
                 label: "Update all"
                 tooltip: "Download every subscription again (Ctrl+R)"
                 enabled: !xray.busy

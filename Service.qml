@@ -67,6 +67,7 @@ Item {
     pending: pending,
     target: connectTarget ? connectTarget.name : "",
     blocked: blocked,
+    dropped: dropped,
     hasSubs: subs.length > 0,
     unreachable: !reachable,
     touch: touch,
