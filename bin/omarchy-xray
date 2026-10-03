@@ -137,7 +137,6 @@ DNS_PRESETS = {
     "adguard": "https://94.140.14.14/dns-query",     # also filters ads and trackers
     "system": None,       # the link's own resolvers, asked directly (not through the tunnel)
 }
-REMOTE_DNS = DNS_PRESETS["cloudflare"]
 PRIVATE = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16",
            "127.0.0.0/8", "::1/128", "fc00::/7", "fe80::/10"]
 # Direct-routing regions (countries with heavy censorship): the chosen one's
@@ -1496,7 +1495,7 @@ def build_config(st, custom=None):
         if system:
             servers += bootstrap_dns(custom)
         else:
-            servers.append(DNS_PRESETS.get(st.get("dns")) or REMOTE_DNS)
+            servers.append(DNS_PRESETS.get(st.get("dns")) or DNS_PRESETS["cloudflare"])
         conf["dns"] = {"servers": servers, "tag": "dns-internal"}
         rules += [{"inboundTag": ["socks-in"], "port": "53", "outboundTag": "dns-out"},
                   {"inboundTag": ["dns-bootstrap"], "outboundTag": "direct"},
@@ -1910,15 +1909,20 @@ def region_of(routing):
     return m.group(1) if m and m.group(1) in REGIONS else None
 
 
+def _apply(st):
+    """A setting changed: rebuild the config, save, restart a running tunnel."""
+    if st["nodes"]:
+        write_config(st)
+    save_state(st)
+    restart_if_running(st)
+
+
 def cmd_routing(preset):
     if preset != "global" and not region_of(preset):
         die("routing preset must be global or <region>-direct, region: " + ", ".join(REGIONS))
     st = load_state()
     st["routing"] = preset
-    if st["nodes"]:
-        write_config(st)
-    save_state(st)
-    restart_if_running(st)
+    _apply(st)
     out({"ok": True, "routing": preset, "geo": asset_dir() is not None})
 
 
@@ -1930,10 +1934,7 @@ def cmd_adblock(value):
     if st["adblock"] and asset_dir() is None:
         die("adblock needs geosite.dat — install your distro's Xray geo data "
             "(Arch: v2ray-domain-list-community + v2ray-geoip)")
-    if st["nodes"]:
-        write_config(st)
-    save_state(st)
-    restart_if_running(st)
+    _apply(st)
     out({"ok": True, "adblock": st["adblock"]})
 
 
@@ -1942,10 +1943,7 @@ def cmd_dns(name):
         die("dns must be one of: " + ", ".join(DNS_PRESETS))
     st = load_state()
     st["dns"] = name
-    if st["nodes"]:
-        write_config(st)
-    save_state(st)
-    restart_if_running(st)
+    _apply(st)
     out({"ok": True, "dns": name})
 
 

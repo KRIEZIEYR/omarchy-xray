@@ -71,8 +71,7 @@ Panel {
   // so the nodes start right under the switch.
   property bool settingsOpen: false      // remembered while the shell runs
   readonly property var settingRows: !xray.reachable || firstRun ? []
-      : !settingsOpen ? ["hero", "settings"]
-      : regionsOpen ? ["hero", "settings", "mode", "route", "regions", "ads", "dns"] : ["hero", "settings", "mode", "route", "ads", "dns"]
+      : ["hero", "settings"].concat(settingsOpen ? ["mode", "route"].concat(regionsOpen ? ["regions"] : [], ["ads", "dns"]) : [])
   readonly property string settingsSummary: (xray.mode === "tun" ? "TUN" : "PROXY apps only")
       + " · " + (xray.region ? xray.region.code.toUpperCase() + " DIRECT" : "ALL")
       + (xray.adblock ? " · ADBLOCK" : "")
@@ -129,10 +128,7 @@ Panel {
     { value: "adguard", label: "ADGUARD", tooltip: "AdGuard, filters ads and trackers" },
     { value: "system", label: "SYS", tooltip: "Your network's own DNS, outside the tunnel: your provider sees the lookups" }
   ]
-  function dnsIndex() {
-    for (var i = 0; i < dnsOptions.length; i++) if (dnsOptions[i].value === xray.dns) return i
-    return 0
-  }
+  function dnsIndex() { return Math.max(0, dnsOptions.findIndex(function(o) { return o.value === xray.dns })) }
   function chooseDns(v) {
     if (xray.busy) { xray.busyRefused(); return }
     if (v !== xray.dns) xray.setDns(v)
@@ -223,6 +219,7 @@ Panel {
 
   // Off while the kill switch holds lets traffic out unprotected, so it takes
   // a second press within 4 s, like Remove. Every on/off path comes here.
+  readonly property bool isOn: xray.connected || xray.blocked || xray.dropped
   property bool killArmed: false
   Timer { id: killDisarm; interval: 4000; onTriggered: root.killArmed = false }
   onKillArmedChanged: if (killArmed) xray.flash("Kill switch is holding: press again to turn off, traffic would go direct")
@@ -517,8 +514,8 @@ Panel {
     function toggle(): void { root.toggle() }
     function refreshNow(): string { xray.refresh(); return "ok" }
     function status(): string { return xray.heroSummary }
-    function connect(): string { return xray.connected || xray.blocked || xray.dropped ? "already on" : root.ipcToggle() }
-    function disconnect(): string { return xray.connected || xray.blocked || xray.dropped ? root.ipcToggle() : "already off" }
+    function connect(): string { return root.isOn ? "already on" : root.ipcToggle() }
+    function disconnect(): string { return root.isOn ? root.ipcToggle() : "already off" }
     function toggleProxy(): string { return root.ipcToggle() }
     function select(name: string): string {
       var q = String(name).toLowerCase()
@@ -774,7 +771,7 @@ Panel {
             if (r === "hero") return root.killArmed ? "Enter again: traffic goes direct, unprotected"
                                       : xray.blocked ? "Waiting is safe: nothing leaks. Enter, then Enter again, turns it off"
                                       : xray.connected ? "Enter disconnects" : "Enter connects"
-            return " "                                // keeps the line's height
+            return ""
           }
           color: root.dim
           font.family: root.fontFamily
@@ -912,10 +909,6 @@ Panel {
                 Accessible.description: "Options: proxy, TUN. h and l switch"
                 Accessible.focusable: true
                 Accessible.focused: cursorIndex >= 0
-                focusable: false
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                fontSize: Style.font.caption
                 opacity: xray.busy ? 0.45 : 1.0
                 onChanged: function(v) { root.chooseMode(v) }
                 onHovered: function(i, h) { if (h) root.cursorActive = false }
@@ -945,10 +938,6 @@ Panel {
                 Accessible.description: "Options: all through the VPN, one country direct. h and l switch"
                 Accessible.focusable: true
                 Accessible.focused: cursorIndex >= 0
-                focusable: false
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                fontSize: Style.font.caption
                 opacity: xray.busy ? 0.45 : 1.0
                 onChanged: function(v) { root.chooseRoute(v) }
                 onHovered: function(i, h) { if (h) root.cursorActive = false }
@@ -1502,7 +1491,6 @@ Panel {
     property var options: []
     property string value: ""
     property int cursorIndex: -1
-    property bool focusable: false
     property color foreground: root.foreground
     property string fontFamily: root.fontFamily
     property real fontSize: Style.font.caption
