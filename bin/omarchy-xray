@@ -30,6 +30,7 @@ the two explicit TUN install steps):
   tun-install        [root] what tun-setup runs: writes the system unit, the
   tun-uninstall      [root] polkit rule and the networkd drop-in (and removes)
   tun-run            [user unit] tun2socks on xray0 + follow the default route
+  proxy-sync         [user unit] apply or clear the proxy settings for the mode
   tun-unit <start|stop>  [user unit] start/stop the root unit, only if it is ours
 
 Security model:
@@ -426,12 +427,15 @@ def user_unit_text():
             "After=network-online.target\n\n"
             "[Service]\n"
             "ExecStart=%s run -c %s\n"
+            # set at every start, a login start too: the session environment
+            # does not survive a logout, so `on` alone would leave it empty
+            "ExecStartPost=-%s proxy-sync\n"
             "%s"
             "NoNewPrivileges=true\n"
             "Restart=on-failure\n"
             "RestartSec=3\n\n"
             "[Install]\n"
-            "WantedBy=default.target\n") % (XRAY, CONF, env)
+            "WantedBy=default.target\n") % (XRAY, CONF, SELF, env)
 
 
 def t2s_unit_text():
@@ -1726,14 +1730,20 @@ def cmd_import(arg):
     except ValueError as e:
         die(str(e))
     st = load_state()
-    if not any(s.get("url") == url for s in st["subs"]):
+    new = not any(s.get("url") == url for s in st["subs"])
+    if new:
         if len(st["subs"]) >= MAX_SUBS:
             die("too many subscriptions")
         st["subs"].append({"url": url})
     save_state(st)
     prev = _prev(st)
     st["nodes"] = fetch_subs(st)
+    sub = next(s for s in st["subs"] if s.get("url") == url)
+    if new and sub.get("error"):
+        st["subs"].remove(sub)                    # last in the list: no index shifts
     rebuild(st, *prev)
+    if sub.get("error"):
+        die("%s: %s" % (redact_url(url), sub["error"]))
     if not st["nodes"]:
         die("no nodes fetched for %s — check the URL/network" % redact_url(url))
     out({"ok": True, "subs": len(st["subs"]), "nodes": len(st["nodes"]),
@@ -1770,7 +1780,9 @@ def _import_manual(text):
 def cmd_subremove(key):
     st = load_state()
     k = str(key or "").strip()
-    if k.isdigit() and int(k) < len(st["subs"]):
+    if k.isdigit():
+        if int(k) >= len(st["subs"]):
+            die("no subscription with index " + k[:16])
         idx = int(k)
     else:
         kl = k.lower()
@@ -1943,7 +1955,10 @@ def cmd_dns(name):
         die("dns must be one of: " + ", ".join(DNS_PRESETS))
     st = load_state()
     st["dns"] = name
-    _apply(st)
+    if st["mode"] == "tun":
+        _apply(st)
+    else:
+        save_state(st)                          # used once TUN is on
     out({"ok": True, "dns": name})
 
 
@@ -2075,8 +2090,6 @@ def cmd_test(keys):
     # active tunnel (unprivileged SO_BINDTODEVICE, Linux >= 5.7).
     iface = default_dev() if tun_active() else None
     rundir = runtime_dir()
-    progress = pathlib.Path(rundir) / "test-progress.json"
-    done = 0
     lat = load_json(LAT, {})
     ids = {n["id"] for n in st["nodes"]}
     lat = {k: v for k, v in lat.items() if k in ids}
@@ -2102,15 +2115,9 @@ def cmd_test(keys):
             for n, r in zip(batch, res):
                 lat[n["id"]] = r
                 print("%-32s %s" % (n["name"][:32], r), file=sys.stderr)
-            done += len(batch)
             _cfg_dir()
             atomic_write(LAT, json.dumps({k: str(v)[:32] for k, v in lat.items()}), 0o600)
-            atomic_write(progress, json.dumps({"done": done, "total": len(nodes)}), 0o600)
     finally:
-        try:
-            progress.unlink()
-        except OSError:
-            pass
         signal.signal(signal.SIGTERM, old[0])
         signal.signal(signal.SIGINT, old[1])
         _kill_all()
@@ -2183,13 +2190,12 @@ def unit_states():
     return units
 
 
-def _test_progress():
-    p = load_json(pathlib.Path(runtime_dir()) / "test-progress.json", {})
-    return p if isinstance(p.get("done"), int) and isinstance(p.get("total"), int) else None
-
-
 def cmd_status():
     st = load_state()
+    mark = runtime_dir() / "session-started"
+    session_start = not mark.exists()
+    if session_start:
+        mark.touch()
     lat = load_json(LAT, {})
     us = unit_states()
     xs, ts = us.get(SERVICE, {}), us.get(T2S_SERVICE, {})
@@ -2256,7 +2262,7 @@ def cmd_status():
         "dropped": dropped,
         "blocked": blocked,
         "restarts": restarts,
-        "testProgress": _test_progress(),
+        "sessionStart": session_start,          # the widget's connect-at-login
         "hasUrl": bool(st["subs"]),
         "subs": subs,
         "skipped": st["skipped"],
@@ -2730,6 +2736,12 @@ def cmd_cleanup():
     out({"ok": True, "removed": removed, "kept": str(CFG)})
 
 
+def cmd_proxy_sync():
+    """[user unit] Proxy settings for the mode in state.json (cleared in TUN)."""
+    apply_system_proxy(load_state(), True)
+    out({"ok": True})
+
+
 def cmd_tun_run():
     """[user unit] tun2socks on xray0 -> xray's socks port. Meanwhile follow
     the default route (Wi-Fi <-> Ethernet): xray's outbounds are bound to one
@@ -2752,13 +2764,15 @@ def _rebind():
         return False
     if not _lock():
         return False                 # someone is changing things; next poll retries
-    st = load_state()
-    if st["mode"] != "tun" or not st["nodes"]:
-        return False
-    write_config(st)
-    uctl("restart", SERVICE)
-    os.close(_LOCK_FD)                   # releases the lock
-    return True
+    try:
+        st = load_state()
+        if st["mode"] != "tun" or not st["nodes"]:
+            return False
+        write_config(st)
+        uctl("restart", SERVICE)
+        return True
+    finally:
+        os.close(_LOCK_FD)               # releases the lock
 
 
 # --- main --------------------------------------------------------------------
@@ -2814,6 +2828,7 @@ def main():
         "logs": lambda: cmd_logs(arg or "40"),
         "doctor": cmd_doctor,
         "tun-run": cmd_tun_run,
+        "proxy-sync": cmd_proxy_sync,
         "tun-unit": lambda: cmd_tun_unit(arg),
         "cleanup": cmd_cleanup,
         "tun-setup": cmd_tun_setup,

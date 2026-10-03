@@ -1015,6 +1015,29 @@ class ManualServers(Base):
         self.assertEqual(sorted(n["name"] for n in nodes), ["Trojan", "WS"])
         self.assertEqual(st["subs"][1]["error"], "")
 
+    def test_new_subscription_that_fails_is_an_error_and_not_kept(self):
+        M.save_state(self.state([self.node("trojan-ws")]))
+        with self.assertRaises(SystemExit):
+            self.imp("https://other.example.com/token")       # fetch is offline
+        self.assertEqual(len(M.load_state()["subs"]), 1)
+
+    def test_subremove_out_of_range_index_never_matches_a_host(self):
+        M.save_state(self.state([self.node("trojan-ws")], subs=[{"url": "https://s1.example.com/x"}]))
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
+            M.cmd_subremove("1")
+        self.assertEqual(len(M.load_state()["subs"]), 1)
+
+    def test_dns_in_proxy_mode_does_not_restart(self):
+        M.save_state(self.state([self.node("trojan-ws")]))
+        saved = M.restart_if_running
+        M.restart_if_running = lambda st: self.fail("proxy mode does not use the DNS preset")
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                M.cmd_dns("quad9")
+        finally:
+            M.restart_if_running = saved
+        self.assertEqual(M.load_state()["dns"], "quad9")
+
     def test_subremove_manual_by_host_name(self):
         M.save_state(self.state([self.node("trojan-ws")]))
         self.imp(LINKS["vless-ws-tls"])
@@ -1040,6 +1063,11 @@ class StatusShape(Base):
         self.assertEqual(data["nodes"][2]["net"], "hysteria2")
         self.assertNotIn("sub.example.com/x", json.dumps(data))
         self.assertEqual(data["subs"][0]["url"], "https://sub.example.com/***")
+        self.assertTrue(data["sessionStart"])
+        with contextlib.redirect_stdout(io.StringIO()) as again:
+            M.cmd_status()
+        self.assertFalse(json.loads(again.getvalue())["sessionStart"])   # once per session
+        self.assertIn("ExecStartPost=-%s proxy-sync\n" % M.SELF, M.user_unit_text())
 
 
 if __name__ == "__main__":

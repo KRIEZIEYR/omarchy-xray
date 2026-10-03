@@ -104,6 +104,8 @@ module.exports = function ({ Xray, assert, eq }) {
     eq('hero disconnected', Xray.heroLine({ touch: off }), 'Off')
   }
   eq('hero unreachable', Xray.heroLine({ unreachable: true }), 'Xray manager unreachable')
+  eq('hero dropped', Xray.heroLine({ dropped: true, touch: {} }), 'Dropped · reconnecting')
+  eq('hero pending', Xray.heroLine({ pending: 'switching', touch: {} }), 'Switching…')
   eq('hero checking', Xray.heroLine({}), 'Checking…')
 
   /* ---- heroTitle / heroState: the node leads, the state is a short caption ---- */

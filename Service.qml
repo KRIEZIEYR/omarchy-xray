@@ -204,6 +204,7 @@ Item {
     if (parsed === null) parsed = extractJson(stderrText)
     if (parsed === null && (exitCode === 127 || exitCode === 126)) {
       managerFail("")
+      if (done) done({ ok: false, data: null, message: serviceError })
       return null
     }
     var resp = { ok: parsed !== null && parsed.ok !== false && exitCode === 0, data: parsed,
@@ -293,11 +294,13 @@ Item {
     if (_refreshAgain) { _refreshAgain = false; refresh() }
   }
 
-  // Once per shell start (that is, per login): connect if asked to, then a
-  // latency test shortly after, and again every 30 minutes.
+  // Once per shell start: connect if asked to (only on the session's first
+  // start, not after a shell restart), then a latency test shortly after,
+  // and again every 30 minutes.
   property bool _started: false
+  property bool _sessionStart: false
   function _onStart() {
-    if (setting("autoConnect", false) === true && !connected && !blocked && !dropped && pending === "")
+    if (_sessionStart && setting("autoConnect", false) === true && !connected && !blocked && !dropped && pending === "")
       toggleConnection(String(setting("lastNodeKey", "")))
     autoTestDelay.start()
   }
@@ -315,7 +318,7 @@ Item {
     }
     var d = resp.data
     reachable = true
-    if (!_started) { _started = true; Qt.callLater(_onStart) }
+    if (!_started) { _started = true; _sessionStart = d.sessionStart === true; Qt.callLater(_onStart) }
     installed = true
     mode = String(d.mode || "proxy")
     routing = String(d.routing || "global")
@@ -347,8 +350,6 @@ Item {
       _quietNext = true
       updateSubscriptions()
     }
-    if (testing && d.testProgress && d.testProgress.total > 0)
-      actionStatus = "Testing " + d.testProgress.done + "/" + d.testProgress.total + "…"
 
     // Drops come from the manager's unit states (a crash while enabled), so
     // an off, a mode switch or a node switch never raises one, and a busy job
@@ -373,7 +374,7 @@ Item {
   // Picking a node in the list: switches while the tunnel runs, otherwise
   // only remembers it for the switch (no surprise connection).
   function selectNode(node) {
-    if (!node || !node.key) return
+    if (!node || !node.key || node.connected) return
     if (coreRunning || connected || pending !== "") { connectNode(node); return }
     persistLastNode(node.key)          // the lit radio and the hero say it
   }
@@ -391,8 +392,7 @@ Item {
       }
       persistLastNode(node.key)
       if (!coreRunning) { cmdOn(true); return }
-      pending = ""
-      flash("Switched to " + scrub(node.name))
+      pending = ""; actionStatus = ""
       refresh()
     })) { busyRefused(); return }
     pending = wasRunning ? "switching" : "connecting"
@@ -402,6 +402,7 @@ Item {
   }
 
   function disconnect() {
+    if (_long.running && !testing) { busyRefused(); return }
     if (!run(_action, [manager, "off"], function(resp) {
       _actionDeadline.stop()
       pending = ""
@@ -453,8 +454,9 @@ Item {
       _longDeadline.stop()
       var what = label.charAt(0).toUpperCase() + label.substring(1)
       var msg = resp.message || "no details"
-      if (resp.ok && okText) flash(typeof okText === "function" ? okText(resp.data || {}) : okText)
-      else { actionStatus = ""; lastError = msg.indexOf(what) === 0 ? msg : what + " failed: " + msg }
+      if (!resp.ok) { actionStatus = ""; lastError = msg.indexOf(what) === 0 ? msg : what + " failed: " + msg }
+      else if (okText) flash(typeof okText === "function" ? okText(resp.data || {}) : okText)
+      else actionStatus = ""
       if (after) after(resp)
       refresh()
     }, extraEnv)) { busyRefused(); return }
@@ -487,7 +489,6 @@ Item {
 
   function stopTest() {
     if (!testing) return
-    actionStatus = "Stopping test…"
     try { _long.signal(15) } catch (e) {}
   }
 
@@ -529,9 +530,10 @@ Item {
               return d.manual ? "Added " + d.manual + (d.manual === 1 ? " server" : " servers") + " to Manual"
                               : "Subscription added: " + (d.nodes || 0) + " nodes available"
             },
-            busyText, { OMARCHY_XRAY_SUB_URL: u },
+            "", { OMARCHY_XRAY_SUB_URL: u },
             function(resp) {
               importNote = resp.ok ? "" : lastError
+              if (!resp.ok) lastError = ""       // said under the field, not twice
               if (onDone) onDone(resp.ok)
             })
     if (importing) importNote = busyText

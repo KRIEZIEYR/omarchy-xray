@@ -134,6 +134,10 @@ Panel {
     if (xray.busy) { xray.busyRefused(); return }
     if (v !== xray.dns) xray.setDns(v)
   }
+  function toggleAdblock() {
+    if (xray.busy) { xray.busyRefused(); return }
+    if (xray.geo || xray.adblock) xray.setAdblock(!xray.adblock)
+  }
 
   readonly property var routeOptions: [
     { value: "global", label: "ALL", tooltip: "Everything through the VPN, except your local network" },
@@ -175,7 +179,7 @@ Panel {
       else regionsOpen = !regionsOpen
     }
     else if (r === "regions" && xray.regions[chipIndex]) pickRegion(xray.regions[chipIndex].code)
-    else if (r === "ads") { if (xray.geo || xray.adblock) xray.setAdblock(!xray.adblock) }
+    else if (r === "ads") toggleAdblock()
     else if (r === "dns" && dnsOptions[chipIndex]) chooseDns(dnsOptions[chipIndex].value)
     else if (r === "login") toggleAutoConnect()
     else if (r === "subs") { if (xray.subs.length > 0) xray.updateSubscriptions() }
@@ -528,7 +532,8 @@ Panel {
     function disconnect(): string { return root.isOn ? root.ipcToggle() : "already off" }
     function toggleProxy(): string { return root.ipcToggle() }
     function select(name: string): string {
-      var q = String(name).toLowerCase()
+      var q = String(name || "").trim().toLowerCase()
+      if (q === "") return "usage: select <part of a node name>"
       var nodes = xray.touch ? xray.touch.nodes : []
       for (var i = 0; i < nodes.length; i++) {
         if (nodes[i].name.toLowerCase().indexOf(q) !== -1) { xray.connectNode(nodes[i]); return "ok" }
@@ -553,7 +558,7 @@ Panel {
     // an action started from the bar (right-click) reports back here too
     tooltipText: (xray.errorText !== "" ? "󰀦 " + xray.errorText + "\n" : "")
                  + (xray.pending !== "" ? xray.actionStatus
-                    : xray.heroSummary + " · right-click to " + (xray.connected ? "disconnect" : "connect"))
+                    : xray.heroSummary + " · right-click to " + (root.isOn ? "turn off" : "connect"))
     iconComponent: Component {
       Item {
         XrayIcon {
@@ -621,10 +626,11 @@ Panel {
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
+        var legendShown = root.keyboardUser && !root.legendHidden
         root.keysUsed = true
         var code = t.charCodeAt(0)
         if (code > 0 && code < 27) { root.runCtrl(String.fromCharCode(96 + code)); return }   // Ctrl+T = "\x14"
-        if (t === "?") { root.legendHidden = !root.legendHidden; return }
+        if (t === "?") { root.legendHidden = legendShown; return }
         if (/^[^\s\x00-\x1f]$/.test(t)) root.startTypeAhead(t)          // "/" just opens the field
       }
       // the kit reserves x for delete; nothing here deletes, so it types
@@ -703,7 +709,7 @@ Panel {
                 visible: powerSwitch.containsMouse
                 text: root.killArmed ? "Click again: traffic goes direct, unprotected"
                       : xray.blocked ? "Kill switch: nothing leaks while it reconnects. Turning off lets traffic go direct"
-                      : xray.connected ? "Disconnect (Ctrl+C)"
+                      : xray.connected || xray.dropped ? "Disconnect (Ctrl+C)"
                       : xray.connectTarget ? "Connect to " + xray.connectTarget.name + " (Ctrl+C)" : "Add a subscription or a server first"
                 fontFamily: root.fontFamily
               }
@@ -751,8 +757,7 @@ Panel {
                                                 + ", total down " + Model.formatBytes(xray.traffic.downTotal)
                                                 + ", up " + Model.formatBytes(xray.traffic.upTotal)
                              : "Measuring traffic"
-            onTextChanged: if (statusRow.kind === "error"
-                               || (statusRow.kind === "action" && !/^Testing \d/.test(xray.actionStatus)))
+            onTextChanged: if (statusRow.kind === "error" || statusRow.kind === "action")
                              Accessible.announce(statusRow.kind === "error" ? "Error: " + statusRow.errText : xray.actionStatus)
           }
 
@@ -787,7 +792,7 @@ Panel {
             var r = root.cursorRow, c = root.chipIndex
             if (r === "mode") return root.modeOptions[c].tooltip
             if (r === "route") return c < 2 ? root.routeOptions[c].tooltip : "Change the direct country"
-            if (r === "settings") return root.settingsOpen ? "Enter hides the settings" : "Enter shows mode, route and ad blocking"
+            if (r === "settings") return root.settingsOpen ? "Enter hides the settings" : "Enter shows mode, route, DNS, ad blocking and login"
             if (r === "login") return "Connects to the selected node when you log in"
             if (r === "dns") return root.dnsOptions[c].tooltip + (xray.mode === "tun" ? "" : " · used in TUN mode")
             if (r === "ads") return xray.geo ? "ADBLOCK: known ad and tracker domains" : "ADBLOCK needs the geo data packages"
@@ -897,7 +902,7 @@ Panel {
             TextActionButton {
               label: root.settingsSummary + (root.settingsOpen ? "  󰅃" : "  󰅀")
               a11yName: (root.settingsOpen ? "Hide settings. " : "Show settings. ") + "Now: " + root.settingsSummary
-              tooltip: root.settingsOpen ? "Hide mode, route and ad blocking" : "Change mode, route or ad blocking"
+              tooltip: root.settingsOpen ? "Hide the settings" : "Change mode, route, DNS, ad blocking or login"
               hasCursor: root.cursorRow === "settings"
               onClicked: root.toggleSettings()
             }
@@ -1068,10 +1073,11 @@ Panel {
               a11yName: "Ad blocking"
               checked: xray.adblock
               usable: xray.geo || xray.adblock
+              busy: xray.busy
               hasCursor: root.cursorRow === "ads"
               note: xray.geo ? "Blocks known ad and tracker domains"
                              : "Needs geo data: install v2ray-geoip and v2ray-domain-list-community"
-              onFlip: xray.setAdblock(!xray.adblock)
+              onFlip: root.toggleAdblock()
             }
 
             SettingToggle {
@@ -1487,6 +1493,7 @@ Panel {
     property string note: ""
     property bool checked: false
     property bool usable: true
+    property bool busy: false              // dimmed like the chips; the click still says why
     property bool hasCursor: false
     signal flip()
     width: parent ? parent.width : 0
@@ -1505,7 +1512,7 @@ Panel {
       Layout.alignment: Qt.AlignVCenter
       checked: st.checked
       hasCursor: st.hasCursor
-      opacity: st.usable ? 1.0 : 0.45
+      opacity: st.usable && !st.busy ? 1.0 : 0.45
       foreground: root.foreground
       onToggled: if (st.usable) st.flip()
       onHovered: function(h) { if (h) root.cursorActive = false }

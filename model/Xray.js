@@ -237,6 +237,9 @@ function heroLine(state) {
   if (!state) return "…"
   if (state.unreachable) return "Xray manager unreachable"
   if (state.blocked) return "Blocked · kill switch, reconnecting"
+  if (state.dropped) return "Dropped · reconnecting"
+  var busy = { connecting: "Connecting…", switching: "Switching…", disconnecting: "Disconnecting…" }
+  if (busy[state.pending]) return busy[state.pending]
   var t = state.touch
   if (!t) return "Checking…"
   var n = connectedNode(t)
