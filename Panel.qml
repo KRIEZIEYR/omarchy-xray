@@ -698,7 +698,7 @@ Panel {
           id: statusRow
           readonly property bool live: xray.connected && xray.traffic !== null
           readonly property string errText: xray.errorText !== "" ? xray.errorText : "The xray manager is not answering"
-          readonly property string kind: xray.actionStatus !== "" && xray.pending === "" ? "action"
+          readonly property string kind: xray.actionStatus !== "" && xray.pending === "" && !xray.testing ? "action"
                                        : xray.errorText !== "" && !xray.blocked && !xray.dropped ? "error"
                                        : !xray.reachable ? "error"
                                        : root.firstRun || !xray.connected ? "none" : "traffic"

@@ -483,7 +483,7 @@ Item {
               : keys.length === 1 ? "Testing " + scrub(first) + "…"
               : "Testing " + keys.length + " nodes…"
     runLong([manager, "test"].concat(subset ? keys : []), "latency test", 660000,
-            function(d) { return "Latency test done: " + Object.keys(d.latency || {}).length + " nodes" },
+            "",                                // results show in the list; no status line
             label, undefined, function(resp) {
       if (resp.ok && resp.data && resp.data.stopped === true) flash("Latency test stopped — partial results kept")
     })
