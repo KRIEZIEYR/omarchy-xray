@@ -278,6 +278,8 @@ function heroState(state) {
   if (state.blocked) return "Traffic held until the VPN reconnects"
   if (state.dropped) return "Dropped · restarting the tunnel"
   var pending = { connecting: "Connecting…", switching: "Switching…", disconnecting: "Disconnecting…" }
+  // the title already says "Connecting to X": the caption gives the mode
+  if (state.pending === "connecting" && state.target) return state.mode === "tun" ? "TUN" : "proxy"
   if (pending[state.pending]) return pending[state.pending]
   var t = state.touch
   if (!t) return "Checking…"

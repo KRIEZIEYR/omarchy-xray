@@ -136,6 +136,7 @@ module.exports = function ({ Xray, assert, eq }) {
   eq('title no subscription', Xray.heroTitle({ touch: { nodes: [], connectedKeys: {} } }), 'Not protected')
   eq('state no subscription', Xray.heroState({ touch: { nodes: [], connectedKeys: {} } }), 'No subscription yet')
   eq('state connecting', Xray.heroState({ touch: { nodes: [], connectedKeys: {} }, pending: 'connecting' }), 'Connecting…')
+  eq('state connecting with target', Xray.heroState({ touch: { nodes: [], connectedKeys: {} }, pending: 'connecting', target: 'DE', mode: 'tun' }), 'TUN')
   eq('state disconnecting', Xray.heroState({ touch: { nodes: [], connectedKeys: {} }, pending: 'disconnecting' }), 'Disconnecting…')
   eq('state unknown pending ignored', Xray.heroState({ touch: { nodes: [{ key: 'k' }], connectedKeys: {} }, pending: 'x' }), 'proxy')
 
