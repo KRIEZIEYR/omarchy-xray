@@ -996,6 +996,15 @@ class ManualServers(Base):
         self.assertEqual(sorted(n["name"] for n in nodes), ["Trojan", "WS"])
         self.assertEqual(st["subs"][1]["error"], "")
 
+    def test_subremove_manual_by_host_name(self):
+        M.save_state(self.state([self.node("trojan-ws")]))
+        self.imp(LINKS["vless-ws-tls"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            M.cmd_subremove("manual")
+        st = M.load_state()
+        self.assertEqual(len(st["subs"]), 1)
+        self.assertEqual([n["name"] for n in st["nodes"]], ["Trojan"])
+
 
 class StatusShape(Base):
     def test_status_json(self):

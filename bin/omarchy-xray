@@ -1759,7 +1759,8 @@ def cmd_subremove(key):
     else:
         kl = k.lower()
         hits = [i for i, s in enumerate(st["subs"])
-                if kl and kl in (urllib.parse.urlsplit(s.get("url", "")).hostname or "").lower()]
+                if kl and kl in ("manual" if "url" not in s
+                                 else urllib.parse.urlsplit(s["url"]).hostname or "").lower()]
         if not hits:
             die("no subscription matches: " + k[:128])
         if len(hits) > 1:
