@@ -127,7 +127,7 @@ module.exports = function ({ Xray, assert, eq }) {
     eq('title blocked', Xray.heroTitle({ touch: off, blocked: true }), 'Kill switch on')
     eq('state blocked', Xray.heroState({ touch: off, blocked: true }), 'Traffic held until the VPN reconnects')
     eq('title while connecting', Xray.heroTitle({ touch: off, target: 'DE', pending: 'connecting' }), 'Connecting to DE')
-    eq('state off names target', Xray.heroState({ touch: off, target: 'DE', mode: 'tun' }), 'Next: DE')
+    eq('state off names target', Xray.heroState({ touch: off, target: 'DE', mode: 'tun' }), 'DE')
     eq('state skipped nodes', Xray.heroState({ touch: { nodes: [], connectedKeys: {} }, hasSubs: true }), 'No usable nodes · see below')
   }
   eq('state unreachable', Xray.heroState({ unreachable: true }), 'Manager not answering · press Doctor')
