@@ -125,7 +125,7 @@ module.exports = function ({ Xray, assert, eq }) {
     eq('title blocked', Xray.heroTitle({ touch: off, blocked: true }), 'Blocked')
     eq('state blocked', Xray.heroState({ touch: off, blocked: true }), 'Kill switch · nothing leaks meanwhile')
     eq('title while connecting', Xray.heroTitle({ touch: off, target: 'DE', pending: 'connecting' }), 'DE')
-    eq('state off names target', Xray.heroState({ touch: off, target: 'DE', mode: 'tun' }), 'TUN → DE')
+    eq('state off names target', Xray.heroState({ touch: off, target: 'DE', mode: 'tun' }), 'Not protected · TUN, next DE')
     eq('state skipped nodes', Xray.heroState({ touch: { nodes: [], connectedKeys: {} }, hasSubs: true }), 'No usable nodes · see below')
   }
   eq('state unreachable', Xray.heroState({ unreachable: true }), 'Manager not answering · run omarchy-xray doctor')
@@ -135,7 +135,7 @@ module.exports = function ({ Xray, assert, eq }) {
   eq('state no subscription', Xray.heroState({ touch: { nodes: [], connectedKeys: {} } }), 'No subscription yet')
   eq('state connecting', Xray.heroState({ touch: { nodes: [], connectedKeys: {} }, pending: 'connecting' }), 'Connecting…')
   eq('state disconnecting', Xray.heroState({ touch: { nodes: [], connectedKeys: {} }, pending: 'disconnecting' }), 'Disconnecting…')
-  eq('state unknown pending ignored', Xray.heroState({ touch: { nodes: [{ key: 'k' }], connectedKeys: {} }, pending: 'x' }), 'proxy')
+  eq('state unknown pending ignored', Xray.heroState({ touch: { nodes: [{ key: 'k' }], connectedKeys: {} }, pending: 'x' }), 'Not protected · proxy')
 
   /* ---- names are tidied; the fastest measured node is known ---- */
   {
