@@ -696,14 +696,14 @@ Panel {
                   : statusRow.kind === "error" ? "󰀦 " + statusRow.errText
                   : !statusRow.live ? "Measuring traffic…"
                   : "󰁅 " + Model.formatSpeed(xray.traffic.downSpeed)
-                    + "   󰁝 " + Model.formatSpeed(xray.traffic.upSpeed)
+                    + "  󰁝 " + Model.formatSpeed(xray.traffic.upSpeed)
                     // totals since connect: tray-arrow glyphs, unlike the speed arrows
-                    + "   ·   󰇚 " + Model.formatBytes(xray.traffic.downTotal)
-                    + "  󰕒 " + Model.formatBytes(xray.traffic.upTotal)
+                    + "  ·  󰇚 " + Model.formatBytes(xray.traffic.downTotal)
+                    + " 󰕒 " + Model.formatBytes(xray.traffic.upTotal)
             color: statusRow.kind === "error" ? root.errorColor
                    : statusRow.kind === "traffic" && statusRow.live ? root.foreground : root.dim
             font.family: root.fontFamily
-            font.pixelSize: Style.font.body
+            font.pixelSize: Style.font.bodySmall
             wrapMode: statusRow.kind === "error" ? Text.WordWrap : Text.NoWrap
             elide: statusRow.kind === "error" ? Text.ElideNone : Text.ElideRight
             Accessible.role: Accessible.StaticText
