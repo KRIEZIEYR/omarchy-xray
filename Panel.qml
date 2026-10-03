@@ -103,7 +103,7 @@ Panel {
     if (r === "regions") return xray.regions[c] ? xray.regions[c].name : ""
     if (r === "ads") return "Ad blocking " + (xray.adblock ? "on" : "off")
     if (r === "dns") return "DNS " + (dnsOptions[c] ? dnsOptions[c].tooltip : "")
-    if (r === "subs") return c === 0 ? "Open folder" : "Update all"
+    if (r === "subs") return "Update all"
     if (r === "sub") { var s = xray.subs[cursorSub]; return s ? (s.title || s.host) : "" }
     return ""
   }
@@ -144,7 +144,7 @@ Panel {
   function chipCount(row) {
     return row === "mode" ? 2 : row === "route" ? 3 : row === "dns" ? dnsOptions.length
          : row === "regions" ? xray.regions.length
-         : row === "subs" ? (xray.subs.length > 0 ? 2 : 1)
+         : row === "subs" ? 1
          : row === "sub" ? (xray.subs[cursorSub] && xray.subs[cursorSub].local ? 1 : 2) : 1
   }
 
@@ -176,7 +176,7 @@ Panel {
     else if (r === "regions" && xray.regions[chipIndex]) pickRegion(xray.regions[chipIndex].code)
     else if (r === "ads") { if (xray.geo || xray.adblock) xray.setAdblock(!xray.adblock) }
     else if (r === "dns" && dnsOptions[chipIndex]) chooseDns(dnsOptions[chipIndex].value)
-    else if (r === "subs") { if (chipIndex === 0) xray.openFolder(); else xray.updateSubscriptions() }
+    else if (r === "subs") { if (xray.subs.length > 0) xray.updateSubscriptions() }
     else if (r === "sub" && xray.subs[cursorSub]) {
       // the Manual group has no Update: its only chip is Remove
       if (chipIndex === 0 && !xray.subs[cursorSub].local) xray.updateSub(xray.subs[cursorSub].index)
@@ -1277,19 +1277,11 @@ Panel {
               Item { Layout.fillWidth: true }
 
               TextActionButton {
-                visible: root.subsShown
-                label: "Open folder"
-                tooltip: "Open the settings folder, ~/.config/omarchy-xray (Ctrl+O)"
-                hasCursor: root.cursorRow === "subs" && root.chipIndex === 0
-                onClicked: xray.openFolder()
-              }
-
-              TextActionButton {
                 visible: root.subsShown && xray.subs.length > 0
                 label: "Update all"
                 tooltip: "Download every subscription again (Ctrl+R)"
                 enabled: !xray.busy
-                hasCursor: root.cursorRow === "subs" && root.chipIndex === 1
+                hasCursor: root.cursorRow === "subs"
                 onClicked: xray.updateSubscriptions()
               }
             }

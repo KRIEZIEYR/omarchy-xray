@@ -288,22 +288,22 @@ refused with the core's error (the running config stays untouched).
 | `bootstrapDns` | list of IPs that resolve the server hostnames in TUN mode |
 | anything else | deep-merged at the top level (`log`, `policy`, …); keys starting with `_` are ignored |
 
-Example — fragment the TLS ClientHello, send a domain direct, enable mux:
+Most of this is already generated (routing presets, Auto balancer, DNS preset,
+bootstrap DNS, sockopt binding). The usual reason to edit it is your own
+routing rules — example, two domains always direct, even under ALL:
 
 ```json
 {
   "_comment": "merged by omarchy-xray",
-  "outbounds": [
-    { "tag": "fragment", "protocol": "freedom",
-      "settings": { "fragment": { "packets": "tlshello", "length": "100-200", "interval": "10-20" } } }
-  ],
-  "proxyPatch": {
-    "streamSettings": { "sockopt": { "dialerProxy": "fragment" } },
-    "mux": { "enabled": true, "concurrency": 8 }
-  },
-  "routing": { "rules": [ { "domain": ["domain:example.org"], "outboundTag": "direct" } ] }
+  "routing": { "rules": [
+    { "domain": ["domain:example.org", "domain:intranet.lan"], "outboundTag": "direct" }
+  ] }
 }
 ```
+
+`mux` is not useful with XTLS Vision, XHTTP (it has `xmux`) or gRPC (its own
+multiplexing); a ClientHello `fragment` helps only plain-TLS nodes under DPI,
+not Reality. The folder opens with Ctrl+O in the panel or the `openFolder` IPC verb.
 
 Run `omarchy-xray restart` after editing.
 
