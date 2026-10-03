@@ -1067,12 +1067,11 @@ Panel {
               label: "ADBLOCK"
               a11yName: "Ad blocking"
               checked: xray.adblock
-              busy: xray.busy
               usable: xray.geo || xray.adblock
               hasCursor: root.cursorRow === "ads"
               note: xray.geo ? "Blocks known ad and tracker domains"
                              : "Needs geo data: install v2ray-geoip and v2ray-domain-list-community"
-              onFlip: if (!xray.busy) xray.setAdblock(!xray.adblock)
+              onFlip: xray.setAdblock(!xray.adblock)
             }
 
             SettingToggle {
@@ -1487,7 +1486,6 @@ Panel {
     property string a11yName: ""
     property string note: ""
     property bool checked: false
-    property bool busy: false
     property bool usable: true
     property bool hasCursor: false
     signal flip()
@@ -1506,9 +1504,8 @@ Panel {
       cursorPad: Style.space(3)
       Layout.alignment: Qt.AlignVCenter
       checked: st.checked
-      busy: st.busy
       hasCursor: st.hasCursor
-      opacity: st.busy || !st.usable ? 0.45 : 1.0
+      opacity: st.usable ? 1.0 : 0.45
       foreground: root.foreground
       onToggled: if (st.usable) st.flip()
       onHovered: function(h) { if (h) root.cursorActive = false }
