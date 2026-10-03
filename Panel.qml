@@ -699,7 +699,7 @@ Panel {
                   : "󰁅 " + Model.formatSpeed(xray.traffic.downSpeed)
                     + "  󰁝 " + Model.formatSpeed(xray.traffic.upSpeed)
                     // totals since connect: tray-arrow glyphs, unlike the speed arrows
-                    + "  ·  󰇚 " + Model.formatBytes(xray.traffic.downTotal)
+                    + " · 󰇚 " + Model.formatBytes(xray.traffic.downTotal)
                     + " 󰕒 " + Model.formatBytes(xray.traffic.upTotal)
             color: statusRow.kind === "error" ? root.errorColor
                    : statusRow.kind === "traffic" && statusRow.live ? root.foreground : root.dim
