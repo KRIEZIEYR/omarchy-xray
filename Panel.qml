@@ -1305,7 +1305,7 @@ Panel {
                 Accessible.name: "Subscription URL, server link or Xray JSON"
                 Layout.fillWidth: true
                 foreground: root.foreground
-                placeholderText: "Subscription URL, vless:// link or Xray JSON"
+                placeholderText: "Sub URL, vless:// link or Xray JSON"
                 onAccepted: if (text.trim() !== "") root.importSub()
                 onTextChanged: if (!xray.importing) xray.importNote = ""
                 Keys.onEscapePressed: function(event) {
