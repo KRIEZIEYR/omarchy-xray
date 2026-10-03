@@ -536,8 +536,9 @@ Panel {
           anchors.centerIn: parent
           iconSize: Style.space(14)
           color: root.barIconColor
-          filled: root.tunnelUp
-          half: xray.mode !== "tun"   // proxy covers only some apps
+          // outline in every state: brightness says on/off (the button dims
+          // when off), a fill at bar size only blurs the arches
+          filled: false
           warning: !xray.reachable || xray.errorText !== "" || xray.subsTrouble
           badgeColor: root.errorColor
           // ~11 s of a slow breath, then a still bright outline: a password
