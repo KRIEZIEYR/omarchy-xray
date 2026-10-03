@@ -72,7 +72,7 @@ Panel {
   property bool settingsOpen: false      // remembered while the shell runs
   readonly property var settingRows: !xray.reachable || firstRun ? []
       : ["hero", "settings"].concat(settingsOpen ? ["mode", "route"].concat(regionsOpen ? ["regions"] : [], ["dns", "ads", "login"]) : [])
-  readonly property string settingsSummary: (xray.mode === "tun" ? "TUN" : "PROXY apps only")
+  readonly property string settingsSummary: (xray.mode === "tun" ? "TUN" : "PROXY")
       + " · " + (xray.region ? xray.region.code.toUpperCase() + " DIRECT" : "ALL")
       + (xray.adblock ? " · ADBLOCK" : "")
       + " · " + dnsOptions[dnsIndex()].label
