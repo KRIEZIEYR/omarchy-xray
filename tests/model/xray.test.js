@@ -126,7 +126,7 @@ module.exports = function ({ Xray, assert, eq }) {
     eq('state dropped', Xray.heroState({ touch: off, dropped: true }), 'Dropped · restarting the tunnel')
     eq('title blocked', Xray.heroTitle({ touch: off, blocked: true }), 'Kill switch on')
     eq('state blocked', Xray.heroState({ touch: off, blocked: true }), 'Traffic held until the VPN reconnects')
-    eq('title while connecting', Xray.heroTitle({ touch: off, target: 'DE', pending: 'connecting' }), 'Connecting to DE')
+    eq('title while connecting', Xray.heroTitle({ touch: off, target: 'DE', pending: 'connecting' }), 'Connecting…')
     eq('state off names target', Xray.heroState({ touch: off, target: 'DE', mode: 'tun' }), 'DE')
     eq('state skipped nodes', Xray.heroState({ touch: { nodes: [], connectedKeys: {} }, hasSubs: true }), 'No usable nodes · see below')
   }
@@ -136,7 +136,7 @@ module.exports = function ({ Xray, assert, eq }) {
   eq('title no subscription', Xray.heroTitle({ touch: { nodes: [], connectedKeys: {} } }), 'Not protected')
   eq('state no subscription', Xray.heroState({ touch: { nodes: [], connectedKeys: {} } }), 'No subscription yet')
   eq('state connecting', Xray.heroState({ touch: { nodes: [], connectedKeys: {} }, pending: 'connecting' }), 'Connecting…')
-  eq('state connecting with target', Xray.heroState({ touch: { nodes: [], connectedKeys: {} }, pending: 'connecting', target: 'DE', mode: 'tun' }), 'TUN')
+  eq('state connecting with target', Xray.heroState({ touch: { nodes: [], connectedKeys: {} }, pending: 'connecting', target: 'DE', mode: 'tun' }), 'DE')
   eq('state disconnecting', Xray.heroState({ touch: { nodes: [], connectedKeys: {} }, pending: 'disconnecting' }), 'Disconnecting…')
   eq('state unknown pending ignored', Xray.heroState({ touch: { nodes: [{ key: 'k' }], connectedKeys: {} }, pending: 'x' }), 'proxy')
 
