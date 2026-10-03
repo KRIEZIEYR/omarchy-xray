@@ -125,7 +125,8 @@ Panel {
     { value: "cloudflare", label: "CF", tooltip: "Cloudflare 1.1.1.1" },
     { value: "google", label: "GOOGLE", tooltip: "Google 8.8.8.8" },
     { value: "quad9", label: "QUAD9", tooltip: "Quad9 9.9.9.9, blocks known malware domains" },
-    { value: "adguard", label: "ADGUARD", tooltip: "AdGuard, filters ads and trackers" }
+    { value: "adguard", label: "ADGUARD", tooltip: "AdGuard, filters ads and trackers" },
+    { value: "system", label: "SYSTEM", tooltip: "Your network's own DNS, outside the tunnel: your provider sees the lookups" }
   ]
   function dnsIndex() {
     for (var i = 0; i < dnsOptions.length; i++) if (dnsOptions[i].value === xray.dns) return i
@@ -1105,7 +1106,7 @@ Panel {
                 cursorIndex: root.cursorRow === "dns" ? root.chipIndex : -1
                 Accessible.role: Accessible.Grouping
                 Accessible.name: "DNS: " + root.dnsOptions[root.dnsIndex()].tooltip
-                Accessible.description: "Options: Cloudflare, Google, Quad9, AdGuard. h and l switch"
+                Accessible.description: "Options: Cloudflare, Google, Quad9, AdGuard, system. h and l switch"
                 Accessible.focusable: true
                 Accessible.focused: cursorIndex >= 0
                 opacity: xray.busy ? 0.45 : 1.0

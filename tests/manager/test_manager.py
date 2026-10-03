@@ -449,11 +449,16 @@ class ConfigBuilding(Base):
         M.CONF.write_text(json.dumps({"outbounds": [
             {"tag": "direct", "streamSettings": {"sockopt": {"interface": "eth0"}}}]}))
         for name, url in M.DNS_PRESETS.items():
+            if url is None:
+                continue
             with self.subTest(dns=name):
                 conf = M.build_config(self.state(ns, mode="tun", dns=name))
                 self.assertEqual(conf["dns"]["servers"][-1], url)
         conf = M.build_config(self.state(ns, mode="tun"))       # older state: no key
         self.assertEqual(conf["dns"]["servers"][-1], M.DNS_PRESETS["cloudflare"])
+        sysconf = M.build_config(self.state(ns, mode="tun", dns="system"), {"bootstrapDns": ["192.168.1.1"]})
+        self.assertIn("192.168.1.1", sysconf["dns"]["servers"])
+        self.assertIn({"inboundTag": ["dns-internal"], "outboundTag": "direct"}, sysconf["routing"]["rules"])
         with self.assertRaises(SystemExit):
             M.cmd_dns("evil.example")
 

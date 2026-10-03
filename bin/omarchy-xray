@@ -15,7 +15,8 @@ the two explicit TUN install steps):
   mode <proxy|tun>   switch mode (TUN needs the one-time `tun-setup`)
   routing <preset>   global | <region>-direct (ru by kz uz tm cn ir tr ae sa eg pk vn mm)
   adblock <on|off>   block geosite:category-ads-all
-  dns <preset>       DNS the TUN uses, through the tunnel: cloudflare, google, quad9, adguard
+  dns <preset>       DNS the TUN uses: cloudflare, google, quad9, adguard (DoH through
+                     the tunnel) or system (the network's own DNS, outside the tunnel)
   on | off | restart start / stop / restart the tunnel
   test [key…]        latency-test nodes (batched, parallel, bounded)
   stats              traffic totals + speed (JSON, from xray metrics)
@@ -134,6 +135,7 @@ DNS_PRESETS = {
     "google": "https://8.8.8.8/dns-query",
     "quad9": "https://9.9.9.9/dns-query",
     "adguard": "https://94.140.14.14/dns-query",     # also filters ads and trackers
+    "system": None,       # the link's own resolvers, asked directly (not through the tunnel)
 }
 REMOTE_DNS = DNS_PRESETS["cloudflare"]
 PRIVATE = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16",
@@ -1490,11 +1492,16 @@ def build_config(st, custom=None):
             for b in bootstrap_dns(custom):
                 servers.append({"address": b, "domains": ["full:" + h for h in hosts],
                                 "skipFallback": True, "tag": "dns-bootstrap"})
-        servers.append(DNS_PRESETS.get(st.get("dns"), REMOTE_DNS))
+        system = st.get("dns") == "system"
+        if system:
+            servers += bootstrap_dns(custom)
+        else:
+            servers.append(DNS_PRESETS.get(st.get("dns")) or REMOTE_DNS)
         conf["dns"] = {"servers": servers, "tag": "dns-internal"}
         rules += [{"inboundTag": ["socks-in"], "port": "53", "outboundTag": "dns-out"},
                   {"inboundTag": ["dns-bootstrap"], "outboundTag": "direct"},
-                  dict({"inboundTag": ["dns-internal"]}, **target)]
+                  {"inboundTag": ["dns-internal"], "outboundTag": "direct"} if system
+                  else dict({"inboundTag": ["dns-internal"]}, **target)]
 
     croute = custom.get("routing") if isinstance(custom.get("routing"), dict) else {}
     if isinstance(croute.get("rules"), list):
