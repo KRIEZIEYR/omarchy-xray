@@ -763,7 +763,7 @@ Panel {
                    : root.filterFocused ? [["FILTER", "↑/↓ · Enter connect · Ctrl+T test · Esc clear"]]
                    : root.urlFocused ? [["URL", "Enter adds it · Esc back to the list"]]
                    : [["MOVE", "j/k · h/l · Enter apply · Home switch · ? hide"],
-                      ["ACT", "Ctrl+C on/off · Ctrl+T test (node or all) · Ctrl+R update"],
+                      ["ACT", "Ctrl+C on/off · Ctrl+T test · Ctrl+R update"],
                       ["MANAGE", "Ctrl+A add sub · Ctrl+O folder · Ctrl+L logs"]]
             delegate: RowLayout {
               required property var modelData
