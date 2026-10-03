@@ -137,7 +137,9 @@ class Base(unittest.TestCase):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="oxtest-"))
         self._saved = {k: getattr(M, k) for k in (
             "CFG", "CONF", "STATE", "LAT", "CUSTOM", "UNIT_DIR", "UNIT", "T2S_UNIT",
-            "XRAY", "default_dev", "bootstrap_dns", "running_units")}
+            "XRAY", "default_dev", "bootstrap_dns", "running_units", "apply_system_proxy")}
+        self.proxy_calls = []
+        M.apply_system_proxy = lambda st, on: self.proxy_calls.append(on)   # never the real gsettings
         M.CFG = self.tmp / "cfg"
         M.CONF = M.CFG / "config.json"
         M.STATE = M.CFG / "state.json"
@@ -813,7 +815,9 @@ class TunOwnership(Base):
         self.loaded = None
         M.SYS_UNIT.parent.mkdir(parents=True)
         M.SYS_UNIT.write_text("[Service]\nExecStart=/usr/bin/true\n")
+        M.wanted_mark().touch()
         M.stop_service()
+        self.assertFalse(M.wanted_mark().exists())        # off is never read as a drop
         with self.assertRaises(SystemExit):
             self.run_json(lambda: M.cmd_tun_unit("stop"))
         self.assertEqual(self.root_unit_stops(), [])
@@ -1067,6 +1071,8 @@ class StatusShape(Base):
         with contextlib.redirect_stdout(io.StringIO()) as again:
             M.cmd_status()
         self.assertFalse(json.loads(again.getvalue())["sessionStart"])   # once per session
+        self.assertEqual(self.proxy_calls, [False])       # left-over proxy settings cleared once
+        self.assertFalse(data["wanted"])                  # nothing turned on in this session
         self.assertIn("ExecStartPost=-%s proxy-sync\n" % M.SELF, M.user_unit_text())
 
 

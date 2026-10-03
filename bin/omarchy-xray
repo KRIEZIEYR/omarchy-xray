@@ -1610,8 +1610,16 @@ def _settle(check, tun, timeout=4.0):
     die("xray did not start%s" % (": " + tail if tail else " — see: omarchy-xray logs"))
 
 
+def wanted_mark():
+    """Set by `on`, removed by `off`. In the runtime dir, so a new login
+    starts with the VPN off: the units are started, never enabled, and the
+    widget connects at login only when LOGIN is on."""
+    return runtime_dir() / "wanted"
+
+
 def start_service(st):
     write_user_units()
+    uctl("disable", SERVICE, T2S_SERVICE)            # enabled by older versions: no autostart
     tun = st["mode"] == "tun"
     if tun and not tun_installed():
         die(TUN_SETUP_HINT)
@@ -1619,16 +1627,18 @@ def start_service(st):
         die(T2S_HINT)
     if not tun:
         uctl("disable", "--now", T2S_SERVICE)        # its stop deletes the device
-    r = uctl("restart", SERVICE) if user_active() else uctl("enable", "--now", SERVICE)
+    r = uctl("restart" if user_active() else "start", SERVICE)
     if r.returncode != 0:
         die("failed to start %s: %s" % (SERVICE, _last_lines(r.stderr)))
-    if tun and uctl("enable", "--now", T2S_SERVICE, timeout=90).returncode != 0:
+    if tun and uctl("start", T2S_SERVICE, timeout=90).returncode != 0:
         die("TUN did not start: %s. If the polkit rule is missing, re-run: omarchy-xray "
             "tun-setup" % (_last_lines(journal_tail(True), n=3) or "denied"))
     _settle(tun_active if tun else user_active, tun)
+    wanted_mark().touch()
 
 
 def stop_service():
+    wanted_mark().unlink(missing_ok=True)          # first: stopping is not a drop
     if T2S_UNIT.exists():
         write_user_units()          # older tun2socks units stopped the root unit unchecked
         uctl("disable", "--now", T2S_SERVICE)        # its stop deletes the device
@@ -2174,10 +2184,10 @@ def net_label(n):
 
 
 def unit_states():
-    """ActiveState / SubState / NRestarts / UnitFileState of both user units
-    in one systemctl call."""
+    """ActiveState / SubState / NRestarts of both user units in one
+    systemctl call."""
     r = uctl("show", "-p", "Id", "-p", "ActiveState", "-p", "SubState", "-p", "NRestarts",
-             "-p", "UnitFileState", SERVICE, T2S_SERVICE)
+             SERVICE, T2S_SERVICE)
     units, cur = {}, {}
     for line in (r.stdout or "").splitlines() + [""]:
         if not line.strip():
@@ -2196,14 +2206,17 @@ def cmd_status():
     session_start = not mark.exists()
     if session_start:
         mark.touch()
+        if not any(running_units()):
+            # left on at logout: the proxy settings (dconf) outlive the session
+            apply_system_proxy(st, False)
     lat = load_json(LAT, {})
     us = unit_states()
     xs, ts = us.get(SERVICE, {}), us.get(T2S_SERVICE, {})
     tun_mode = st["mode"] == "tun"
     running = xs.get("ActiveState") == "active" and (not tun_mode or ts.get("ActiveState") == "active")
-    wanted = xs.get("UnitFileState") == "enabled"          # off disables; a crash does not
+    wanted = wanted_mark().exists()                        # off removes it; a crash does not
     relevant = [xs, ts] if tun_mode else [xs]
-    # A crash, not an off: a unit waits to restart (or gave up) while enabled.
+    # A crash, not an off: a unit waits to restart (or gave up) while wanted.
     # In TUN the kill switch keeps the device, so traffic is blocked meanwhile.
     dropped = wanted and not running and any(u.get("SubState") in ("auto-restart", "failed")
                                              for u in relevant)
@@ -2257,7 +2270,7 @@ def cmd_status():
         "geo": asset_dir() is not None,
         "xray": os.path.isfile(XRAY),
         "tunInstalled": tun_installed(),
-        # off disables the units; a crash leaves them enabled - that is a drop
+        # off clears it; a crash leaves it set - that is a drop
         "wanted": wanted,
         "dropped": dropped,
         "blocked": blocked,
