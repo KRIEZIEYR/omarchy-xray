@@ -489,9 +489,14 @@ Panel {
     function toggle(): void { root.toggle() }
     function refreshNow(): string { xray.refresh(); return "ok" }
     function status(): string { return xray.heroSummary }
-    function connect(): string { xray.toggleConnection(root.lastNodeKey); return "ok" }
-    function disconnect(): string { xray.disconnect(); return "ok" }
-    function toggleProxy(): string { xray.toggleConnection(root.lastNodeKey); return "ok" }
+    // on/off from binds goes through the same kill-switch guard as the panel
+    function ipcToggle(): string {
+      root.requestToggle()
+      return root.killArmed ? "kill switch holding: call again within 4 s to let traffic go direct" : "ok"
+    }
+    function connect(): string { return xray.connected || xray.blocked || xray.dropped ? "already on" : ipcToggle() }
+    function disconnect(): string { return xray.connected || xray.blocked || xray.dropped ? ipcToggle() : "already off" }
+    function toggleProxy(): string { return ipcToggle() }
     function select(name: string): string {
       var q = String(name).toLowerCase()
       var nodes = xray.touch ? xray.touch.nodes : []
@@ -1047,7 +1052,7 @@ Panel {
                 }
                 PanelToolTip {
                   visible: adblockText.containsMouse
-                  text: "Blocks known ad and tracker domains (geosite:category-ads-all)"
+                  text: "Blocks known ad and tracker domains"
                   fontFamily: root.fontFamily
                 }
               }
@@ -1077,7 +1082,8 @@ Panel {
                 label: xray.testing ? "Stop · " + root.elapsedText : "Test"
                 tooltip: xray.testing ? "Stop the latency test, finished results are kept (Ctrl+T)"
                          : (root.filterQuery !== "" ? "Latency-test the filtered nodes" : "Latency-test all nodes")
-                           + (root.visibleNodes.length > 200 ? " (the first 200)" : "") + " (Ctrl+T)"
+                           + (root.visibleNodes.length > 200 ? " (the first 200)" : "")
+                           + ". Ctrl+T tests the node under the cursor, or all; right-click tests one"
                 enabled: xray.testing || (root.visibleNodes.length > 0 && !xray.busy)
                 onClicked: xray.testNodes(root.visibleNodes)
               }
@@ -1228,7 +1234,7 @@ Panel {
               TextActionButton {
                 visible: root.subsShown
                 label: "Open folder"
-                tooltip: "Open ~/.config/omarchy-xray, where custom.json lives · Ctrl+O"
+                tooltip: "Open the settings folder, ~/.config/omarchy-xray (Ctrl+O)"
                 hasCursor: root.cursorRow === "subs" && root.chipIndex === 0
                 onClicked: xray.openWebUi()
               }

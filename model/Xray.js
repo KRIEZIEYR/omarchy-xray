@@ -265,8 +265,11 @@ function heroTitle(state) {
     var t = state && state.touch
     return t ? "Not protected" : "Xray"
   }
-  if (n.key === "auto") return state.autoPick ? "Auto → " + state.autoPick : n.name
-  return n.name
+  // the protection word leads, the pair to "Not protected"; a long node name
+  // is what gets cut
+  var lead = state.mode === "tun" ? "Protected · " : "Proxy apps · "
+  if (n.key === "auto") return lead + (state.autoPick ? "Auto → " + state.autoPick : n.name)
+  return lead + n.name
 }
 
 function heroState(state) {
