@@ -346,18 +346,17 @@ Run `omarchy-xray restart` after editing.
 |---|---|
 | `toggle` / `open` / `close` | Panel |
 | `status` | One-line summary (current node) |
-| `connect` / `toggleProxy` | Connect to last/first node, disconnect if connected |
-| `disconnect` | Stop the tunnel |
+| `connect` / `disconnect` | Connect to the selected node / stop the tunnel (no-op if already there) |
+| `toggleProxy` | On/off; off while the kill switch holds needs a second call within 4 s |
 | `select <name>` | Switch to the first node whose name matches |
 | `test` | Latency-test nodes (bounded) |
 | `updateSubs` | Re-fetch the subscriptions |
-| `startCore` / `stopCore` | `omarchy-xray on` / `off` |
 | `subRemove <index>` | Remove a subscription |
 | `mode <proxy\|tun>` | Switch mode (TUN runs the one-time setup first if needed) |
 | `routing <global\|<region>-direct>` | Routing preset (`ru-direct`, `kz-direct`, …) |
 | `adblock <on\|off>` | Ad blocking |
 | `tunSetup` | Run the one-time TUN setup |
-| `webui` | Open the omarchy-xray config folder |
+| `openFolder` | Open the omarchy-xray config folder |
 
 ```ini
 bind = $mainMod SHIFT, V, exec, omarchy-shell krieziey.omarchy-xray toggleProxy

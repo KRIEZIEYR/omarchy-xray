@@ -430,10 +430,6 @@ Item {
     connectNode(target)
   }
 
-  function startCore() { cmdOn() }
-
-  function stopCore() { disconnect() }
-
   function runLong(args, label, deadlineMs, okText, busyText, extraEnv, after) {
     if (!installed && label !== "import") return
     if (!run(_long, args, function(resp) {
@@ -586,7 +582,7 @@ Item {
       q + " doctor | python3 -m json.tool; read -r -p 'Enter closes'"])
   }
 
-  function openWebUi() {
+  function openFolder() {
     Quickshell.execDetached(["xdg-open", Quickshell.env("HOME") + "/.config/omarchy-xray"])
   }
 

@@ -180,7 +180,7 @@ Panel {
     else if (r === "regions" && xray.regions[chipIndex]) pickRegion(xray.regions[chipIndex].code)
     else if (r === "ads") { if (xray.geo || xray.adblock) xray.setAdblock(!xray.adblock) }
     else if (r === "dns" && dnsOptions[chipIndex]) chooseDns(dnsOptions[chipIndex].value)
-    else if (r === "subs") { if (chipIndex === 0) xray.openWebUi(); else xray.updateSubscriptions() }
+    else if (r === "subs") { if (chipIndex === 0) xray.openFolder(); else xray.updateSubscriptions() }
     else if (r === "sub" && xray.subs[cursorSub]) {
       // the Manual group has no Update: its only chip is Remove
       if (chipIndex === 0 && !xray.subs[cursorSub].local) xray.updateSub(xray.subs[cursorSub].index)
@@ -226,6 +226,11 @@ Panel {
   property bool killArmed: false
   Timer { id: killDisarm; interval: 4000; onTriggered: root.killArmed = false }
   onKillArmedChanged: if (killArmed) xray.flash("Kill switch is holding: press again to turn off, traffic would go direct")
+  // on/off from binds goes through the same kill-switch guard as the panel
+  function ipcToggle() {
+    requestToggle()
+    return killArmed ? "kill switch holding: call again within 4 s to let traffic go direct" : "ok"
+  }
   function requestToggle() {
     if (xray.blocked && !killArmed) { killArmed = true; killDisarm.restart(); return }
     killArmed = false
@@ -392,7 +397,7 @@ Panel {
     }
     else if (k === "l") xray.openLogs()
     else if (k === "r") xray.updateSubscriptions()             // Ctrl+U/W stay text editing
-    else if (k === "o") xray.openWebUi()
+    else if (k === "o") xray.openFolder()
     else if (k === "a") root.focusSubUrl()
     else if (k === "c") {
       // a toggle, as the switch and the bar's right-click
@@ -509,19 +514,12 @@ Panel {
     target: root.ipcTarget
     function open(): void { root.open() }
     function close(): void { root.close() }
-    function show(): void { root.open() }
-    function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
     function refreshNow(): string { xray.refresh(); return "ok" }
     function status(): string { return xray.heroSummary }
-    // on/off from binds goes through the same kill-switch guard as the panel
-    function ipcToggle(): string {
-      root.requestToggle()
-      return root.killArmed ? "kill switch holding: call again within 4 s to let traffic go direct" : "ok"
-    }
-    function connect(): string { return xray.connected || xray.blocked || xray.dropped ? "already on" : ipcToggle() }
-    function disconnect(): string { return xray.connected || xray.blocked || xray.dropped ? ipcToggle() : "already off" }
-    function toggleProxy(): string { return ipcToggle() }
+    function connect(): string { return xray.connected || xray.blocked || xray.dropped ? "already on" : root.ipcToggle() }
+    function disconnect(): string { return xray.connected || xray.blocked || xray.dropped ? root.ipcToggle() : "already off" }
+    function toggleProxy(): string { return root.ipcToggle() }
     function select(name: string): string {
       var q = String(name).toLowerCase()
       var nodes = xray.touch ? xray.touch.nodes : []
@@ -532,14 +530,12 @@ Panel {
     }
     function test(): string { xray.testNodes(xray.touch ? xray.touch.nodes : []); return "ok" }
     function updateSubs(): string { xray.updateSubscriptions(); return "ok" }
-    function startCore(): string { xray.startCore(); return "ok" }
-    function stopCore(): string { xray.stopCore(); return "ok" }
     function subRemove(index: string): string { xray.subRemove(index); return "ok" }
     function mode(m: string): string { xray.setMode(m); return "ok" }
     function routing(p: string): string { xray.setRouting(p); return "ok" }
     function adblock(on: string): string { xray.setAdblock(on === "on" || on === "true"); return "ok" }
     function tunSetup(): string { xray.tunSetup(false); return "ok" }
-    function webui(): string { xray.openWebUi(); return "ok" }
+    function openFolder(): string { xray.openFolder(); return "ok" }
   }
 
   BarIconButton {
@@ -1296,7 +1292,7 @@ Panel {
                 label: "Open folder"
                 tooltip: "Open the settings folder, ~/.config/omarchy-xray (Ctrl+O)"
                 hasCursor: root.cursorRow === "subs" && root.chipIndex === 0
-                onClicked: xray.openWebUi()
+                onClicked: xray.openFolder()
               }
 
               TextActionButton {
