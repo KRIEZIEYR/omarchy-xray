@@ -1216,23 +1216,23 @@ Panel {
               spacing: Style.space(6)
 
               PanelSectionHeader {
-                Layout.fillWidth: true
-                text: "SUBSCRIPTIONS" + (xray.subs.length > 0 ? " · " + xray.subs.length + (root.subsShown ? " 󰅃" : " 󰅀") : "")
+                text: "SUBSCRIPTIONS"
+                Layout.alignment: Qt.AlignVCenter
                 foreground: root.foreground
                 fontFamily: root.fontFamily
-
-                MouseArea {
-                  anchors.fill: parent
-                  anchors.topMargin: -Style.space(6)       // a caption-high strip is too thin to hit
-                  anchors.bottomMargin: -Style.space(6)
-                  enabled: xray.subs.length > 0
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: root.subsOpen = !root.subsOpen
-                  Accessible.role: Accessible.Button
-                  Accessible.name: (root.subsShown ? "Collapse" : "Expand") + " subscriptions"
-                  Accessible.onPressAction: root.subsOpen = !root.subsOpen
-                }
               }
+
+              // the count is the expander, drawn like the SETTINGS summary so
+              // it reacts to the pointer the same way
+              TextActionButton {
+                visible: xray.subs.length > 0
+                label: xray.subs.length + (root.subsShown ? "  󰅃" : "  󰅀")
+                a11yName: (root.subsShown ? "Collapse" : "Expand") + " subscriptions, " + xray.subs.length
+                tooltip: root.subsShown ? "Hide the subscriptions" : "Show the subscriptions"
+                onClicked: root.subsOpen = !root.subsOpen
+              }
+
+              Item { Layout.fillWidth: true }
 
               TextActionButton {
                 visible: root.subsShown
