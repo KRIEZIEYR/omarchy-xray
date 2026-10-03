@@ -1360,7 +1360,7 @@ Panel {
             textFormat: Text.PlainText
             visible: xray.reachable && !root.firstRun && !root.keyboardUser
             width: parent.width
-            text: "Keys: Ctrl+C on/off · type to filter · j/k move · Ctrl+A add"
+            text: "Keys: Ctrl+C on/off · type to filter · j/k move"
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
