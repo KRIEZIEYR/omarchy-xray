@@ -1,10 +1,9 @@
 # Xray for Omarchy
 
-An [Omarchy](https://omarchy.org) shell widget that runs your Xray
-subscription in the background and gives you a remote control in the bar:
-connect/disconnect, node switching (or **Auto** — best ping), proxy or
-**TUN** mode, routing presets, latency tests, subscription updates and live
-traffic.
+An [Omarchy](https://omarchy.org) bar widget that runs your Xray subscription
+in the background: connect/disconnect, node switching or **Auto** (best ping),
+proxy or **TUN** mode, routing presets, DNS choice, latency tests,
+subscription updates and live traffic.
 
 <img src="preview.png" alt="The Xray panel: protection state, settings summary, nodes with latency" width="361">
 
@@ -16,83 +15,75 @@ Panel.qml ──▶ bin/omarchy-xray (manager, in the plugin folder)
 Panel.qml ──▶ 127.0.0.1:15491/debug/vars  (live traffic, straight from xray's metrics)
 ```
 
-No daemon accounts, no passwords, no REST — the widget runs `omarchy-xray`
+No daemon accounts, no passwords, no REST: the widget runs `omarchy-xray`
 commands and reads JSON back.
 
 ## Features
 
-- every node from your subscriptions, grouped per subscription, filter as you type
-- **VLESS, VMess, Trojan, Shadowsocks (incl. 2022), Hysteria2** share links,
-  plus Xray-JSON subscriptions (Remnawave/Marzban style)
-- no subscription? paste single servers instead: share links (`vless://`,
-  `ss://`, …) or an Xray JSON config (a whole config, a list of configs or one
-  outbound); they collect in a **Manual** group
-- **every transport the current Xray core supports** (see the table below)
-- **Auto** node: Xray's observatory + `leastPing` balancer picks the best live node
-- **proxy mode** (no privileges) and **TUN mode** (whole system, one-time setup)
-- routing presets: **ALL** / **<CC> DIRECT** for one region (RU, BY, KZ, UZ, TM, CN, IR, TR, AE, SA, EG, PK, VN, MM), optional **Adblock**
-- `custom.json` for anything else the core can do (rules, DNS, mux, fragment…)
-- subscription info: traffic used/total and expiry (`subscription-userinfo`),
-  `profile-title`, automatic refresh (`profile-update-interval`, default 24 h)
-- latency tests: batched and parallel, one xray process per 32 nodes
-- live traffic counters and speeds from xray's metrics endpoint (loopback)
-- mouse on the bar: click opens the panel, right-click connects or disconnects, middle-click refreshes; the tunnel icon is filled in TUN, half-filled in proxy mode (only apps using the system proxy are covered), an outline when off
-- keyboard-first: `j/k` move through the rows and nodes (the flag grid in two directions), `h/l` choose, `Enter` apply/connect, `Home` the switch (so `Home`, `Enter` disconnects), `End` last node, `PgUp/PgDn` a page; just type to filter (`/` first for a name starting with h, j, k or l). Commands take Ctrl so typing never triggers them: `Ctrl+C` connect, `Ctrl+T` test (again to stop; also inside the filter), `Ctrl+R` update, `Ctrl+A` add a subscription, `Ctrl+O` config folder, `Ctrl+L` logs; `?` hides or shows the key legend
-- the status line stays pinned under the switch; an error there offers **Logs** (the journal in a floating terminal)
-- IPC verbs for Hyprland binds
+- **Nodes**: every node from your subscriptions, grouped per subscription, filter as you type. No subscription? Paste share links or an Xray JSON config (whole config, list of configs or one outbound); they collect in a **Manual** group.
+- **Protocols**: VLESS, VMess, Trojan, Shadowsocks (incl. 2022), Hysteria2 share links and Xray-JSON subscriptions (Remnawave/Marzban style), every transport the current core supports ([table](#protocols-and-transports)).
+- **Auto**: up to 32 nodes (best tested latency first) behind a `leastPing` balancer fed by Xray's observatory (`generate_204` every minute).
+- **Modes**: proxy (no privileges) and TUN (whole system, one-time setup).
+- **Settings** (one summary row, expands): routing **ALL** / **<CC> DIRECT**, **DNS** (Cloudflare, Google, Quad9, AdGuard or the network's own, TUN only), **Adblock**, **Login** (connect when you log in).
+- **Subscriptions**: traffic used/total and expiry (`subscription-userinfo`), `profile-title`, refresh every `profile-update-interval` (default 24 h); fetched through the tunnel when direct is blocked. **Update all** shows `Fail N` when some fail.
+- **Latency**: batched, one xray process per 32 nodes; runs 20 s after the shell starts and every 30 min. **Test** shows `Fail N` for nodes that did not answer.
+- **Bar icon**: click opens the panel, right-click connects/disconnects, middle-click refreshes; bright when on, dimmed when off.
+- **Panel**: pinned status line (errors offer **Logs** or **Doctor**), live speeds and totals, picking a node while off only selects it (the switch connects).
+
+### Keys
+
+Commands take Ctrl so typing never triggers them; just type to filter (`/` first for a name starting with h, j, k or l). Hover the panel's icon for a reminder, press `?` for the full legend.
+
+| Key | Action |
+|---|---|
+| `j`/`k`, `h`/`l` | Move through rows / choose in a row (the flag grid in two directions) |
+| `Enter` | Apply the chip, select (or switch to) the node |
+| `Home` / `End` / `PgUp` `PgDn` | The switch / last node / a page |
+| `Ctrl+C` | On/off (off under the kill switch takes a second press) |
+| `Ctrl+T` | Test the node under the cursor, or all (again to stop; works in the filter) |
+| `Ctrl+R` / `Ctrl+A` | Update subscriptions / add one |
+| `Ctrl+O` / `Ctrl+L` | Config folder / logs |
 
 ## Protocols and transports
 
 | Link | Xray outbound |
 |---|---|
 | `vless://` | VLESS, incl. `flow` (Vision) and **VLESS Encryption** (`mlkem768x25519plus…`, ML-KEM keys) |
-| `vmess://` | VMess (base64 JSON form and `vmess://uuid@host` form) |
+| `vmess://` | VMess (base64 JSON and `vmess://uuid@host` forms) |
 | `trojan://` | Trojan |
-| `ss://` | Shadowsocks: SIP002, legacy base64, 2022-blake3-* (plugins are not supported by Xray) |
+| `ss://` | Shadowsocks: SIP002, legacy base64, 2022-blake3-* (Xray has no plugins) |
 | `hysteria2://`, `hy2://` | Hysteria2 (`auth`, `sni`, `obfs=salamander`, `pinSHA256`; port hopping uses the first port) |
 
-| `type=` | Xray transport | Notes |
+| `type=` | Transport | Notes |
 |---|---|---|
-| `tcp` / `raw` | RAW | `headerType=http` (host/path) supported |
+| `tcp` / `raw` | RAW | `headerType=http` (host/path) |
 | `ws` | WebSocket | `host`, `path` (incl. `?ed=` early data) |
 | `grpc` | gRPC | `serviceName`, `authority`, `mode=multi` |
 | `xhttp` / `splithttp` | XHTTP | `mode`, `host`, `path`, `extra` (JSON) |
 | `httpupgrade` | HTTPUpgrade | `host`, `path` |
-| `kcp` / `mkcp` | mKCP | `seed` and `headerType` via Xray's `finalmask` (`mkcp-legacy`) |
+| `kcp` / `mkcp` | mKCP | `seed`, `headerType` via `finalmask` (`mkcp-legacy`) |
 | (Hysteria2) | hysteria | QUIC, salamander via `finalmask` |
-| `h2`, `http`, `h3`, `quic` | — | **removed from Xray-core** — such nodes are skipped with a reason (use XHTTP) |
+| `h2`, `http`, `h3`, `quic` | — | removed from Xray-core: skipped with a reason (use XHTTP) |
 
-Security: `tls` (`sni`, `fp`, `alpn`, `ech`, `pcs`, `vcn`), `reality`
-(`pbk`, `sid`, `spx`, `pqv` / ML-DSA-65), `none`. Unknown fingerprints fall
-back to `chrome`. Xray-core no longer supports `allowInsecure`; such links
-are used with normal certificate verification (pin with `pcs` instead), and
-VLESS/Trojan without TLS/REALITY/VLESS-encryption to a public server is
-refused by the core (Xray ≥ 26.7), so those nodes are skipped with that reason.
+Security: `tls` (`sni`, `fp`, `alpn`, `ech`, `pcs`, `vcn`), `reality` (`pbk`,
+`sid`, `spx`, `pqv` / ML-DSA-65), `none`. Unknown fingerprints fall back to
+`chrome`. `allowInsecure` is gone from the core: such links use normal
+verification (pin with `pcs`). VLESS/Trojan without TLS/REALITY/encryption to a
+public server is refused by Xray ≥ 26.7 and skipped with that reason.
 
-After every fetch the node list is checked against **your installed core**
-(`xray run -test`): a node the core rejects is dropped with a reason instead
-of breaking the tunnel. Only the selected node (or the Auto members) goes
-into `config.json`, and every generated config is tested before it replaces
-the running one.
+Every fetched node is checked against **your installed core** (`xray run -test`);
+a rejected node is dropped with a reason ("N nodes skipped" under NODES).
+Only the selected node (or the Auto members) goes into `config.json`, and every
+generated config is tested before it replaces the running one.
 
 ## Requirements
 
-- Omarchy Quattro (shell plugins)
-- Xray core **≥ 26.6.1** (tested with 26.6.1 and 26.9.9) — install it yourself from a source you trust (e.g. review the AUR
-  package, then `omarchy pkg aur add xray`). The plugin never installs
-  packages for you and never grants capabilities to any binary. Older cores still work
-  for most nodes; whatever they reject is skipped with a reason, and
-  `omarchy-xray doctor` warns about the version.
-- TUN mode only: [tun2socks](https://github.com/xjasonlyu/tun2socks) ≥ 2.5
-  (`omarchy pkg aur add tun2socks`; review the package first). It runs as your
-  user without privileges.
-- optional geo data for the presets (`geoip.dat`, `geosite.dat`; on Arch:
-  `v2ray-geoip`, `v2ray-domain-list-community`). Found automatically in
-  `$XRAY_LOCATION_ASSET`, next to the xray binary, `/usr/share/xray` or
-  `/usr/share/v2ray`.
-- `/usr/bin/python3`, `curl` (already part of Omarchy)
+- Omarchy Quattro (shell plugins); `/usr/bin/python3`, `curl` (part of Omarchy).
+- Xray core **≥ 26.6.1** (tested with 26.6.1 and 26.9.9). Install it yourself from a source you trust (review the AUR package, then `omarchy pkg aur add xray`): the plugin never installs packages or grants capabilities. Older cores work for most nodes; what they reject is skipped, and `doctor` warns.
+- TUN only: [tun2socks](https://github.com/xjasonlyu/tun2socks) ≥ 2.5 (`omarchy pkg aur add tun2socks`), runs as your user.
+- Optional geo data for presets and adblock (`geoip.dat`, `geosite.dat`; Arch: `v2ray-geoip`, `v2ray-domain-list-community`), found in `$XRAY_LOCATION_ASSET`, next to the xray binary, `/usr/share/xray` or `/usr/share/v2ray`.
 
-## Install
+## Install, update, remove
 
 ```bash
 omarchy pkg aur add xray          # the core (review the AUR package first)
@@ -100,185 +91,127 @@ omarchy pkg aur add tun2socks     # optional, TUN mode only
 omarchy plugin add https://github.com/KRIEZIEYR/omarchy-xray.git --enable
 ```
 
-Then click the tunnel icon in the bar: on first run the panel asks for your
-subscription URL — or paste single servers into the same field: share links
-(one per line) or an Xray JSON config. Whatever you paste reaches the manager
-through the environment, never argv, and is kept only in `state.json` (`0600`). That is all proxy mode needs. For TUN, pick **TUN** in the panel: the
-first time it asks for your password once (see [TUN mode](#tun-mode)).
+Click the bar icon: the first run asks for your subscription URL, or paste
+servers (share links one per line, or Xray JSON) into the same field. It
+reaches the manager through the environment, never argv, and is kept only in
+`state.json` (`0600`). That is all proxy mode needs; for TUN pick **TUN** and
+confirm the password prompt once.
 
-There is no install script. Until you connect, nothing exists outside the
-plugin folder; the first connect writes `omarchy-xray.service` and
-`omarchy-xray-tun2socks.service` into `~/.config/systemd/user`, and
-subscriptions live in `~/.config/omarchy-xray` (`0700`).
-
-**Update**
+No install script: until you connect nothing exists outside the plugin folder.
+The first connect writes `omarchy-xray.service` and
+`omarchy-xray-tun2socks.service` to `~/.config/systemd/user`; subscriptions live
+in `~/.config/omarchy-xray` (`0700`).
 
 ```bash
-omarchy plugin update krieziey.omarchy-xray
-omarchy restart shell             # a live rescan keeps the old QML
-```
+# update (the manager rewrites its units on the next connect)
+omarchy plugin update krieziey.omarchy-xray && omarchy restart shell
 
-The manager rewrites its units on the next connect. Coming from 3.0 with TUN
-set up: pick TUN again and confirm the prompt — the old system unit (xray with
-`CAP_NET_ADMIN`) is replaced.
-
-**Remove**
-
-```bash
+# remove: cleanup stops the tunnel, undoes TUN setup (one prompt, only if set
+# up), clears the proxy settings and deletes the two user units
 ~/.config/omarchy/plugins/krieziey.omarchy-xray/bin/omarchy-xray cleanup
 omarchy plugin remove krieziey.omarchy-xray
 rm -rf ~/.config/omarchy-xray     # optional: subscriptions and settings
 ```
 
-`cleanup` stops the tunnel, undoes the TUN setup (one password prompt, only if
-it was set up), clears the proxy settings and deletes the two user units.
-
-**Coming from `install.sh` (3.0 and older):** that script copied the plugin
-and put the manager into `~/.local/bin`. Switch once:
+From 3.0 or older: with TUN set up, pick TUN again and confirm (the old xray
+unit with `CAP_NET_ADMIN` is replaced). If you used `install.sh`, switch once
+(subscriptions stay):
 
 ```bash
-omarchy plugin remove krieziey.omarchy-xray   # the copied folder (kept as a backup)
-rm -f ~/.local/bin/omarchy-xray
+omarchy plugin remove krieziey.omarchy-xray && rm -f ~/.local/bin/omarchy-xray
 omarchy plugin add https://github.com/KRIEZIEYR/omarchy-xray.git --enable
 ```
 
-Your subscriptions in `~/.config/omarchy-xray` stay as they are.
+## Command line
 
-## Daily use
-
-The widget covers everything below. The same manager works from a terminal;
-link it onto your `PATH` if you want the short name:
+The panel covers all of this. For a short name:
+`ln -s ~/.config/omarchy/plugins/krieziey.omarchy-xray/bin/omarchy-xray ~/.local/bin/`
 
 ```bash
-ln -s ~/.config/omarchy/plugins/krieziey.omarchy-xray/bin/omarchy-xray ~/.local/bin/
-```
-
-```bash
-export OMARCHY_XRAY_SUB_URL=<url>; omarchy-xray import -   # add a subscription (also: pipe URL on stdin)
-wl-paste | omarchy-xray import -    # or servers: share links / Xray JSON go to the Manual group
+export OMARCHY_XRAY_SUB_URL=<url>; omarchy-xray import -   # add a subscription (or pipe it on stdin)
+wl-paste | omarchy-xray import -    # servers: share links / Xray JSON → Manual group
 omarchy-xray status                 # JSON state (what the widget reads; URLs redacted)
-omarchy-xray select Finland         # switch by name substring, key (k…), n<index> or "auto"
+omarchy-xray select Finland         # by name substring, key (k…), n<index> or "auto"
 omarchy-xray on | off | restart
 omarchy-xray mode proxy|tun
 omarchy-xray routing global|<region>-direct   # e.g. kz-direct
+omarchy-xray dns cloudflare|google|quad9|adguard|system
 omarchy-xray adblock on|off
-omarchy-xray update [index]         # refresh all subscriptions or one
+omarchy-xray update [index]         # all subscriptions or one
 omarchy-xray test [key…]            # latency (first 200 nodes or the given keys, 10 min cap)
-omarchy-xray stats                  # traffic totals + speed
-omarchy-xray logs [n]               # journal of the active service
-omarchy-xray doctor                 # environment checks
-omarchy-xray cleanup                # before `omarchy plugin remove`
+omarchy-xray stats | logs [n] | doctor | cleanup
 ```
 
-Proxies: socks5 `127.0.0.1:20170`, HTTP `127.0.0.1:20171`. Private networks
-always bypass the tunnel.
+Proxies: socks5 `127.0.0.1:20170`, HTTP `127.0.0.1:20171`; private networks
+always bypass. In **proxy mode** the manager also sets the GNOME/GTK system
+proxy and the session environment (`http_proxy`, `https_proxy`, `all_proxy`,
+`no_proxy` via `systemctl --user set-environment`), so apps launched afterwards
+use it; TUN or off clears both.
 
-In **proxy mode** the manager also sets the GNOME/GTK system proxy and the
-session environment (`http_proxy`, `https_proxy`, `all_proxy`, `no_proxy` via
-`systemctl --user set-environment`), so apps launched afterwards — Omarchy
-starts them through uwsm — use the proxy automatically. Switching to TUN or
-turning the tunnel off clears both.
+## Routing presets
+
+- **ALL**: everything except private networks through the VPN.
+- **<CC> DIRECT**: one country's ccTLDs and `geoip:<code>` go direct, plus a geosite list where one exists (RU: `.ru/.su/.рф` + `geosite:category-ru`, CN: `geosite:cn`, IR: `geosite:category-ir`). Regions: RU BY KZ UZ TM CN IR TR AE SA EG PK VN MM. Without geo data only the ccTLDs apply.
+- **Adblock**: `geosite:category-ads-all` → blackhole (needs geo data).
 
 ## TUN mode
 
-TUN routes all system traffic (TCP, UDP) through Xray. **Xray never gets a
-capability**: root only creates the device and the routes, everything that
-touches your traffic runs as your user.
+All system traffic (TCP, UDP) goes through Xray. **Xray never gets a
+capability**: root only creates the device and routes; everything that touches
+traffic runs as you.
 
 ```
 apps ─▶ routes ─▶ xray0 ─▶ tun2socks (you) ─▶ 127.0.0.1:20170 ─▶ xray (you) ─▶ physical link ─▶ server
 ```
 
-**What `omarchy-xray tun-setup` does** — once, through one polkit (pkexec)
-prompt, or `sudo omarchy-xray tun-install` from a terminal:
+**`omarchy-xray tun-setup`** (once, one polkit prompt; or `sudo omarchy-xray tun-install`) writes, all-or-nothing:
 
 | File (root:root 0644) | Purpose |
 |---|---|
-| `/etc/systemd/system/omarchy-xray-tun.service` | root **oneshot** that runs only `ip`, `udevadm` and `resolvectl` with fixed arguments: creates `xray0` owned by your uid (`ip tuntap add … user <uid>`), `198.18.0.1/30` (+ a ULA /126), routes (below) and resolved DNS for `xray0`; stopping it deletes the device and its rules. Ownership is explicit: `xray0` carries the alias `omarchy-xray` and only a device with it is ever deleted, a foreign `xray0` makes the start refuse (preflight), a failed start rolls back through the same cleanup, and rules are removed by their exact spec (pref + selector + table), never by number alone; `sh` appears only to wrap two such `ip` checks. `CapabilityBoundingSet=CAP_NET_ADMIN`, `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome` and more |
-| `/etc/polkit-1/rules.d/49-omarchy-xray.rules` | lets **only your user** `start`/`stop`/`restart` **only that unit** without a password |
-| `/etc/systemd/network/10-omarchy-xray.network` | only if systemd-networkd is active: keeps networkd away from `xray0` |
-| `/var/lib/omarchy-xray/tun-install.json` | the record: your uid and the SHA-256 of each file above as written |
+| `/etc/systemd/system/omarchy-xray-tun.service` | root **oneshot** running only `ip`, `udevadm`, `resolvectl` with fixed arguments: `xray0` owned by your uid, `198.18.0.1/30` (+ a ULA /126), routes and resolved DNS; stop deletes them. `CapabilityBoundingSet=CAP_NET_ADMIN`, `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, … |
+| `/etc/polkit-1/rules.d/49-omarchy-xray.rules` | **only your user** may `start`/`stop`/`restart` **only that unit** without a password |
+| `/etc/systemd/network/10-omarchy-xray.network` | only with systemd-networkd: keeps it away from `xray0` |
+| `/var/lib/omarchy-xray/tun-install.json` | the record: your uid and each file's SHA-256 |
 
-The setup reads nothing but your uid (from `PKEXEC_UID`/`SUDO_UID`) and
-writes its files all-or-nothing (a failed write restores the previous ones).
-It replaces or removes only files it wrote for you and that are unchanged
-since — per the record, or byte-identical to what it would write for you
-(installs from before the record). Before any stop, write or delete it checks
-every file: another user's setup, or a foreign, locally changed or symlinked
-file, makes setup refuse with nothing changed. `tun-remove` refuses on a
-foreign unit and otherwise keeps (and names) any foreign or changed file.
+Ownership rules:
 
-Every start or stop of `omarchy-xray-tun.service` goes through one check:
-setup, `tun-remove`, `off`, `cleanup` and the tun2socks unit's start/stop hooks
-(`omarchy-xray tun-unit start|stop`). The check asks systemd what it has loaded
-under that name and acts only when it was loaded from
-`/etc/systemd/system/omarchy-xray-tun.service` with no drop-ins and has not
-changed on disk since, and that file is the one tun-install wrote for your uid
-(per the record, or byte-identical). A unit of that name from another
-directory, a transient or masked one, one with drop-ins, a changed file or
-another user's setup is never started or stopped: setup and `tun-remove`
-refuse with nothing changed, `off` leaves it alone.
-No third-party binary ever runs as root or with capabilities, so there is
-nothing to pin or re-attest after an xray or tun2socks update. This script is
-never run as root again. No setcap, no sudoers. Undo with
-`omarchy-xray tun-remove`.
+- The setup reads nothing but your uid (`PKEXEC_UID`/`SUDO_UID`). It replaces or removes only files it wrote for you and that are unchanged (per the record, or byte-identical for older installs); another user's setup or a foreign, changed or symlinked file makes it refuse with nothing changed. `tun-remove` refuses on a foreign unit and keeps (and names) foreign files.
+- `xray0` carries the alias `omarchy-xray`: only such a device is deleted, a foreign `xray0` makes the start refuse, a failed start rolls back, and rules are removed by exact spec (pref + selector + table). `sh` only wraps two such `ip` checks.
+- Every start/stop of the root unit (setup, `tun-remove`, `off`, `cleanup`, the tun2socks hooks `tun-unit start|stop`) goes through one check: systemd must have loaded it from `/etc/systemd/system/omarchy-xray-tun.service`, with no drop-ins, unchanged on disk, and that file must be the one written for your uid. Otherwise it is never started or stopped.
+- No third-party binary runs as root or with capabilities, so nothing to re-attest after updates. No setcap, no sudoers. Undo with `omarchy-xray tun-remove`.
 
-The user unit `omarchy-xray-tun2socks.service` starts the root unit (through
-the check above), runs
-`omarchy-xray tun-run` (tun2socks on `xray0` → xray's socks port) and stops the
-root unit when it stops, so the device lives exactly as long as TUN mode.
+The user unit `omarchy-xray-tun2socks.service` starts the root unit, runs
+`omarchy-xray tun-run` (tun2socks on `xray0` → socks port) and stops it again:
+the device lives exactly as long as TUN mode.
 
-**How routing works.** The default route into `xray0` lives in its own table
-(`18180`), selected by three `ip rule`s (prefs 18180–18182; IPv6 has two):
-`main` first but without its default route (LAN stays local), then lookups
-with no source address yet or from `198.18.0.1` go to the tunnel. Xray binds
-every connection it makes to the physical interface (`sockopt.interface`,
-unprivileged `SO_BINDTODEVICE`, Linux ≥ 5.7), so it never loops back into
-`xray0`; its replies are looked up from the physical address and pass a strict
-`rp_filter` (ufw sets `rp_filter=1`). `tun-run` follows default-route changes
-(Wi-Fi ↔ Ethernet) and rebinds xray within ~5 s.
+**Routing.** The default route into `xray0` lives in table `18180`, selected by
+three `ip rule`s (prefs 18180–18182; IPv6 two): `main` first without its default
+route (LAN stays local), then lookups with no source yet or from `198.18.0.1`
+go to the tunnel. Xray binds its connections to the physical interface
+(`sockopt.interface`, unprivileged `SO_BINDTODEVICE`, Linux ≥ 5.7) so it never
+loops, and passes a strict `rp_filter`. `tun-run` follows default-route changes
+(Wi-Fi ↔ Ethernet) and rebinds within ~5 s.
 
-**Kill switch.** If tun2socks or xray crashes, the device and its routes stay,
-so traffic is blocked (never sent direct) while systemd restarts them; the
-panel shows **Blocked** and a critical notification says so. Turning the
-switch off (or `omarchy-xray off`, or switching to proxy) removes the device
-and the normal network takes over. Only a deliberate stop lifts it.
+**Kill switch.** If tun2socks or xray crashes, the device and routes stay:
+traffic is blocked, never sent direct, while systemd restarts them; the panel
+shows **Kill switch on** and a critical notification fires. Only a deliberate
+off (two presses in the panel, or `omarchy-xray off`, or switching to proxy) lifts it.
 
-DNS: systemd-resolved sends everything to `198.18.0.2` on `xray0`; Xray
-answers it with a `dns` outbound. Queries go over DoH (`1.1.1.1`) through the
-proxy; the server hostnames themselves are resolved by bootstrap servers
-(the link's DHCP DNS + `1.1.1.1`, sent direct) so the tunnel never waits on
-itself. Override with `bootstrapDns` / `dns` in `custom.json`.
+**DNS.** systemd-resolved sends everything to `198.18.0.2` on `xray0`; Xray
+answers with a `dns` outbound using the panel's DNS choice (DoH by IP through
+the tunnel, or **SYS**: the network's own resolvers, direct). Server hostnames
+are resolved by bootstrap servers (the link's DNS + `1.1.1.1`, direct) so the
+tunnel never waits on itself.
 
-Manual check after `tun-setup` and `omarchy-xray mode tun && omarchy-xray on`:
-
-```bash
-omarchy-xray doctor
-ip addr show xray0                 # 198.18.0.1/30
-ip rule | grep 1818                # the three rules
-ip route show table 18180          # default dev xray0
-resolvectl status xray0            # DNS Servers: 198.18.0.2, DNS Domain: ~.
-curl -s https://ifconfig.me        # the server's IP
-```
-
-## Routing presets and Auto
-
-- **ALL** — everything except private networks through the proxy.
-- **Direct: region** — pick one country with heavy censorship (panel: ROUTE → `DIRECT`, country chip next to it; `ALL` sends everything through the VPN):
-  its ccTLDs and `geoip:<code>` go direct, plus a geosite list where one exists
-  (RU: `.ru/.su/.рф` + `geosite:category-ru`, CN: `geosite:cn`, IR:
-  `geosite:category-ir`). Regions: RU BY KZ UZ TM CN IR TR AE SA EG PK VN MM.
-  Without geo data only the ccTLDs apply.
-- **Adblock** — `geosite:category-ads-all` → blackhole (needs geo data).
-- **Auto** (first row in the node list) — up to 32 nodes (best tested latency
-  first) behind a `leastPing` balancer fed by Xray's observatory
-  (`generate_204` every minute). The panel shows `Auto → <current pick>`.
+Check by hand: `omarchy-xray doctor`, `ip addr show xray0` (`198.18.0.1/30`),
+`ip rule | grep 1818` (three rules), `ip route show table 18180`,
+`resolvectl status xray0` (`198.18.0.2`, `~.`), `curl -s https://ifconfig.me`.
 
 ## custom.json
 
-`~/.config/omarchy-xray/custom.json` is merged into every generated config,
-and the result is validated by `xray run -test` — an invalid combination is
-refused with the core's error (the running config stays untouched).
+`~/.config/omarchy-xray/custom.json` (Ctrl+O opens the folder) is merged into
+every generated config; the result must pass `xray run -test`, otherwise it is
+refused and the running config stays. Run `omarchy-xray restart` after editing.
 
 | Key | Merge |
 |---|---|
@@ -286,119 +219,77 @@ refused with the core's error (the running config stays untouched).
 | `routing.balancers` | appended; other `routing` keys override |
 | `dns.servers` | prepended; other `dns` keys override |
 | `outbounds`, `inbounds` | appended (reserved tags: `proxy`, `direct`, `block`, `dns-out`, `tun-in`, `socks-in`, `http-in`, `auto`, `node-*`) |
-| `proxyPatch` | deep-merged into the proxy outbound(s) (mux, sockopt, …) |
-| `bootstrapDns` | list of IPs that resolve the server hostnames in TUN mode |
-| anything else | deep-merged at the top level (`log`, `policy`, …); keys starting with `_` are ignored |
+| `proxyPatch` | deep-merged into the proxy outbound(s) (`sockopt`, …) |
+| `bootstrapDns` | IPs that resolve server hostnames in TUN mode |
+| anything else | deep-merged at the top level (`log`, `policy`, …); `_`-keys ignored |
 
-Most of this is already generated (routing presets, Auto balancer, DNS preset,
-bootstrap DNS, sockopt binding). The usual reason to edit it is your own
-routing rules — example, two domains always direct, even under ALL:
+Presets, Auto, DNS and interface binding are already generated; the usual
+reason to edit is your own rules, e.g. domains always direct:
 
 ```json
-{
-  "_comment": "merged by omarchy-xray",
-  "routing": { "rules": [
-    { "domain": ["domain:example.org", "domain:intranet.lan"], "outboundTag": "direct" }
-  ] }
-}
+{ "routing": { "rules": [
+  { "domain": ["domain:example.org", "domain:intranet.lan"], "outboundTag": "direct" }
+] } }
 ```
 
-`mux` is not useful with XTLS Vision, XHTTP (it has `xmux`) or gRPC (its own
-multiplexing); a ClientHello `fragment` helps only plain-TLS nodes under DPI,
-not Reality. The folder opens with Ctrl+O in the panel or the `openFolder` IPC verb.
-
-Run `omarchy-xray restart` after editing.
+`mux` is useless with XTLS Vision, XHTTP (it has `xmux`) or gRPC (own
+multiplexing); a ClientHello `fragment` helps only plain-TLS nodes under DPI, not Reality.
 
 ## Security notes (marketplace review)
 
-- Xray and tun2socks never run as root or with a capability, in either mode.
-  TUN mode is opt-in; its one-time setup is the only privileged step and
-  installs the files above and records them — root afterwards runs only `ip`, `udevadm`
-  and `resolvectl` with fixed arguments (plus `sh` wrapping two `ip` ownership checks); the polkit rule is scoped to one
-  user, one unit and three verbs. No setcap, no sudoers.
-- The manager refuses to run as root except for `tun-install`/`tun-uninstall`,
-  uses `#!/usr/bin/python3 -I`, calls tools by absolute path and gives child
-  processes an explicit environment allowlist. The widget starts processes
-  with a cleared environment plus an allowlist.
-- Subscription downloads: HTTPS-only (redirects re-checked, final URL must be
-  HTTPS), 2 MiB streaming cap, strict per-protocol link validation with
-  count/string bounds (2000 nodes, 5000 lines), malformed links skipped.
-- Secrets: `~/.config/omarchy-xray/` is `0700`, `state.json`/`config.json`
-  are atomic `0600` no-follow writes; `import -` reads the URL (or pasted
-  links/JSON, 120 KiB cap) from `$OMARCHY_XRAY_SUB_URL`/stdin; a URL in argv is
-  refused (argv is world-readable)
-  (status/errors show `host/***` only). Temporary test configs live in
-  `$XDG_RUNTIME_DIR/omarchy-xray` (`0700`).
+- Xray and tun2socks never run as root or with a capability. TUN is opt-in; its setup is the only privileged step ([above](#tun-mode)); the polkit rule covers one user, one unit, three verbs.
+- The manager refuses root except `tun-install`/`tun-uninstall`, uses `#!/usr/bin/python3 -I`, absolute tool paths and an environment allowlist for children; the widget starts processes with a cleared environment plus an allowlist.
+- Downloads: HTTPS only (redirects re-checked), 2 MiB streaming cap, strict per-protocol validation with bounds (2000 nodes, 5000 lines).
+- Secrets: `~/.config/omarchy-xray/` `0700`, `state.json`/`config.json` atomic `0600` no-follow writes; `import -` reads from `$OMARCHY_XRAY_SUB_URL`/stdin (120 KiB cap), a URL in argv is refused; status and errors show `host/***` only; test configs in `$XDG_RUNTIME_DIR/omarchy-xray` (`0700`).
 - Loopback-only listeners: socks 20170, http 20171, metrics 15491.
-- Widget: per-slot hard deadlines with SIGKILL + env wipe, 512 KiB stdout cap
-  with tolerant JSON extraction, node array capped at 1000 for rendering,
-  bounded input, credential-shaped strings scrubbed before display.
+- Widget: per-slot hard deadlines with SIGKILL + env wipe, 512 KiB stdout cap, 1000-node render cap, bounded input, credentials scrubbed before display, all provider text rendered as plain text.
 
-## Widget settings
+## Widget setting and scripting
 
-| Setting | Default | Description |
-|---|---|---|
-| Refresh interval | `20` s | Closed-panel poll; the open panel reads status every 4 s and traffic every 2 s. |
-
-## Scripting
+**Refresh interval** (default `20` s): the closed-panel poll; the open panel
+reads status every 4 s and traffic every 2 s.
 
 `omarchy-shell krieziey.omarchy-xray VERB`:
 
 | Verb | Effect |
 |---|---|
 | `toggle` / `open` / `close` | Panel |
-| `status` | One-line summary (current node) |
-| `connect` / `disconnect` | Connect to the selected node / stop the tunnel (no-op if already there) |
-| `toggleProxy` | On/off; off while the kill switch holds needs a second call within 4 s |
-| `select <name>` | Switch to the first node whose name matches |
-| `test` | Latency-test nodes (bounded) |
-| `updateSubs` | Re-fetch the subscriptions |
+| `status` | One-line summary |
+| `connect` / `disconnect` | Selected node on / off (no-op if already there) |
+| `toggleProxy` | On/off; off under the kill switch needs a second call within 4 s |
+| `select <name>` | Connect to the first node whose name matches |
+| `test` / `updateSubs` | Latency test / re-fetch subscriptions |
 | `subRemove <index>` | Remove a subscription |
-| `mode <proxy\|tun>` | Switch mode (TUN runs the one-time setup first if needed) |
-| `routing <global\|<region>-direct>` | Routing preset (`ru-direct`, `kz-direct`, …) |
-| `adblock <on\|off>` | Ad blocking |
-| `tunSetup` | Run the one-time TUN setup |
-| `openFolder` | Open the omarchy-xray config folder |
+| `mode <proxy\|tun>` | Switch mode (runs the TUN setup first if needed) |
+| `routing <global\|<cc>-direct>` / `adblock <on\|off>` | Presets |
+| `tunSetup` / `openFolder` | One-time TUN setup / config folder |
 
 ```ini
 bind = $mainMod SHIFT, V, exec, omarchy-shell krieziey.omarchy-xray toggleProxy
 bind = $mainMod SHIFT, C, exec, omarchy-shell krieziey.omarchy-xray toggle
-bind = $mainMod SHIFT, T, exec, omarchy-shell krieziey.omarchy-xray select JP
 ```
 
 ## Troubleshooting
 
-- `omarchy-xray doctor` — core version and ownership, geo data, `/dev/net/tun`,
-  kernel, tun2socks, TUN files, polkit agent, resolved/networkd, v2 leftovers, service state.
-- `omarchy-xray logs` — the journal of the active unit (the panel also shows
-  the last error line when the service failed).
-- "N nodes skipped (…)" under the settings rows tells you why links were not
-  imported (removed transport, unsupported method, rejected by the core…).
+- `omarchy-xray doctor`: core version and ownership, geo data, `/dev/net/tun`, kernel, tun2socks, TUN files, polkit agent, resolved/networkd, v2 leftovers, service state (also the panel's **Doctor** button).
+- `omarchy-xray logs`: the active unit's journal (the panel's **Logs**).
+- "N nodes skipped (…)" under NODES says why links were not imported.
 
 ## Development
 
 ```bash
 node tests/run.js                                   # widget model
 python3 -m unittest discover -s tests/manager       # manager (links, config, TUN files)
-OMARCHY_XRAY_TEST_BIN=/path/to/xray python3 -m unittest discover -s tests/manager
-                                                    # …plus `xray run -test` on every generated config
-python3 -m py_compile bin/omarchy-xray
-omarchy plugin validate .
+OMARCHY_XRAY_TEST_BIN=/path/to/xray python3 -m unittest discover -s tests/manager   # + xray run -test
+python3 -m py_compile bin/omarchy-xray && omarchy plugin validate .
 ```
 
-Run the widget from a checkout: link it as the plugin folder (remove an
-installed copy first), then restart the shell after QML changes:
+Run from a checkout (remove an installed copy first), restart the shell after QML changes:
+`ln -s "$PWD" ~/.config/omarchy/plugins/krieziey.omarchy-xray && omarchy plugin enable krieziey.omarchy-xray right && omarchy restart shell`
 
-```bash
-ln -s "$PWD" ~/.config/omarchy/plugins/krieziey.omarchy-xray
-omarchy plugin enable krieziey.omarchy-xray right
-omarchy restart shell
-```
-
-Manager internals: state in `~/.config/omarchy-xray/state.json` (subscriptions
-with their info, nodes with stable ids and their prepared outbound, selection,
-mode, presets — 0600), generated core config in `config.json` (0600), latency
-cache in `latency.json` keyed by node id.
+State lives in `~/.config/omarchy-xray/`: `state.json` (subscriptions and their
+info, nodes with stable ids and prepared outbounds, selection, mode, presets,
+DNS), `config.json` (generated core config), `latency.json` (by node id), all `0600`.
 
 ## License
 
