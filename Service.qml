@@ -408,7 +408,9 @@ Item {
       if (!resp.ok) { actionStatus = ""; lastError = "Couldn't connect: " + (resp.message || "no details") }
       // proxy mode reaches apps through their proxy settings: ones already
       // running may not re-read them
-      else flash(mode === "tun" ? "Connected (TUN)" : "Connected · apps already open may need a restart")
+      // running may not re-read them; TUN says nothing, the hero shows it
+      else if (mode !== "tun") flash("Apps already open may need a restart")
+      else actionStatus = ""
       refresh()
     })) { busyRefused(); return }
     if (!chained) {
