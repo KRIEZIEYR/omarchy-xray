@@ -169,11 +169,19 @@ Panel {
 
   // Removal can't be undone (the URL is a secret the user would have to find
   // again), so it takes a second press on the same spot within 4 s.
+  // Armed by the subscription's own index, so a reload in between can never
+  // turn the second press into removing another one.
   property int armedSub: -1
-  Timer { id: disarmTimer; interval: 4000; onTriggered: root.armedSub = -1 }
+  Timer {
+    id: disarmTimer; interval: 4000
+    onTriggered: { root.armedSub = -1; Accessible.announce("Remove cancelled") }
+  }
+  Connections { target: xray; function onSubsChanged() { root.armedSub = -1 } }
   function armRemove(i) {
-    if (armedSub === i) { armedSub = -1; xray.subRemove(xray.subs[i].index); return }
-    armedSub = i
+    var s = xray.subs[i]
+    if (!s) return
+    if (armedSub === s.index) { armedSub = -1; disarmTimer.stop(); xray.subRemove(s.index); return }
+    armedSub = s.index
     disarmTimer.restart()
   }
 
@@ -357,6 +365,8 @@ Panel {
   function runCtrl(k) {
     if (k === "t") {
       if (root.filterQuery !== "" && root.visibleNodes.length === 0) xray.flash("Nothing to test: the filter matches no node")
+      else if (root.cursorRow === "node" && !xray.testing && root.selectedNode() && root.selectedNode().key !== "auto")
+        xray.testNodes([root.selectedNode()])          // the node under the cursor, as right-click
       else xray.testNodes(root.visibleNodes)
     }
     else if (k === "l") xray.openLogs()
@@ -744,7 +754,7 @@ Panel {
                    : root.filterFocused ? [["FILTER", "↑/↓ · Enter connect · Ctrl+T test · Esc clear"]]
                    : root.urlFocused ? [["URL", "Enter adds it · Esc back to the list"]]
                    : [["MOVE", "j/k · h/l · Enter apply · Home switch · ? hide"],
-                      ["ACT", "Ctrl+C on/off · Ctrl+T test · Ctrl+R update"],
+                      ["ACT", "Ctrl+C on/off · Ctrl+T test (node or all) · Ctrl+R update"],
                       ["MANAGE", "Ctrl+A add sub · Ctrl+O folder · Ctrl+L logs"]]
             delegate: RowLayout {
               required property var modelData
@@ -871,6 +881,17 @@ Panel {
               }
 
               Item { Layout.fillWidth: true }
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              width: parent.width
+              leftPadding: root.settingLabelWidth + Style.space(8)
+              text: root.modeOptions[xray.mode === "tun" ? 1 : 0].tooltip
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              wrapMode: Text.WordWrap
             }
 
             RowLayout {
@@ -1094,8 +1115,8 @@ Panel {
                 Keys.onPressed: function(event) {
                   // Ctrl+T tests the filtered nodes; every other chord keeps
                   // its text-editing meaning in the field
-                  if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_T) {
-                    root.runCtrl("t")
+                  if ((event.modifiers & Qt.ControlModifier) && (event.key === Qt.Key_T || event.key === Qt.Key_C) && selectedText === "") {
+                    root.runCtrl(event.key === Qt.Key_T ? "t" : "c")
                     event.accepted = true
                     return
                   }
@@ -1136,7 +1157,7 @@ Panel {
               width: parent.width
               text: xray.touch === null ? "Loading…"
                     : root.filterQuery !== "" ? "No nodes match “" + root.filterQuery + "” — Esc clears the filter"
-                    : root.firstRun ? "Paste your subscription URL below, or a single server: a vless://, vmess://, trojan://, ss:// or hysteria2:// link, or its Xray JSON config."
+                    : root.firstRun ? "Paste the subscription link from your VPN provider below.\nA single server link (vless://, ss://…) or Xray JSON works too."
                     : "No nodes yet — add a subscription, a link or Xray JSON below."
               wrapMode: Text.WordWrap
               color: root.dim
@@ -1333,7 +1354,7 @@ Panel {
 
                   TextActionButton {
                     id: removeButton
-                    readonly property bool armed: root.armedSub === subRow.index
+                    readonly property bool armed: !!subRow.sub && root.armedSub === subRow.sub.index
                     // same width armed or not, so "Update" never shifts
                     Layout.preferredWidth: Math.ceil(confirmMetrics.advanceWidth) + 2 * Style.spacing.controlPaddingX
                     label: armed ? "Confirm" : "Remove"
@@ -1360,7 +1381,7 @@ Panel {
             textFormat: Text.PlainText
             visible: xray.reachable && !root.firstRun && !root.keyboardUser
             width: parent.width
-            text: "Keys: Ctrl+C on/off · type to filter · j/k move"
+            text: "Keys: Ctrl+C on/off · type to filter · ? all keys"
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall

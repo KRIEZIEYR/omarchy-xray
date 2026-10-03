@@ -251,18 +251,19 @@ function heroLine(state) {
 
 // Panel hero: the exit you are on leads; the state is a short caption.
 function heroTitle(state) {
+  if (state && state.unreachable) return "Status unknown"
   if (state && state.blocked) return "Blocked"
   // a unit crashed while wanted: the switch stays on, so the title must not say Off
   if (state && state.dropped) return "Reconnecting"
   var n = state ? connectedNode(state.touch) : null
   // while connecting the switch is already on: the title names where it goes
   if (!n && state && (state.pending === "connecting" || state.pending === "switching") && state.target)
-    return state.target
+    return "Connecting to " + state.target
   if (!n) {
     // "Not protected" leads; the node a connect would use goes in the caption, so a
     // node name never looks like a live (or dead) connection.
     var t = state && state.touch
-    return t && t.nodes && t.nodes.length > 0 ? "Not protected" : "Xray"
+    return t ? "Not protected" : "Xray"
   }
   if (n.key === "auto") return state.autoPick ? "Auto → " + state.autoPick : n.name
   return n.name
@@ -283,5 +284,5 @@ function heroState(state) {
   if (!t.nodes || t.nodes.length === 0) return state.hasSubs ? "No usable nodes · see below" : "No subscription yet"
   // the mode leads: a long node name is what gets cut, never the mode
   // protection leads: an arrow here read like a live route
-  return mode + (state.target ? " · next " + state.target : "")
+  return state.target ? "Next: " + state.target : mode    // the mode sits in SETTINGS
 }
