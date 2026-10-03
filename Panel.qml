@@ -429,6 +429,10 @@ Panel {
     font.pixelSize: Style.font.body
     text: "Confirm"
   }
+  // One height for every chip, button and field: compact, and nothing in a
+  // row sits taller than its neighbour.
+  FontMetrics { id: ctlMetrics; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+  readonly property real ctlHeight: Math.ceil(ctlMetrics.height) + 2 * Style.space(4)
   readonly property real rowTextInset: Style.space(8) + rowGlyphWidth + Style.space(8)
   TextMetrics {
     id: latencyMetrics
@@ -610,7 +614,7 @@ Panel {
         id: pinned
         anchors.left: parent.left
         anchors.right: parent.right
-        spacing: Style.space(12)
+        spacing: Style.space(8)
 
         PanelHero {
           id: hero
@@ -793,7 +797,7 @@ Panel {
       ListView {
         id: nodeList
         anchors.top: pinned.bottom
-        anchors.topMargin: Style.space(12)
+        anchors.topMargin: Style.space(8)
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
@@ -801,7 +805,7 @@ Panel {
         boundsBehavior: Flickable.StopAtBounds
         interactive: contentHeight > height
         reuseItems: true
-        spacing: Style.space(4)
+        spacing: Style.space(2)
         currentIndex: -1                   // the panel keeps its own cursor (nodeIndex)
         // The header grows upward (country grid): a view resting
         // at the top stays at the top instead of pushing the hero out of sight.
@@ -820,8 +824,8 @@ Panel {
         header: Column {
           property alias search: searchField
           width: nodeList.width
-          spacing: Style.space(12)
-          bottomPadding: Style.space(6)
+          spacing: Style.space(8)
+          bottomPadding: Style.space(4)
 
           // Mode and route are set-and-forget: a compact label/chips form that
           // stays quieter than the connect switch and the node list.
@@ -852,7 +856,7 @@ Panel {
           Column {
             visible: xray.reachable && !root.firstRun && root.settingsOpen
             width: parent.width
-            spacing: Style.space(8)
+            spacing: Style.space(4)
 
             RowLayout {
               width: parent.width
@@ -866,7 +870,7 @@ Panel {
                 fontFamily: root.fontFamily
               }
 
-              ButtonGroup {
+              ChipGroup {
                 options: root.modeOptions
                 value: xray.mode
                 cursorIndex: root.cursorRow === "mode" ? root.chipIndex : -1
@@ -888,17 +892,6 @@ Panel {
               Item { Layout.fillWidth: true }
             }
 
-            Text {
-              textFormat: Text.PlainText
-              width: parent.width
-              leftPadding: root.settingLabelWidth + Style.space(8)
-              text: root.modeOptions[xray.mode === "tun" ? 1 : 0].tooltip
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              wrapMode: Text.WordWrap
-            }
-
             RowLayout {
               width: parent.width
               spacing: Style.space(8)
@@ -911,7 +904,7 @@ Panel {
                 fontFamily: root.fontFamily
               }
 
-              ButtonGroup {
+              ChipGroup {
                 options: root.routeOptions
                 value: xray.region ? "direct" : "global"
                 cursorIndex: root.cursorRow === "route" && root.chipIndex < 2 ? root.chipIndex : -1
@@ -940,6 +933,7 @@ Panel {
                 enabled: xray.regions.length > 0
                 fontFamily: root.fontFamily
                 fontSize: Style.font.caption
+                implicitHeight: root.ctlHeight
                 onClicked: root.regionsOpen = !root.regionsOpen
                 onHovered: function(h) { if (h) root.cursorActive = false }
                 Accessible.role: Accessible.Button
@@ -973,6 +967,7 @@ Panel {
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                   fontSize: Style.font.caption
+                  implicitHeight: root.ctlHeight
                   onClicked: root.pickRegion(modelData.code)
                   onHovered: function(h) { if (h) { root.cursorActive = false; root.regionHover = index } }
                 }
@@ -1198,8 +1193,8 @@ Panel {
         footer: Column {
           property alias subUrl: subUrlField
           width: nodeList.width
-          spacing: Style.space(12)
-          topPadding: Style.space(12)
+          spacing: Style.space(8)
+          topPadding: Style.space(8)
 
           PanelSeparator { visible: xray.reachable; foreground: root.foreground }
 
@@ -1407,9 +1402,11 @@ Panel {
     readonly property bool _hotState: hovered || activeFocus
     foreground: root.foreground
     font.family: root.fontFamily
-    // kit TextField height = line + 2 * (verticalPadding + 1 px border);
-    // a NodeRow is line + rowPaddingX
-    verticalPadding: Style.spacing.rowPaddingX / 2 - 1
+    font.pixelSize: Style.font.caption
+    implicitHeight: root.ctlHeight
+    topPadding: 0
+    bottomPadding: 0
+    verticalAlignment: TextInput.AlignVCenter
     leftPadding: root.rowTextInset
     rightPadding: Style.space(8)
     background: BorderSurface {
@@ -1437,6 +1434,40 @@ Panel {
 
   // Text action on the kit's Button (hover, cursor, tooltip), plus a tint
   // for destructive confirmation and a dimmed disabled state.
+  // The kit's ButtonGroup with the panel's control height (the kit gives no
+  // way to set its chips' padding).
+  component ChipGroup: Row {
+    id: chips
+    property var options: []
+    property string value: ""
+    property int cursorIndex: -1
+    property bool focusable: false
+    property color foreground: root.foreground
+    property string fontFamily: root.fontFamily
+    property real fontSize: Style.font.caption
+    signal changed(string v)
+    signal hovered(int i, bool h)
+    spacing: Style.space(4)
+    Repeater {
+      model: chips.options
+      delegate: Button {
+        required property var modelData
+        required property int index
+        text: modelData.label
+        tooltipText: modelData.tooltip || ""
+        selected: modelData.value === chips.value
+        hasCursor: chips.cursorIndex === index
+        bordered: true
+        implicitHeight: root.ctlHeight
+        foreground: chips.foreground
+        fontFamily: chips.fontFamily
+        fontSize: chips.fontSize
+        onClicked: chips.changed(modelData.value)
+        onHovered: function(h) { chips.hovered(index, h) }
+      }
+    }
+  }
+
   component TextActionButton: Button {
     property string label: ""
     property string a11yName: ""               // when the label alone is ambiguous
@@ -1446,6 +1477,8 @@ Panel {
     tooltipText: tooltip
     foreground: enabled ? tint : root.dim
     fontFamily: root.fontFamily
+    fontSize: Style.font.caption
+    implicitHeight: root.ctlHeight
     onHovered: function(h) { if (h) root.cursorActive = false }
     Accessible.role: Accessible.Button
     Accessible.name: a11yName !== "" ? a11yName : label
