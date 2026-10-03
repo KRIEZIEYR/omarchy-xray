@@ -51,14 +51,14 @@ components:
 
 The widget has no visual identity of its own. It lives inside the Omarchy shell and takes everything from it: colors from the active theme, the monospace system font, spacing from `Style.space()`, corner radius from Hyprland's `decoration:rounding`. A user who changes the Omarchy theme changes this panel with it, with no exceptions.
 
-Brand shows only in behavior and precise detail: the shield glyph in the bar, the keyboard legend, the fixed latency column. The panel is text-first. Controls are words, not boxes, and fill appears only as a response to hover, focus or selection.
+Brand shows only in behavior and precise detail: the tunnel glyph in the bar, the keyboard legend, the fixed latency column. The panel is text-first. Controls are words, not boxes, and fill appears only as a response to hover, focus or selection.
 
 The hex values in the frontmatter are the default Omarchy theme (Vantablack) and are samples only. The code reads them from `Color.*` and the bar at runtime and never hard-codes them.
 
 **Key Characteristics:**
 - Every color, font and size comes from `qs.Commons` (`Color`, `Style`).
 - Text-first controls, flat surfaces, no shadows.
-- One status signal is loud: protection state (shield and switch).
+- One status signal is loud: protection state (tunnel icon and switch).
 - Keyboard cursor and mouse hover share the same fill language.
 
 ## Colors
@@ -66,7 +66,7 @@ The hex values in the frontmatter are the default Omarchy theme (Vantablack) and
 The palette is the Omarchy theme, used by role.
 
 ### Primary
-- **Theme Foreground** (`foreground`): all text, icons and the shield. It comes from the bar when present, else `Color.foreground`.
+- **Theme Foreground** (`foreground`): all text, icons and the tunnel icon. It comes from the bar when present, else `Color.foreground`.
 
 ### Neutral
 - **Theme Background** (`background`): panel surface, owned by the shell's `Panel`, never painted by the widget.
@@ -88,7 +88,7 @@ The palette is the Omarchy theme, used by role.
 **Character:** One monospace family for everything. Hierarchy comes from size and dim color, never from a second typeface.
 
 ### Hierarchy
-- **Display** (24px, `Style.font.display`): the power-switch shield icon only.
+- **Display** (24px, `Style.font.display`): the power-switch tunnel icon only.
 - **Body** (12px, `Style.font.body`): node names, status line, empty state.
 - **Body Small** (11px, `Style.font.bodySmall`): setting labels, subscription details, key legend.
 - **Caption** (10px, `Style.font.caption`): chips, action buttons, latency values, field text.
@@ -137,11 +137,11 @@ Quiet word buttons ("Update", "Remove", chips such as TUN, Proxy, ALL, RU DIRECT
 - Left click connects; right click tests latency.
 
 ### Power Switch
-- The shield glyph at display size plus a `ToggleSwitch`. The state shows as filled (TUN), half-filled (proxy) or outline (off).
-- While connecting, the shield pulses opacity between 1.0 and 0.45 (700 ms, InOutSine).
+- The tunnel glyph at display size plus a `ToggleSwitch`. The state shows as filled (TUN), half-filled (proxy) or outline (off).
+- While connecting, the tunnel icon pulses opacity between 1.0 and 0.45 (700 ms, InOutSine).
 
 ### Bar Icon (XrayIcon)
-- The shield only, in bar foreground. Click opens the panel, right-click toggles, middle-click refreshes.
+- The tunnel icon only, in bar foreground. Click opens the panel, right-click toggles, middle-click refreshes.
 
 ## Do's and Don'ts
 

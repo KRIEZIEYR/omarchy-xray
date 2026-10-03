@@ -3,8 +3,9 @@ import qs.Commons
 import qs.Ui
 
 /*
- * Vector shield-with-V mark drawn with Canvas primitives — no fonts, no SVG,
- * so it renders identically in tiny bar slots and in the panel hero.
+ * Tunnel mark (arches over a ground line) drawn with Canvas primitives — no
+ * fonts, no SVG, so it renders identically in tiny bar slots and in the
+ * panel hero. Geometry is on a 24-unit grid.
  */
 Item {
   id: root
@@ -12,10 +13,10 @@ Item {
   property real iconSize: Style.font.icon
   property color color: Color.foreground
   property bool warning: false
-  // Connected state by shape, not hue: a solid shield with the V cut out
-  // stays distinct in monochrome themes where "on" and "off" share a grey.
+  // Connected state by shape, not hue: a solid tunnel with its inner arches
+  // cut out stays distinct in monochrome themes where "on" and "off" share a grey.
   property bool filled: false
-  // proxy mode protects only apps that use the system proxy: half a shield
+  // proxy mode protects only apps that use the system proxy: half a tunnel
   property bool half: false
   property color badgeColor: Color.urgent
 
@@ -32,42 +33,37 @@ Item {
     onPaint: {
       var ctx = canvas.getContext("2d")
       ctx.reset()
-      var w = canvas.width
-      var h = canvas.height
-      var lw = Math.max(1.2, w * 0.075)
-
-      ctx.lineWidth = lw
+      var k = canvas.width / 24
+      ctx.lineWidth = Math.max(1.2, 1.5 * k)
       ctx.strokeStyle = root.color
+      ctx.fillStyle = root.color
       ctx.lineJoin = "round"
       ctx.lineCap = "round"
 
-      function shield() {
-        ctx.beginPath()
-        ctx.moveTo(0.16 * w, 0.18 * h)
-        ctx.lineTo(0.84 * w, 0.18 * h)
-        ctx.lineTo(0.84 * w, 0.46 * h)
-        ctx.quadraticCurveTo(0.84 * w, 0.72 * h, 0.5 * w, 0.9 * h)
-        ctx.quadraticCurveTo(0.16 * w, 0.72 * h, 0.16 * w, 0.46 * h)
-        ctx.closePath()
+      // an arch from (x0, bottom) up, over a half circle, back down to bottom
+      function arch(x0, x1, top, bottom) {
+        var r = (x1 - x0) / 2
+        ctx.moveTo(x0 * k, bottom * k)
+        ctx.lineTo(x0 * k, (top + r) * k)
+        ctx.arc((x0 + r) * k, (top + r) * k, r * k, Math.PI, 0, false)
+        ctx.lineTo(x1 * k, bottom * k)
       }
-      function vee() {
-        ctx.beginPath()
-        ctx.moveTo(0.35 * w, 0.34 * h)
-        ctx.lineTo(0.5 * w, 0.64 * h)
-        ctx.lineTo(0.65 * w, 0.34 * h)
-      }
-      shield()
-      ctx.stroke()
-      // Filled: the whole shield or (proxy) its lower half, V cut out; the
-      // upper half stays hollow so "half" reads even at bar size.
+      function outer() { ctx.beginPath(); arch(4.5, 19.5, 3.5, 18.5); ctx.closePath() }
+      function inner() { ctx.beginPath(); arch(8, 16, 7.5, 18.5); arch(11, 13, 12, 18.5) }
+      function half(right) { ctx.beginPath(); ctx.rect(right ? 12 * k : 0, 0, 12 * k, 24 * k); ctx.clip() }
+
+      outer(); ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(2 * k, 21 * k); ctx.lineTo(22 * k, 21 * k); ctx.stroke()   // ground
       if (root.filled) {
+        // Filled: the whole tunnel or (proxy) its left half, arches cut out
         ctx.save()
-        if (root.half) { ctx.beginPath(); ctx.rect(0, 0.5 * h, w, h); ctx.clip() }
-        shield(); ctx.fillStyle = root.color; ctx.fill()
+        if (root.half) half(false)
+        outer(); ctx.fill()
         ctx.globalCompositeOperation = "destination-out"
-        vee(); ctx.stroke()
+        inner(); ctx.stroke()
         ctx.restore()
-      } else { vee(); ctx.stroke() }
+        if (root.half) { ctx.save(); half(true); inner(); ctx.stroke(); ctx.restore() }
+      } else { inner(); ctx.stroke() }
     }
 
     onWidthChanged: canvas.requestPaint()

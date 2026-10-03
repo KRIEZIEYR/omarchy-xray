@@ -34,7 +34,7 @@ commands and reads JSON back.
   `profile-title`, automatic refresh (`profile-update-interval`, default 24 h)
 - latency tests: batched and parallel, one xray process per 32 nodes
 - live traffic counters and speeds from xray's metrics endpoint (loopback)
-- mouse on the bar: click opens the panel, right-click connects or disconnects, middle-click refreshes; the shield is filled in TUN, half-filled in proxy mode (only apps using the system proxy are covered), an outline when off
+- mouse on the bar: click opens the panel, right-click connects or disconnects, middle-click refreshes; the tunnel icon is filled in TUN, half-filled in proxy mode (only apps using the system proxy are covered), an outline when off
 - keyboard-first: `j/k` move through the rows and nodes (the flag grid in two directions), `h/l` choose, `Enter` apply/connect, `Home` the switch (so `Home`, `Enter` disconnects), `End` last node, `PgUp/PgDn` a page; just type to filter (`/` first for a name starting with h, j, k or l). Commands take Ctrl so typing never triggers them: `Ctrl+C` connect, `Ctrl+T` test (again to stop; also inside the filter), `Ctrl+R` update, `Ctrl+A` add a subscription, `Ctrl+O` config folder, `Ctrl+L` logs; `?` hides or shows the key legend
 - the status line stays pinned under the switch; an error there offers **Logs** (the journal in a floating terminal)
 - IPC verbs for Hyprland binds
@@ -98,7 +98,7 @@ omarchy pkg aur add tun2socks     # optional, TUN mode only
 omarchy plugin add https://github.com/KRIEZIEYR/omarchy-xray.git --enable
 ```
 
-Then click the shield in the bar: on first run the panel asks for your
+Then click the tunnel icon in the bar: on first run the panel asks for your
 subscription URL — or paste single servers into the same field: share links
 (one per line) or an Xray JSON config. Whatever you paste reaches the manager
 through the environment, never argv, and is kept only in `state.json` (`0600`). That is all proxy mode needs. For TUN, pick **TUN** in the panel: the

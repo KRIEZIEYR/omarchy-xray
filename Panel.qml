@@ -223,7 +223,7 @@ Panel {
 
   // "Connected" uses the theme's own green (colors.toml). A monochrome theme's
   // "green" is just another grey (often the secondary text grey itself), so
-  // there "on" is drawn in the brightest colour, the foreground; the shield's
+  // there "on" is drawn in the brightest colour, the foreground; the icon's
   // fill carries the state either way.
   property color onColor: foreground
   function onColorFor(hex) {
