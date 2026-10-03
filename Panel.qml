@@ -1277,7 +1277,7 @@ Panel {
               Item { Layout.fillWidth: true }
 
               TextActionButton {
-                visible: root.subsShown && xray.subs.length > 0
+                visible: xray.subs.length > 0
                 label: "Update all"
                 tooltip: "Download every subscription again (Ctrl+R)"
                 enabled: !xray.busy
