@@ -126,7 +126,7 @@ Panel {
     { value: "google", label: "GOOGLE", tooltip: "Google 8.8.8.8" },
     { value: "quad9", label: "QUAD9", tooltip: "Quad9 9.9.9.9, blocks known malware domains" },
     { value: "adguard", label: "ADGUARD", tooltip: "AdGuard, filters ads and trackers" },
-    { value: "system", label: "SYSTEM", tooltip: "Your network's own DNS, outside the tunnel: your provider sees the lookups" }
+    { value: "system", label: "SYS", tooltip: "Your network's own DNS, outside the tunnel: your provider sees the lookups" }
   ]
   function dnsIndex() {
     for (var i = 0; i < dnsOptions.length; i++) if (dnsOptions[i].value === xray.dns) return i
