@@ -271,7 +271,7 @@ function heroTitle(state) {
   // the protection word leads, the pair to "Not protected"; a long node name
   // is what gets cut
   // protection on the first line, the server on the second (as when off)
-  return state.mode === "tun" ? "Protected" : "Proxy apps only"
+  return state.mode === "tun" ? "Protected" : "Proxy"
 }
 
 function heroState(state) {

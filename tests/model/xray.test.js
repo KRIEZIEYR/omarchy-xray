@@ -111,7 +111,7 @@ module.exports = function ({ Xray, assert, eq }) {
   /* ---- heroTitle / heroState: the node leads, the state is a short caption ---- */
   {
     const t = Xray.groupsFromStatus(status, 1000, NOW)
-    eq('title connected', Xray.heroTitle({ touch: t }), 'Proxy apps only')
+    eq('title connected', Xray.heroTitle({ touch: t }), 'Proxy')
     eq('title connected tun', Xray.heroTitle({ touch: t, mode: 'tun' }), 'Protected')
     eq('state proxy', Xray.heroState({ touch: t }), 'US LA')
     eq('state tun', Xray.heroState({ touch: t, mode: 'tun' }), 'US LA')
