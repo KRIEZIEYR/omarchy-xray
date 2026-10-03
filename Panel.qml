@@ -442,6 +442,8 @@ Panel {
   }
 
   readonly property string fastestKey: Model.fastestKey(visibleNodes)
+  // subscriptions whose last update failed, shown on the Update all button
+  readonly property int subFailCount: xray.subs.filter(function(s) { return s && s.error }).length
   // nodes whose last latency test failed or timed out, shown on the Test button
   readonly property int failCount: visibleNodes.filter(function(n) {
     return n && n.key !== "auto" && Model.latencyBad(Model.latencyLabel(n.latency))
@@ -1336,7 +1338,7 @@ Panel {
 
               TextActionButton {
                 visible: xray.subs.length > 0
-                label: xray.updating ? "Updating…" : "Update all"
+                label: xray.updating ? "Updating…" : root.subFailCount > 0 ? "Update all · Fail " + root.subFailCount : "Update all"
                 tooltip: "Download every subscription again (Ctrl+R)"
                 enabled: !xray.busy
                 hasCursor: root.cursorRow === "subs"

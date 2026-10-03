@@ -498,16 +498,19 @@ Item {
 
   function testNode(node) { if (node) testNodes([node]) }
 
+  // a failed update shows on the subscription row and as Fail N on the button
+  function quietUpdate(resp) { if (!resp.ok) lastError = "" }
+
   function updateSubscriptions() {
     runLong([manager, "update"], "update", 240000,
-            "", "Updating subscriptions…")        // the button and the list show it
+            "", "Updating subscriptions…", undefined, quietUpdate)   // the button and the list show it
   }
 
   function updateSub(index) {
     var i = parseInt(index, 10)
     if (!isFinite(i) || i < 0 || i > 63) return
     runLong([manager, "update", String(i)], "update", 180000,
-            "", "Updating subscription…")
+            "", "Updating subscription…", undefined, quietUpdate)
   }
 
   // Import progress and failures, shown next to the URL field itself (the
