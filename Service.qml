@@ -293,6 +293,21 @@ Item {
     if (_refreshAgain) { _refreshAgain = false; refresh() }
   }
 
+  // Once per shell start (that is, per login): connect if asked to, then a
+  // latency test shortly after, and again every 30 minutes.
+  property bool _started: false
+  function _onStart() {
+    if (setting("autoConnect", false) === true && !connected && !blocked && !dropped && pending === "")
+      toggleConnection(String(setting("lastNodeKey", "")))
+    autoTestDelay.start()
+  }
+  function autoTest() {
+    if (testing || busy || pending !== "" || !touch || !touch.nodes || touch.nodes.length < 2) return
+    testNodes(touch.nodes)
+  }
+  Timer { id: autoTestDelay; interval: 20000; onTriggered: autoTest() }
+  Timer { interval: 30 * 60 * 1000; repeat: true; running: reachable; onTriggered: autoTest() }
+
   function applyStatus(resp) {
     if (!resp.ok || !resp.data || !resp.data.nodes) {
       if (resp.message !== "") serviceError = scrub(resp.message)
@@ -300,6 +315,7 @@ Item {
     }
     var d = resp.data
     reachable = true
+    if (!_started) { _started = true; Qt.callLater(_onStart) }
     installed = true
     mode = String(d.mode || "proxy")
     routing = String(d.routing || "global")

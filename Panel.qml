@@ -71,7 +71,7 @@ Panel {
   // so the nodes start right under the switch.
   property bool settingsOpen: false      // remembered while the shell runs
   readonly property var settingRows: !xray.reachable || firstRun ? []
-      : ["hero", "settings"].concat(settingsOpen ? ["mode", "route"].concat(regionsOpen ? ["regions"] : [], ["ads", "dns"]) : [])
+      : ["hero", "settings"].concat(settingsOpen ? ["mode", "route"].concat(regionsOpen ? ["regions"] : [], ["ads", "dns", "login"]) : [])
   readonly property string settingsSummary: (xray.mode === "tun" ? "TUN" : "PROXY apps only")
       + " · " + (xray.region ? xray.region.code.toUpperCase() + " DIRECT" : "ALL")
       + (xray.adblock ? " · ADBLOCK" : "")
@@ -103,6 +103,7 @@ Panel {
     if (r === "regions") return xray.regions[c] ? xray.regions[c].name : ""
     if (r === "ads") return "Ad blocking " + (xray.adblock ? "on" : "off")
     if (r === "dns") return "DNS " + (dnsOptions[c] ? dnsOptions[c].tooltip : "")
+    if (r === "login") return "Connect at login " + (autoConnect ? "on" : "off")
     if (r === "subs") return "Update all"
     if (r === "sub") { var s = xray.subs[cursorSub]; return s ? (s.title || s.host) : "" }
     return ""
@@ -176,6 +177,7 @@ Panel {
     else if (r === "regions" && xray.regions[chipIndex]) pickRegion(xray.regions[chipIndex].code)
     else if (r === "ads") { if (xray.geo || xray.adblock) xray.setAdblock(!xray.adblock) }
     else if (r === "dns" && dnsOptions[chipIndex]) chooseDns(dnsOptions[chipIndex].value)
+    else if (r === "login") persistSetting("autoConnect", !autoConnect)
     else if (r === "subs") { if (xray.subs.length > 0) xray.updateSubscriptions() }
     else if (r === "sub" && xray.subs[cursorSub]) {
       // the Manual group has no Update: its only chip is Remove
@@ -215,6 +217,7 @@ Panel {
     else if (abs > k) abs -= 1
     nodeIndex = abs - len
   }
+  readonly property bool autoConnect: settings ? settings.autoConnect === true : false
   readonly property string lastNodeKey: settings ? String(settings.lastNodeKey || "") : ""
 
   // Off while the kill switch holds lets traffic out unprotected, so it takes
@@ -766,6 +769,7 @@ Panel {
             if (r === "mode") return root.modeOptions[c].tooltip
             if (r === "route") return c < 2 ? root.routeOptions[c].tooltip : "Change the direct country"
             if (r === "settings") return root.settingsOpen ? "Enter hides the settings" : "Enter shows mode, route and ad blocking"
+            if (r === "login") return "Connects to the selected node when you log in"
             if (r === "dns") return root.dnsOptions[c].tooltip + (xray.mode === "tun" ? "" : " · used in TUN mode")
             if (r === "ads") return xray.geo ? "ADBLOCK: known ad and tracker domains" : "ADBLOCK needs the geo data packages"
             if (r === "hero") return root.killArmed ? "Enter again: traffic goes direct, unprotected"
@@ -1101,6 +1105,55 @@ Panel {
               }
 
               Item { Layout.fillWidth: true }
+            }
+
+            RowLayout {
+              width: parent.width
+              spacing: Style.space(8)
+
+              PanelSectionHeader {
+                id: loginLabel
+                text: "LOGIN"
+                Layout.preferredWidth: root.settingLabelWidth
+                Layout.alignment: Qt.AlignVCenter
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+
+              ToggleSwitch {
+                trackHeight: Math.round(loginLabel.font.pixelSize * 1.2)
+                cursorPad: Style.space(3)
+                Layout.alignment: Qt.AlignVCenter
+                checked: root.autoConnect
+                hasCursor: root.cursorRow === "login"
+                foreground: root.foreground
+                onToggled: root.persistSetting("autoConnect", !root.autoConnect)
+                onHovered: function(h) { if (h) root.cursorActive = false }
+                Accessible.role: Accessible.CheckBox
+                Accessible.name: "Connect at login"
+                Accessible.checked: root.autoConnect
+                Accessible.focusable: true
+                Accessible.focused: hasCursor
+              }
+
+              Text {
+                textFormat: Text.PlainText
+                Layout.fillWidth: true
+                text: "Connect when you log in"
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                elide: Text.ElideRight
+                MouseArea {
+                  anchors.fill: parent
+                  anchors.topMargin: -Style.space(6)
+                  anchors.bottomMargin: -Style.space(6)
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.persistSetting("autoConnect", !root.autoConnect)
+                  onEntered: root.cursorActive = false
+                }
+              }
             }
 
           }
