@@ -252,7 +252,7 @@ function heroLine(state) {
 // Panel hero: the exit you are on leads; the state is a short caption.
 function heroTitle(state) {
   if (state && state.unreachable) return "Status unknown"
-  if (state && state.blocked) return "Blocked"
+  if (state && state.blocked) return "Kill switch on"
   // a unit crashed while wanted: the switch stays on, so the title must not say Off
   if (state && state.dropped) return "Reconnecting"
   var n = state ? connectedNode(state.touch) : null
@@ -271,8 +271,8 @@ function heroTitle(state) {
 
 function heroState(state) {
   if (!state) return "…"
-  if (state.unreachable) return "Manager not answering · run omarchy-xray doctor"
-  if (state.blocked) return "Kill switch · nothing leaks meanwhile"
+  if (state.unreachable) return "Manager not answering · press Doctor"
+  if (state.blocked) return "Traffic held until the VPN reconnects"
   if (state.dropped) return "Dropped · restarting the tunnel"
   var pending = { connecting: "Connecting…", switching: "Switching…", disconnecting: "Disconnecting…" }
   if (pending[state.pending]) return pending[state.pending]

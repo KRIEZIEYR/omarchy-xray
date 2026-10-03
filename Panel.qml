@@ -73,7 +73,7 @@ Panel {
   readonly property var settingRows: !xray.reachable || firstRun ? []
       : !settingsOpen ? ["hero", "settings"]
       : regionsOpen ? ["hero", "settings", "mode", "route", "regions", "ads"] : ["hero", "settings", "mode", "route", "ads"]
-  readonly property string settingsSummary: (xray.mode === "tun" ? "TUN" : "PROXY")
+  readonly property string settingsSummary: (xray.mode === "tun" ? "TUN" : "PROXY apps only")
       + " · " + (xray.region ? xray.region.code.toUpperCase() + " DIRECT" : "ALL")
       + (xray.adblock ? " · ADBLOCK" : "")
   function toggleSettings() {
@@ -731,7 +731,7 @@ Panel {
             if (r === "settings") return root.settingsOpen ? "Enter hides the settings" : "Enter shows mode, route and ad blocking"
             if (r === "ads") return xray.geo ? "ADBLOCK: known ad and tracker domains" : "ADBLOCK needs the geo data packages"
             if (r === "hero") return root.killArmed ? "Enter again: traffic goes direct, unprotected"
-                                      : xray.blocked ? "Waiting is safe: nothing leaks. Enter twice turns it off"
+                                      : xray.blocked ? "Waiting is safe: nothing leaks. Enter, then Enter again, turns it off"
                                       : xray.connected ? "Enter disconnects" : "Enter connects"
             return " "                                // keeps the line's height
           }
@@ -1155,7 +1155,7 @@ Panel {
               textFormat: Text.PlainText
               visible: root.visibleNodes.length === 0
               width: parent.width
-              text: xray.touch === null ? "Loading…"
+              text: xray.touch === null ? "Checking…"
                     : root.filterQuery !== "" ? "No nodes match “" + root.filterQuery + "” — Esc clears the filter"
                     : root.firstRun ? "Paste the subscription link from your VPN provider below.\nA single server link (vless://, ss://…) or Xray JSON works too."
                     : "No nodes yet — add a subscription, a link or Xray JSON below."
@@ -1462,7 +1462,10 @@ Panel {
     readonly property string latencyText: node ? Model.latencyLabel(node.latency) : ""
     readonly property bool latencyBadLat: node ? Model.latencyBad(latencyText) : false
     // Auto's "address" is its member count; other rows keep transport in the tooltip.
-    readonly property string meta: !node || node.key !== "auto" ? "" : node.address
+    // the node the switch would connect to: the caption's "Next" made visible
+    readonly property bool isNext: !!node && !xray.connected && !!xray.connectTarget && node.key === xray.connectTarget.key
+    readonly property string meta: !node ? "" : (isNext ? "next" : "") + (isNext && node.key === "auto" ? " · " : "")
+                                                 + (node.key === "auto" ? node.address : "")
     readonly property bool fastest: !!node && node.key === root.fastestKey
 
     hasCursor: root.cursorActive && root.nodeIndex === globalIndex
@@ -1473,7 +1476,7 @@ Panel {
     width: parent ? parent.width : 0
     implicitHeight: rowInner.implicitHeight + Style.spacing.rowPaddingX
     Accessible.role: Accessible.Button
-    Accessible.name: node ? node.name + (isConnected ? ", connected" : "") + (latencyText !== "" ? ", " + latencyText : "")
+    Accessible.name: node ? node.name + (isConnected ? ", connected" : isNext ? ", next to connect" : "") + (latencyText !== "" ? ", " + latencyText : "")
                             + (fastest ? ", fastest" : "") : ""
     // the panel's own cursor is the focus a screen reader should follow
     Accessible.focusable: true
