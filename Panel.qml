@@ -1502,8 +1502,6 @@ Panel {
     readonly property string latencyText: node ? Model.latencyLabel(node.latency) : ""
     readonly property bool latencyBadLat: node ? Model.latencyBad(latencyText) : false
     // Auto's "address" is its member count; other rows keep transport in the tooltip.
-    // the node the switch would connect to: the caption's "Next" made visible
-    readonly property bool isNext: !!node && !xray.connected && !!xray.connectTarget && node.key === xray.connectTarget.key
     readonly property string meta: !node || node.key !== "auto" ? "" : node.address
     readonly property bool fastest: !!node && node.key === root.fastestKey
 
@@ -1515,7 +1513,7 @@ Panel {
     width: parent ? parent.width : 0
     implicitHeight: rowInner.implicitHeight + Style.spacing.rowPaddingX
     Accessible.role: Accessible.Button
-    Accessible.name: node ? node.name + (isConnected ? ", connected" : isNext ? ", next to connect" : "") + (latencyText !== "" ? ", " + latencyText : "")
+    Accessible.name: node ? node.name + (isConnected ? ", connected" : "") + (latencyText !== "" ? ", " + latencyText : "")
                             + (fastest ? ", fastest" : "") : ""
     // the panel's own cursor is the focus a screen reader should follow
     Accessible.focusable: true
