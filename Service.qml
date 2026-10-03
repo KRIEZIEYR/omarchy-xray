@@ -47,7 +47,7 @@ Item {
   property var subs: []
   property string skippedText: ""
   property var autoMembers: []
-  property string metricsUrl: "http://127.0.0.1:15491/debug/vars"
+  readonly property string metricsUrl: "http://127.0.0.1:15491/debug/vars"   // the manager's METRICS
   property string _statusRaw: ""
   property real _lastAutoUpdate: 0
   property string _busyText: ""
@@ -75,9 +75,9 @@ Item {
     mode: mode,
     autoPick: autoPickName
   })
-  readonly property string heroSummary: Model.heroLine(_heroInput)
   readonly property string heroTitle: Model.heroTitle(_heroInput)
   readonly property string heroState: Model.heroState(_heroInput)
+  readonly property string heroSummary: heroTitle + " · " + heroState   // IPC status, bar tooltip
 
   readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 20, 10, 600)
 
@@ -323,7 +323,6 @@ Item {
     tunInstalled = d.tunInstalled === true
     skippedText = Model.skippedLabel(d.skipped)
     autoMembers = d.autoMembers || []
-    if (d.metricsUrl && /^http:\/\/127\.0\.0\.1:\d+\/debug\/vars$/.test(d.metricsUrl)) metricsUrl = d.metricsUrl
     // An action's error stays readable for a while, then a healthy poll
     // gives the line back to live traffic.
     if (lastError !== "" && Date.now() - _errorAt > 15000) lastError = ""

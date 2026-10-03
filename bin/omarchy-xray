@@ -119,7 +119,6 @@ IP = tool("ip") or "/usr/bin/ip"
 CURL = tool("curl") or "/usr/bin/curl"
 
 SOCKS, HTTP, METRICS = 20170, 20171, 15491
-METRICS_URL = "http://127.0.0.1:%d/debug/vars" % METRICS
 TUN_NAME = "xray0"
 TUN_GW4, TUN_DNS = "198.18.0.1/30", "198.18.0.2"
 TUN_GW6 = "fdfe:dcba:9876::1/126"
@@ -406,9 +405,7 @@ def tun_active():
 
 
 def running_units():
-    ua = user_active()
-    ta = tun_active()
-    return ua, ta
+    return user_active(), tun_active()
 
 
 def journal_tail(tun, n=8):
@@ -2239,7 +2236,6 @@ def cmd_status():
         "selected": sel,
         "connectedKey": sel if running else "",
         "autoMembers": auto_tags,
-        "metricsUrl": METRICS_URL,
         "lastError": last_error,
         "nodes": nodes,
     })

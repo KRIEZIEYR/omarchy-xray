@@ -227,26 +227,6 @@ function connectedNode(touch) {
   return null
 }
 
-// One-line summary (IPC `status`, scripts): state and node together.
-function heroLine(state) {
-  if (!state) return "…"
-  if (state.unreachable) return "Xray manager unreachable"
-  if (state.blocked) return "Blocked · kill switch, reconnecting"
-  if (state.dropped) return "Dropped · reconnecting"
-  var busy = { connecting: "Connecting…", switching: "Switching…", disconnecting: "Disconnecting…" }
-  if (busy[state.pending]) return busy[state.pending]
-  var t = state.touch
-  if (!t) return "Checking…"
-  var n = connectedNode(t)
-  var mode = state.mode === "tun" ? " (TUN)" : " (proxy)"
-  if (n) {
-    if (n.key === "auto") return "Connected" + mode + " · Auto" + (state.autoPick ? " → " + state.autoPick : "")
-    return "Connected" + mode + " · " + n.name
-  }
-  if (t.running) return "Off · not protected"
-  return "Off"
-}
-
 // Panel hero: the exit you are on leads; the state is a short caption.
 function heroTitle(state) {
   if (state && state.unreachable) return "Status unknown"
@@ -263,9 +243,6 @@ function heroTitle(state) {
     var t = state && state.touch
     return t ? "Not protected" : "Xray"
   }
-  // the protection word leads, the pair to "Not protected"; a long node name
-  // is what gets cut
-  // protection on the first line, the server on the second (as when off)
   return state.mode === "tun" ? "Protected" : "Proxy"
 }
 
@@ -281,11 +258,8 @@ function heroState(state) {
   var t = state.touch
   if (!t) return "Checking…"
   var mode = state.mode === "tun" ? "TUN" : "proxy"
-  // proxy mode only covers apps that use the system proxy: say so every time
   var c = connectedNode(t)
   if (c) return c.key === "auto" && state.autoPick ? state.autoPick + " (Auto)" : c.name
   if (!t.nodes || t.nodes.length === 0) return state.hasSubs ? "No usable nodes · see below" : "No subscription yet"
-  // the mode leads: a long node name is what gets cut, never the mode
-  // protection leads: an arrow here read like a live route
   return state.target || mode    // the node the switch would use; the mode sits in SETTINGS
 }

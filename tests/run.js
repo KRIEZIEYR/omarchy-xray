@@ -17,7 +17,7 @@ function loadModel() {
   src = src.replace(/^\.pragma library\s*/m, '')
   const api = ['groupsFromStatus', 'subInfoLabel', 'skippedLabel', 'parseMetrics',
     'latencyLabel', 'latencyBad', 'filterNodes', 'findNodeByKey',
-    'pickConnectTarget', 'autoPickName', 'formatSpeed', 'formatBytes', 'heroLine',
+    'pickConnectTarget', 'autoPickName', 'formatSpeed', 'formatBytes',
     'heroTitle', 'heroState', 'fastestKey'].join(', ')
   const sandbox = { module: { exports: {} }, exports: {}, JSON, Math, Date, Number, String, Object }
   vm.createContext(sandbox)

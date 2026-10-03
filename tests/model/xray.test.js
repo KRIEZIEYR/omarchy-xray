@@ -93,21 +93,6 @@ module.exports = function ({ Xray, assert, eq }) {
     assert('pick null on empty', Xray.pickConnectTarget({}, '') === null)
   }
 
-  /* ---- heroLine ---- */
-  {
-    const t = Xray.groupsFromStatus(status, 1000, NOW)
-    eq('hero connected', Xray.heroLine({ touch: t }), 'Connected (proxy) · US LA')
-    eq('hero tun', Xray.heroLine({ touch: t, mode: 'tun' }), 'Connected (TUN) · US LA')
-    const ta = Xray.groupsFromStatus(Object.assign({}, status, { connectedKey: 'auto' }), 1000, NOW)
-    eq('hero auto', Xray.heroLine({ touch: ta, autoPick: 'DE' }), 'Connected (proxy) · Auto → DE')
-    const off = Xray.groupsFromStatus(Object.assign({}, status, { running: false }), 1000, NOW)
-    eq('hero disconnected', Xray.heroLine({ touch: off }), 'Off')
-  }
-  eq('hero unreachable', Xray.heroLine({ unreachable: true }), 'Xray manager unreachable')
-  eq('hero dropped', Xray.heroLine({ dropped: true, touch: {} }), 'Dropped · reconnecting')
-  eq('hero pending', Xray.heroLine({ pending: 'switching', touch: {} }), 'Switching…')
-  eq('hero checking', Xray.heroLine({}), 'Checking…')
-
   /* ---- heroTitle / heroState: the node leads, the state is a short caption ---- */
   {
     const t = Xray.groupsFromStatus(status, 1000, NOW)
