@@ -91,6 +91,22 @@ Panel {
       // not fall through to the Config button below the list
       : visibleNodes.length === 0 && filterQuery !== "" ? ""
       : nodeIndex === visibleNodes.length ? "subs" : "sub"
+  // The keyboard cursor is drawn, not focused (focus stays on the key
+  // catcher), so a screen reader is told where it went.
+  readonly property string cursorLabel: {
+    var r = cursorRow, c = chipIndex
+    if (r === "node") { var n = selectedNode(); return n ? n.name + (n.connected ? ", connected" : "") : "" }
+    if (r === "hero") return "VPN switch, " + (xray.blocked ? "kill switch holding" : tunnelUp ? "on" : "off")
+    if (r === "settings") return "Settings, " + settingsSummary
+    if (r === "mode") return "Mode " + (c === 1 ? "TUN" : "proxy")
+    if (r === "route") return c === 2 ? "Change the direct country" : "Route " + (c === 1 ? "direct" : "all")
+    if (r === "regions") return xray.regions[c] ? xray.regions[c].name : ""
+    if (r === "ads") return "Ad blocking " + (xray.adblock ? "on" : "off")
+    if (r === "subs") return c === 0 ? "Open folder" : "Update all"
+    if (r === "sub") { var s = xray.subs[cursorSub]; return s ? (s.title || s.host) : "" }
+    return ""
+  }
+  onCursorLabelChanged: if (keysUsed && cursorLabel !== "") Accessible.announce(cursorLabel)
   readonly property int cursorSub: cursorRow === "sub" ? nodeIndex - visibleNodes.length - 1 : -1
   // The country chip only changes DIRECT's country; hidden while ALL is on.
   // One copy of what each chip does: its tooltip and the keyboard hint line
@@ -633,8 +649,10 @@ Panel {
         RowLayout {
           id: statusRow
           readonly property bool live: xray.connected && xray.traffic !== null
+          readonly property string errText: xray.errorText !== "" ? xray.errorText : "The xray manager is not answering"
           readonly property string kind: xray.actionStatus !== "" ? "action"
                                        : xray.errorText !== "" ? "error"
+                                       : !xray.reachable ? "error"
                                        : root.firstRun || !xray.connected ? "none" : "traffic"
           visible: kind !== "none"
           width: parent.width
@@ -645,7 +663,7 @@ Panel {
             Layout.fillWidth: true
             Layout.alignment: Qt.AlignVCenter
             text: statusRow.kind === "action" ? xray.actionStatus
-                  : statusRow.kind === "error" ? "󰀦 " + xray.errorText
+                  : statusRow.kind === "error" ? "󰀦 " + statusRow.errText
                   : !statusRow.live ? "Measuring traffic…"
                   : "󰁅 " + Model.formatSpeed(xray.traffic.downSpeed)
                     + "   󰁝 " + Model.formatSpeed(xray.traffic.upSpeed)
@@ -657,14 +675,22 @@ Panel {
             wrapMode: statusRow.kind === "error" ? Text.WordWrap : Text.NoWrap
             elide: statusRow.kind === "error" ? Text.ElideNone : Text.ElideRight
             Accessible.role: Accessible.StaticText
-            Accessible.name: statusRow.kind === "error" ? "Error: " + xray.errorText
+            Accessible.name: statusRow.kind === "error" ? "Error: " + statusRow.errText
                              : statusRow.kind === "action" ? xray.actionStatus
                              : statusRow.live ? "Download " + Model.formatSpeed(xray.traffic.downSpeed)
                                                 + ", upload " + Model.formatSpeed(xray.traffic.upSpeed)
                              : "Measuring traffic"
             onTextChanged: if (statusRow.kind === "error"
                                || (statusRow.kind === "action" && !/^Testing \d/.test(xray.actionStatus)))
-                             Accessible.announce(statusRow.kind === "error" ? "Error: " + xray.errorText : xray.actionStatus)
+                             Accessible.announce(statusRow.kind === "error" ? "Error: " + statusRow.errText : xray.actionStatus)
+          }
+
+          TextActionButton {
+            visible: !xray.reachable
+            label: "Doctor"
+            tooltip: "Check xray, geo data, TUN and polkit in a terminal"
+            Layout.alignment: Qt.AlignTop
+            onClicked: xray.openDoctor()
           }
 
           TextActionButton {
@@ -676,9 +702,35 @@ Panel {
           }
         }
 
-        // Keys in three groups, pinned so they are never a list's length
-        // away. Shown once the keyboard is used (and on first run); `?`
-        // hides or shows them. Mouse users get the keys in tooltips.
+        // Keyboard users never see hover tooltips: the chip under the
+        // cursor explains itself here (and to a screen reader). One fixed
+        // line below the settings, kept once the keyboard is in use, so
+        // no row moves when the cursor crosses them.
+        Text {
+          id: chipHint
+          textFormat: Text.PlainText
+          visible: root.keyboardUser && !root.firstRun
+          width: parent.width
+          text: {
+            var r = root.cursorRow, c = root.chipIndex
+            if (r === "mode") return root.modeOptions[c].tooltip
+            if (r === "route") return c < 2 ? root.routeOptions[c].tooltip : "Change the direct country"
+            if (r === "settings") return root.settingsOpen ? "Enter hides the settings" : "Enter shows mode, route and ad blocking"
+            if (r === "ads") return xray.geo ? "ADBLOCK: known ad and tracker domains" : "ADBLOCK needs the geo data packages"
+            if (r === "hero") return root.killArmed ? "Enter again: traffic goes direct, unprotected"
+                                      : xray.blocked ? "Waiting is safe: nothing leaks. Enter twice turns it off"
+                                      : xray.connected ? "Enter disconnects" : "Enter connects"
+            return " "                                // keeps the line's height
+          }
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          elide: Text.ElideRight
+          onTextChanged: function() { if (text.trim() !== "") Accessible.announce(text) }
+        }
+
+        // Keys, pinned so they are never a list's length away: one line until
+        // the keyboard is used, then three groups; `?` hides or shows them.
         Column {
           visible: root.firstRun || (xray.reachable && !root.legendHidden)
           width: parent.width
@@ -691,7 +743,7 @@ Panel {
                    : !root.keyboardUser ? [["KEYS", "Ctrl+C on/off · type to filter · ? hide"]]
                    : [["MOVE", "j/k · h/l · Enter apply · Home switch · ? hide"],
                       ["ACT", "Ctrl+C on/off · Ctrl+T test · Ctrl+R update"],
-                      ["MANAGE", "Ctrl+A add sub · Ctrl+O config · Ctrl+L logs"]]
+                      ["MANAGE", "Ctrl+A add sub · Ctrl+O folder · Ctrl+L logs"]]
             delegate: RowLayout {
               required property var modelData
               width: parent ? parent.width : 0
@@ -978,32 +1030,6 @@ Panel {
               }
             }
 
-            // Keyboard users never see hover tooltips: the chip under the
-            // cursor explains itself here (and to a screen reader). One fixed
-            // line below the settings, kept once the keyboard is in use, so
-            // no row moves when the cursor crosses them.
-            Text {
-              id: chipHint
-              textFormat: Text.PlainText
-              visible: root.keyboardUser && !root.firstRun
-              width: parent.width
-              text: {
-                var r = root.cursorRow, c = root.chipIndex
-                if (r === "mode") return root.modeOptions[c].tooltip
-                if (r === "route") return c < 2 ? root.routeOptions[c].tooltip : "Change the direct country"
-                if (r === "settings") return root.settingsOpen ? "Enter hides the settings" : "Enter shows mode, route and ad blocking"
-                if (r === "ads") return xray.geo ? "ADBLOCK: known ad and tracker domains" : "ADBLOCK needs the geo data packages"
-                if (r === "hero") return root.killArmed ? "Enter again: traffic goes direct, unprotected"
-                                          : xray.blocked ? "Waiting is safe: nothing leaks. Enter twice turns it off"
-                                          : xray.connected ? "Enter disconnects" : "Enter connects"
-                return " "                                // keeps the line's height
-              }
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              elide: Text.ElideRight
-              onTextChanged: function() { if (text.trim() !== "") Accessible.announce(text) }
-            }
           }
 
           PanelSeparator { visible: xray.reachable && !root.firstRun; foreground: root.foreground }

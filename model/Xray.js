@@ -283,5 +283,6 @@ function heroState(state) {
   if (!t.nodes || t.nodes.length === 0) return state.hasSubs ? "No usable nodes · see below" : "No subscription yet"
   if (t.running) return "Off · not protected"
   // the mode leads: a long node name is what gets cut, never the mode
-  return state.target ? mode + " → " + state.target : mode
+  // protection leads: an arrow here read like a live route
+  return "Not protected · " + mode + (state.target ? ", next " + state.target : "")
 }

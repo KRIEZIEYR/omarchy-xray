@@ -566,6 +566,12 @@ Item {
       "journalctl --user -u omarchy-xray.service -u omarchy-xray-tun2socks.service -n 100 -f"])
   }
 
+  function openDoctor() {
+    var q = "'" + manager.replace(/'/g, "'\\''") + "'"
+    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation",
+      q + " doctor | python3 -m json.tool; read -r -p 'Enter closes'"])
+  }
+
   function openWebUi() {
     Quickshell.execDetached(["xdg-open", Quickshell.env("HOME") + "/.config/omarchy-xray"])
   }
