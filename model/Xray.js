@@ -279,7 +279,7 @@ function heroState(state) {
   if (!t) return "Checking…"
   var mode = state.mode === "tun" ? "TUN" : "proxy"
   // proxy mode only covers apps that use the system proxy: say so every time
-  if (connectedNode(t)) return state.mode === "tun" ? "Connected · TUN" : "Connected · system-proxy apps"
+  if (connectedNode(t)) return state.mode === "tun" ? "Connected · TUN" : "Proxy apps only · others go direct"
   if (!t.nodes || t.nodes.length === 0) return state.hasSubs ? "No usable nodes · see below" : "No subscription yet"
   // the mode leads: a long node name is what gets cut, never the mode
   // protection leads: an arrow here read like a live route

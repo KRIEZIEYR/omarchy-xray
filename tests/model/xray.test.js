@@ -110,7 +110,7 @@ module.exports = function ({ Xray, assert, eq }) {
   {
     const t = Xray.groupsFromStatus(status, 1000, NOW)
     eq('title connected', Xray.heroTitle({ touch: t }), 'US LA')
-    eq('state proxy', Xray.heroState({ touch: t }), 'Connected · system-proxy apps')
+    eq('state proxy', Xray.heroState({ touch: t }), 'Proxy apps only · others go direct')
     eq('state tun', Xray.heroState({ touch: t, mode: 'tun' }), 'Connected · TUN')
     const ta = Xray.groupsFromStatus(Object.assign({}, status, { connectedKey: 'auto' }), 1000, NOW)
     eq('title auto pick', Xray.heroTitle({ touch: ta, autoPick: 'DE' }), 'Auto → DE')

@@ -106,7 +106,10 @@ Panel {
     if (r === "sub") { var s = xray.subs[cursorSub]; return s ? (s.title || s.host) : "" }
     return ""
   }
-  onCursorLabelChanged: if (keysUsed && cursorLabel !== "") Accessible.announce(cursorLabel)
+  onCursorLabelChanged: if (keysUsed && cursorLabel !== "") Qt.callLater(function() {
+    var h = chipHint.text.trim()
+    Accessible.announce(root.cursorLabel + (h !== "" ? ". " + h : ""))
+  })
   readonly property int cursorSub: cursorRow === "sub" ? nodeIndex - visibleNodes.length - 1 : -1
   // The country chip only changes DIRECT's country; hidden while ALL is on.
   // One copy of what each chip does: its tooltip and the keyboard hint line
@@ -651,7 +654,7 @@ Panel {
           readonly property bool live: xray.connected && xray.traffic !== null
           readonly property string errText: xray.errorText !== "" ? xray.errorText : "The xray manager is not answering"
           readonly property string kind: xray.actionStatus !== "" ? "action"
-                                       : xray.errorText !== "" ? "error"
+                                       : xray.errorText !== "" && !xray.blocked && !xray.dropped ? "error"
                                        : !xray.reachable ? "error"
                                        : root.firstRun || !xray.connected ? "none" : "traffic"
           visible: kind !== "none"
@@ -726,13 +729,13 @@ Panel {
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
           elide: Text.ElideRight
-          onTextChanged: function() { if (text.trim() !== "") Accessible.announce(text) }
         }
 
-        // Keys, pinned so they are never a list's length away: one line until
-        // the keyboard is used, then three groups; `?` hides or shows them.
+        // Keys in three groups, pinned so they are never a list's length
+        // away. Shown once the keyboard is used (and on first run); `?`
+        // hides or shows them. Before that, one line closes the list.
         Column {
-          visible: root.firstRun || (xray.reachable && !root.legendHidden)
+          visible: root.firstRun || (xray.reachable && root.keyboardUser && !root.legendHidden)
           width: parent.width
           spacing: Style.space(4)
 
@@ -740,7 +743,6 @@ Panel {
             model: root.firstRun ? [["", "Enter adds it · Esc twice closes"]]
                    : root.filterFocused ? [["FILTER", "↑/↓ · Enter connect · Ctrl+T test · Esc clear"]]
                    : root.urlFocused ? [["URL", "Enter adds it · Esc back to the list"]]
-                   : !root.keyboardUser ? [["KEYS", "Ctrl+C on/off · type to filter · ? hide"]]
                    : [["MOVE", "j/k · h/l · Enter apply · Home switch · ? hide"],
                       ["ACT", "Ctrl+C on/off · Ctrl+T test · Ctrl+R update"],
                       ["MANAGE", "Ctrl+A add sub · Ctrl+O folder · Ctrl+L logs"]]
@@ -1024,7 +1026,7 @@ Panel {
                 }
                 PanelToolTip {
                   visible: adblockText.containsMouse
-                  text: "Sends geosite:category-ads-all to a blackhole"
+                  text: "Blocks known ad and tracker domains (geosite:category-ads-all)"
                   fontFamily: root.fontFamily
                 }
               }
@@ -1320,13 +1322,13 @@ Panel {
                   }
 
                   TextActionButton {
-                    visible: !subRow.sub.local            // Manual: nothing to download
+                    visible: !!subRow.sub && !subRow.sub.local            // Manual: nothing to download
                     label: "Update"
-                    a11yName: "Update " + (subRow.sub.title || subRow.sub.host)
+                    a11yName: "Update " + (subRow.sub ? subRow.sub.title || subRow.sub.host : "")
                     tooltip: "Download this subscription again"
                     enabled: !xray.busy
                     hasCursor: root.cursorSub === subRow.index && root.chipIndex === 0
-                    onClicked: xray.updateSub(subRow.sub.index)
+                    onClicked: if (subRow.sub) xray.updateSub(subRow.sub.index)
                   }
 
                   TextActionButton {
@@ -1335,17 +1337,17 @@ Panel {
                     // same width armed or not, so "Update" never shifts
                     Layout.preferredWidth: Math.ceil(confirmMetrics.advanceWidth) + 2 * Style.spacing.controlPaddingX
                     label: armed ? "Confirm" : "Remove"
-                    a11yName: (armed ? "Confirm removing " : "Remove ") + (subRow.sub.title || subRow.sub.host)
-                    onArmedChanged: if (armed) Accessible.announce("Press again to remove " + (subRow.sub.title || subRow.sub.host))
+                    a11yName: (armed ? "Confirm removing " : "Remove ") + (subRow.sub ? subRow.sub.title || subRow.sub.host : "")
+                    onArmedChanged: if (armed) Accessible.announce("Press again to remove " + (subRow.sub ? subRow.sub.title || subRow.sub.host : ""))
                     // armed reads as a state, not only as a different word
                     bordered: armed
                     selected: armed
                     tint: armed ? root.errorColor : root.foreground
-                    tooltip: armed ? "Click again to remove " + (subRow.sub.title || subRow.sub.host) + " and its nodes"
-                                   : subRow.sub.local ? "Remove every server added by hand"
+                    tooltip: armed ? "Click again to remove " + (subRow.sub ? subRow.sub.title || subRow.sub.host : "") + " and its nodes"
+                                   : subRow.sub && subRow.sub.local ? "Remove every server added by hand"
                                    : "Remove this subscription and its nodes"
                     enabled: !xray.busy
-                    hasCursor: root.cursorSub === subRow.index && root.chipIndex === (subRow.sub.local ? 0 : 1)
+                    hasCursor: root.cursorSub === subRow.index && root.chipIndex === (subRow.sub && subRow.sub.local ? 0 : 1)
                     onClicked: root.armRemove(subRow.index)
                   }
                 }
@@ -1354,6 +1356,16 @@ Panel {
             }
           }
 
+          Text {
+            textFormat: Text.PlainText
+            visible: xray.reachable && !root.firstRun && !root.keyboardUser
+            width: parent.width
+            text: "Keys: Ctrl+C on/off · type to filter · j/k move · Ctrl+A add"
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            wrapMode: Text.WordWrap
+          }
         }
       }
     }
