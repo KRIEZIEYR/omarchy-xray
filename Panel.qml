@@ -591,16 +591,21 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
+    // tighter top and bottom; the sides keep the kit's popup padding (below)
+    padding: Style.space(8)
     contentWidth: panel.fittedContentWidth(Style.space(360))
     contentHeight: panel.fittedContentHeight(pinned.height + Style.space(12) + nodeList.contentHeight,
                                              Style.space(620))
 
     PanelKeyCatcher {
       id: keyCatcher
+      readonly property real sideInset: Math.max(0, Style.spacing.popupPadding - panel.padding)
       // Inline editors get every key (kit contract); they handle Up/Down/Enter/Esc themselves.
       blocked: (nodeList.headerItem !== null && nodeList.headerItem.search.activeFocus)
                || (nodeList.footerItem !== null && nodeList.footerItem.subUrl.activeFocus)
       anchors.fill: parent
+      anchors.leftMargin: sideInset
+      anchors.rightMargin: sideInset
       onMoveRequested: function(dx, dy) {
         root.keysUsed = true
         if (!root.cursorActive) { root.cursorActive = true; return }
