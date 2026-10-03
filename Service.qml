@@ -357,8 +357,7 @@ Item {
   function selectNode(node) {
     if (!node || !node.key) return
     if (coreRunning || connected || pending !== "") { connectNode(node); return }
-    persistLastNode(node.key)
-    flash(scrub(node.name) + " selected · the switch connects")
+    persistLastNode(node.key)          // the lit radio and the hero say it
   }
 
   function connectNode(node) {
