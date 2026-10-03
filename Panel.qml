@@ -1608,7 +1608,7 @@ Panel {
       }
       onClicked: function(mouse) {
         if (!nodeRow.node) return
-        if (mouse.button === Qt.RightButton) xray.testNode(nodeRow.node)
+        if (mouse.button === Qt.RightButton) xray.testNodes([nodeRow.node])
         else xray.selectNode(nodeRow.node)
       }
     }

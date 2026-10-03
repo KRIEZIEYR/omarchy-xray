@@ -149,16 +149,10 @@ Item {
     return out
   }
 
-  function takeTail(text) {
-    var s = String(text || "")
-    if (s.length > outCap) s = s.substring(s.length - outCap)
-    return s
-  }
-
   // Tolerant JSON extraction: whole text, else the last {...} line, else the
   // outermost {...} span (progress lines may precede the JSON).
   function extractJson(text) {
-    var s = takeTail(text).trim()
+    var s = String(text || "").slice(-outCap).trim()
     if (s === "") return null
     try { return JSON.parse(s) } catch (e) {}
     var lines = s.split("\n")
@@ -203,7 +197,7 @@ Item {
     var parsed = extractJson(stdoutText)
     if (parsed === null) parsed = extractJson(stderrText)
     if (parsed === null && (exitCode === 127 || exitCode === 126)) {
-      managerFail("")
+      managerFail()
       if (done) done({ ok: false, data: null, message: serviceError })
       return null
     }
@@ -247,10 +241,10 @@ Item {
     refresh()
   }
 
-  function managerFail(message) {
+  function managerFail() {
     reachable = false
     installed = false
-    serviceError = message !== "" ? message : "Xray manager did not start (needs /usr/bin/python3) — reinstall the plugin if python is present"
+    serviceError = "Xray manager did not start (needs /usr/bin/python3) — reinstall the plugin if python is present"
   }
 
   function flash(text) {
@@ -265,7 +259,7 @@ Item {
                   "latency test": "The latency test", "update": "The subscription update",
                   "import": "Adding", "remove": "Removing the subscription",
                   "mode switch": "Switching mode", "TUN setup": "TUN setup", "routing": "Applying routing",
-                  "adblock": "Applying ad blocking", "dns": "Changing DNS", "status": "Reading status", "stats": "Reading traffic" }
+                  "adblock": "Applying ad blocking", "dns": "Changing DNS", "status": "Reading status" }
     return names[label] || "The last command"
   }
 
@@ -391,7 +385,7 @@ Item {
         lastError = "Couldn't switch to " + scrub(node.name) + ": " + (resp.message || "no details"); refresh(); return
       }
       persistLastNode(node.key)
-      if (!coreRunning) { cmdOn(true); return }
+      if (!coreRunning) { cmdOn(); return }
       pending = ""; actionStatus = ""
       refresh()
     })) { busyRefused(); return }
@@ -417,8 +411,8 @@ Item {
     armDeadline(_action, _actionDeadline, 60000, "disconnect")
   }
 
-  // chained: called from connectNode's callback, which already shows the status
-  function cmdOn(chained) {
+  // called from connectNode's callback, which already shows the status
+  function cmdOn() {
     if (!run(_action, [manager, "on"], function(resp) {
       _actionDeadline.stop()
       pending = ""
@@ -427,11 +421,6 @@ Item {
       if (!resp.ok) lastError = "Couldn't connect: " + (resp.message || "no details")
       refresh()
     })) { busyRefused(); return }
-    if (!chained) {
-      pending = "connecting"
-      actionStatusTimer.stop()
-      actionStatus = "Connecting…"
-    }
     armDeadline(_action, _actionDeadline, 120000, "start")
   }
 
@@ -489,8 +478,6 @@ Item {
     if (!testing) return
     try { _long.signal(15) } catch (e) {}
   }
-
-  function testNode(node) { if (node) testNodes([node]) }
 
   // a failed update shows on the subscription row and as Fail N on the button
   function quietUpdate(resp) { if (!resp.ok) lastError = "" }

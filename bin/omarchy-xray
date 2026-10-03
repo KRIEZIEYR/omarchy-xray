@@ -19,7 +19,6 @@ the two explicit TUN install steps):
                      the tunnel) or system (the network's own DNS, outside the tunnel)
   on | off | restart start / stop / restart the tunnel
   test [key…]        latency-test nodes (batched, parallel, bounded)
-  stats              traffic totals + speed (JSON, from xray metrics)
   status             machine-readable JSON for the widget (secrets redacted)
   logs [n]           last journal lines of the active service
   doctor             environment checks (xray, geo files, TUN, polkit, DNS)
@@ -48,7 +47,7 @@ Security model:
   - state.json holds secrets: private 0700 dir, 0600 no-follow atomic writes.
   - Child processes get an explicit environment allowlist and absolute paths.
 """
-import base64, copy, hashlib, ipaddress, json, os, pathlib, pwd, re, shutil, signal
+import base64, copy, functools, hashlib, ipaddress, json, os, pathlib, pwd, re, shutil, signal
 import socket, subprocess, sys, tempfile, time, urllib.parse
 # urllib.request and concurrent.futures are imported where they are used:
 # they are ~75 ms of the start-up the widget pays on every status poll.
@@ -114,7 +113,6 @@ SELF = str(pathlib.Path(__file__).resolve())
 # Core feature gates (verified against Xray-core tags):
 MIN_CORE = (26, 6, 1)        # finalmask `mkcp-legacy`, hysteria, salamander
 PLAIN_REFUSED_CORE = (26, 7, 0)  # plain VLESS/Trojan to public servers refused
-_CORE_VER = []
 SYSTEMCTL = tool("systemctl") or "/usr/bin/systemctl"
 JOURNALCTL = tool("journalctl") or "/usr/bin/journalctl"
 IP = tool("ip") or "/usr/bin/ip"
@@ -676,17 +674,13 @@ def split_body(body):
 
 # --- share-link parsing ------------------------------------------------------
 
+@functools.lru_cache(None)
 def core_version():
     """(major, minor, patch) of the installed core, or None when unknown."""
-    if not _CORE_VER:
-        ver = None
-        if os.path.isfile(XRAY):
-            r = sh(XRAY, "version", timeout=15)
-            m = re.search(r"Xray (\d+)\.(\d+)\.(\d+)", r.stdout or "")
-            if m:
-                ver = tuple(int(x) for x in m.groups())
-        _CORE_VER.append(ver)
-    return _CORE_VER[0]
+    if not os.path.isfile(XRAY):
+        return None
+    m = re.search(r"Xray (\d+)\.(\d+)\.(\d+)", sh(XRAY, "version", timeout=15).stdout or "")
+    return tuple(int(x) for x in m.groups()) if m else None
 
 
 def ver_str(v):
@@ -1889,8 +1883,7 @@ def cmd_on():
         resolve_selection(st, st["selected"], "")
         save_state(st)
     write_config(st)
-    start_service(st)
-    apply_system_proxy(st, True)
+    start_service(st)                          # its proxy-sync sets the proxy
     out({"ok": True, "running": True, "mode": st["mode"], "selected": st["selected"]})
 
 
@@ -1921,8 +1914,7 @@ def cmd_mode(mode):
     if st["nodes"]:
         write_config(st)
         if was_running:
-            start_service(st)
-    apply_system_proxy(st, was_running)
+            start_service(st)                  # its proxy-sync follows the mode
     out({"ok": True, "mode": mode, "running": was_running})
 
 
@@ -2134,40 +2126,7 @@ def cmd_test(keys):
     out({"ok": True, "latency": lat, "stopped": bool(_STOP)})
 
 
-# --- stats / status ----------------------------------------------------------
-
-def metrics():
-    import urllib.request
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    with opener.open(METRICS_URL, timeout=3) as r:
-        return json.loads(r.read(4 * 1024 * 1024).decode("utf-8", "replace"))
-
-
-def cmd_stats():
-    if not any(running_units()):
-        out({"ok": True, "running": False})
-        return
-    try:
-        v = metrics()
-    except Exception:
-        die("stats unavailable (metrics endpoint not reachable)")
-    up = down = 0
-    for tag, c in ((v.get("stats") or {}).get("inbound") or {}).items():
-        up += int(c.get("uplink", 0) or 0)
-        down += int(c.get("downlink", 0) or 0)
-    path = runtime_dir() / "traffic.json"
-    prev = load_json(path, {})
-    now = time.time()
-    dt = now - float(prev.get("t", 0) or 0)
-    pu, pd = prev.get("up", -1), prev.get("down", -1)
-    if 0.4 < dt < 3600 and 0 <= pu <= up and 0 <= pd <= down:
-        us, ds = (up - pu) / dt, (down - pd) / dt
-    else:
-        us = ds = 0
-    atomic_write(path, json.dumps({"up": up, "down": down, "t": now}), 0o600)
-    out({"ok": True, "running": True, "upTotal": up, "downTotal": down,
-         "upSpeed": round(us), "downSpeed": round(ds)})
-
+# --- status ----------------------------------------------------------
 
 def addr_label(host, port):
     return ("[%s]:%d" if ":" in host else "%s:%d") % (host, port)
@@ -2258,7 +2217,6 @@ def cmd_status():
         last_error = _last_lines(journal_tail(tun_mode), n=2, cap=240)
     out({
         "ok": True,
-        "version": VERSION,
         "running": running,
         "mode": st["mode"],
         "routing": st["routing"],
@@ -2271,12 +2229,10 @@ def cmd_status():
         "xray": os.path.isfile(XRAY),
         "tunInstalled": tun_installed(),
         # off clears it; a crash leaves it set - that is a drop
-        "wanted": wanted,
         "dropped": dropped,
         "blocked": blocked,
         "restarts": restarts,
         "sessionStart": session_start,          # the widget's connect-at-login
-        "hasUrl": bool(st["subs"]),
         "subs": subs,
         "skipped": st["skipped"],
         "updateDue": due and bool(st["subs"]),
@@ -2816,7 +2772,7 @@ def main():
     args = sys.argv[1:]
     if not args:
         die("usage: omarchy-xray <import|subremove|update|select|mode|routing|adblock|dns|on|off|"
-            "restart|test|stats|status|logs|doctor|tun-setup|tun-remove|cleanup> [arg]")
+            "restart|test|status|logs|doctor|tun-setup|tun-remove|cleanup> [arg]")
     cmd, rest = args[0], args[1:]
     arg = rest[0] if rest else ""
     if os.geteuid() == 0 and cmd not in ROOT_COMMANDS:
@@ -2836,7 +2792,6 @@ def main():
         "off": cmd_off,
         "restart": cmd_restart,
         "test": lambda: cmd_test([a for a in rest if a][:MAX_TEST_NODES]),
-        "stats": cmd_stats,
         "status": cmd_status,
         "logs": lambda: cmd_logs(arg or "40"),
         "doctor": cmd_doctor,

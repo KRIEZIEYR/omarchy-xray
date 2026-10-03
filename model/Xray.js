@@ -207,12 +207,7 @@ function autoPickName(autoMembers, nodes, tag) {
 /* ---- formatting ------------------------------------------------------------- */
 
 function formatSpeed(bytesPerSec) {
-  var b = Number(bytesPerSec) || 0
-  if (b <= 0) return "0 B/s"
-  if (b < 1024) return Math.round(b) + " B/s"
-  if (b < 1048576) return (b / 1024).toFixed(1) + " KB/s"
-  if (b < 1073741824) return (b / 1048576).toFixed(1) + " MB/s"
-  return (b / 1073741824).toFixed(2) + " GB/s"
+  return formatBytes(bytesPerSec) + "/s"
 }
 
 function formatBytes(n) {

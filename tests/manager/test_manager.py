@@ -137,7 +137,8 @@ class Base(unittest.TestCase):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="oxtest-"))
         self._saved = {k: getattr(M, k) for k in (
             "CFG", "CONF", "STATE", "LAT", "CUSTOM", "UNIT_DIR", "UNIT", "T2S_UNIT",
-            "XRAY", "default_dev", "bootstrap_dns", "running_units", "apply_system_proxy")}
+            "XRAY", "default_dev", "bootstrap_dns", "running_units", "apply_system_proxy",
+            "core_version")}
         self.proxy_calls = []
         M.apply_system_proxy = lambda st, on: self.proxy_calls.append(on)   # never the real gsettings
         M.CFG = self.tmp / "cfg"
@@ -150,8 +151,7 @@ class Base(unittest.TestCase):
         M.T2S_UNIT = M.UNIT_DIR / M.T2S_SERVICE
         M.XRAY = XRAY_BIN if HAVE_XRAY else str(self.tmp / "no-xray")
         M.default_dev = lambda: "wlan0"
-        self._core_ver = list(M._CORE_VER)
-        M._CORE_VER[:] = [None]          # link policy as for an unknown (= latest) core
+        M.core_version = lambda: None    # link policy as for an unknown (= latest) core
         M.bootstrap_dns = lambda custom: ["192.168.1.1", "1.1.1.1"]
         self._env = os.environ.get("XRAY_LOCATION_ASSET")
         if HAVE_XRAY:
@@ -159,7 +159,6 @@ class Base(unittest.TestCase):
         os.environ["XDG_RUNTIME_DIR"] = str(self.tmp)
 
     def tearDown(self):
-        M._CORE_VER[:] = self._core_ver
         for k, v in self._saved.items():
             setattr(M, k, v)
         if self._env is None:
@@ -298,15 +297,11 @@ class LinkParsing(Base):
 
     def test_plain_policy_follows_core_version(self):
         link = SKIPPED["vless-plain-public"]
-        saved = list(M._CORE_VER)
-        try:
-            M._CORE_VER[:] = [(26, 6, 27)]            # before the core refused it
-            self.assertEqual(M.parse_link(link)["sec"], "none")
-            M._CORE_VER[:] = [(26, 7, 11)]
-            with self.assertRaises(M.Skip):
-                M.parse_link(link)
-        finally:
-            M._CORE_VER[:] = saved
+        M.core_version = lambda: (26, 6, 27)            # before the core refused it
+        self.assertEqual(M.parse_link(link)["sec"], "none")
+        M.core_version = lambda: (26, 7, 11)
+        with self.assertRaises(M.Skip):
+            M.parse_link(link)
 
     def test_unknown_fingerprint_falls_back(self):
         n = M.parse_link("vless://%s@a.example.com:443?security=tls&fp=bogus#x" % UUID)
@@ -1072,7 +1067,7 @@ class StatusShape(Base):
             M.cmd_status()
         self.assertFalse(json.loads(again.getvalue())["sessionStart"])   # once per session
         self.assertEqual(self.proxy_calls, [False])       # left-over proxy settings cleared once
-        self.assertFalse(data["wanted"])                  # nothing turned on in this session
+        self.assertFalse(M.wanted_mark().exists())        # nothing turned on in this session
         self.assertIn("ExecStartPost=-%s proxy-sync\n" % M.SELF, M.user_unit_text())
 
 

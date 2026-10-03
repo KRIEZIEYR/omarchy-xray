@@ -139,7 +139,7 @@ omarchy-xray dns cloudflare|google|quad9|adguard|system
 omarchy-xray adblock on|off
 omarchy-xray update [index]         # all subscriptions or one
 omarchy-xray test [key…]            # latency (first 200 nodes or the given keys, 10 min cap)
-omarchy-xray stats | logs [n] | doctor | cleanup
+omarchy-xray logs [n] | doctor | cleanup
 ```
 
 Proxies: socks5 `127.0.0.1:20170`, HTTP `127.0.0.1:20171`; private networks
