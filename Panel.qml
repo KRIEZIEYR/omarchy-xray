@@ -566,7 +566,7 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(400))
+    contentWidth: panel.fittedContentWidth(Style.space(360))
     contentHeight: panel.fittedContentHeight(pinned.height + Style.space(12) + nodeList.contentHeight,
                                              Style.space(620))
 
@@ -614,7 +614,7 @@ Panel {
         id: pinned
         anchors.left: parent.left
         anchors.right: parent.right
-        spacing: Style.space(8)
+        spacing: Style.space(4)
 
         PanelHero {
           id: hero
@@ -731,7 +731,8 @@ Panel {
         Text {
           id: chipHint
           textFormat: Text.PlainText
-          visible: root.keyboardUser && !root.firstRun
+          // only while the cursor is on a row it explains: no blank line otherwise
+          visible: root.keyboardUser && !root.firstRun && text.trim() !== ""
           width: parent.width
           text: {
             var r = root.cursorRow, c = root.chipIndex
@@ -797,7 +798,7 @@ Panel {
       ListView {
         id: nodeList
         anchors.top: pinned.bottom
-        anchors.topMargin: Style.space(8)
+        anchors.topMargin: Style.space(4)
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
@@ -824,8 +825,8 @@ Panel {
         header: Column {
           property alias search: searchField
           width: nodeList.width
-          spacing: Style.space(8)
-          bottomPadding: Style.space(4)
+          spacing: Style.space(4)
+          bottomPadding: Style.space(2)
 
           // Mode and route are set-and-forget: a compact label/chips form that
           // stays quieter than the connect switch and the node list.
