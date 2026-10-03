@@ -267,9 +267,8 @@ function heroTitle(state) {
   }
   // the protection word leads, the pair to "Not protected"; a long node name
   // is what gets cut
-  var lead = state.mode === "tun" ? "Protected · " : "Proxy apps · "
-  if (n.key === "auto") return lead + (state.autoPick ? state.autoPick + " (Auto)" : n.name)
-  return lead + n.name
+  // protection on the first line, the server on the second (as when off)
+  return state.mode === "tun" ? "Protected" : "Proxy apps only"
 }
 
 function heroState(state) {
@@ -285,7 +284,8 @@ function heroState(state) {
   if (!t) return "Checking…"
   var mode = state.mode === "tun" ? "TUN" : "proxy"
   // proxy mode only covers apps that use the system proxy: say so every time
-  if (connectedNode(t)) return state.mode === "tun" ? "Connected · TUN" : "Proxy apps only · other apps bypass the VPN"
+  var c = connectedNode(t)
+  if (c) return c.key === "auto" && state.autoPick ? state.autoPick + " (Auto)" : c.name
   if (!t.nodes || t.nodes.length === 0) return state.hasSubs ? "No usable nodes · see below" : "No subscription yet"
   // the mode leads: a long node name is what gets cut, never the mode
   // protection leads: an arrow here read like a live route
