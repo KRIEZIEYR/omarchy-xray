@@ -6,6 +6,8 @@ connect/disconnect, node switching (or **Auto** — best ping), proxy or
 **TUN** mode, routing presets, latency tests, subscription updates and live
 traffic.
 
+<img src="preview.png" alt="The Xray panel open under the bar: protection state, settings summary, nodes with latency" width="361">
+
 ```
 Panel.qml ──▶ bin/omarchy-xray (manager, in the plugin folder)
                  ├─ both modes ─▶ systemd --user  omarchy-xray.service  ─▶ /usr/bin/xray (no privileges)
