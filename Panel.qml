@@ -704,7 +704,7 @@ Panel {
             color: statusRow.kind === "error" ? root.errorColor
                    : statusRow.kind === "traffic" && statusRow.live ? root.foreground : root.dim
             font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
+            font.pixelSize: statusRow.kind === "traffic" ? Style.font.caption : Style.font.bodySmall
             wrapMode: statusRow.kind === "error" ? Text.WordWrap : Text.NoWrap
             elide: statusRow.kind === "error" ? Text.ElideNone : Text.ElideRight
             Accessible.role: Accessible.StaticText
