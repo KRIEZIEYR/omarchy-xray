@@ -499,20 +499,21 @@ Item {
 
   function updateSubscriptions() {
     runLong([manager, "update"], "update", 240000,
-            function(d) { return "Subscriptions updated: " + (d.nodes || 0) + " nodes" }, "Updating subscriptions…")
+            "", "Updating subscriptions…")        // the button and the list show it
   }
 
   function updateSub(index) {
     var i = parseInt(index, 10)
     if (!isFinite(i) || i < 0 || i > 63) return
     runLong([manager, "update", String(i)], "update", 180000,
-            function(d) { return "Subscription updated: " + (d.nodes || 0) + " nodes in total" }, "Updating subscription…")
+            "", "Updating subscription…")
   }
 
   // Import progress and failures, shown next to the URL field itself (the
   // panel may be scrolled to the subscriptions when they happen).
   property string importNote: ""
   readonly property bool importing: _long.running && _long._label === "import"
+  readonly property bool updating: _long.running && _long._label === "update"
 
   function importUrl(url, onDone) {
     // A subscription URL, share links or Xray JSON: all secrets, bounded and
