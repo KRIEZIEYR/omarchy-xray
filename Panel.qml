@@ -442,6 +442,10 @@ Panel {
   }
 
   readonly property string fastestKey: Model.fastestKey(visibleNodes)
+  // nodes whose last latency test failed or timed out, shown on the Test button
+  readonly property int failCount: visibleNodes.filter(function(n) {
+    return n && n.key !== "auto" && Model.latencyBad(Model.latencyLabel(n.latency))
+  }).length
   TextMetrics {
     id: glyphMetrics
     font.family: root.fontFamily
@@ -1178,7 +1182,7 @@ Panel {
               }
 
               TextActionButton {
-                label: xray.testing ? "Stop · " + root.elapsedText : "Test"
+                label: xray.testing ? "Stop · " + root.elapsedText : root.failCount > 0 ? "Test · Fail " + root.failCount : "Test"
                 tooltip: xray.testing ? "Stop the latency test, finished results are kept (Ctrl+T)"
                          : (root.filterQuery !== "" ? "Latency-test the filtered nodes" : "Latency-test all nodes")
                            + (root.visibleNodes.length > 200 ? " (the first 200)" : "")

@@ -485,7 +485,8 @@ Item {
     runLong([manager, "test"].concat(subset ? keys : []), "latency test", 660000,
             "",                                // results show in the list; no status line
             label, undefined, function(resp) {
-      if (resp.ok && resp.data && resp.data.stopped === true) flash("Latency test stopped — partial results kept")
+      // no status line either way: the Test button counts the failures
+      if (!resp.ok) lastError = ""
     })
   }
 
