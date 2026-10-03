@@ -697,7 +697,9 @@ Panel {
                   : !statusRow.live ? "Measuring traffic…"
                   : "󰁅 " + Model.formatSpeed(xray.traffic.downSpeed)
                     + "   󰁝 " + Model.formatSpeed(xray.traffic.upSpeed)
-                    + "   ·   Downloaded " + Model.formatBytes(xray.traffic.downTotal)
+                    // totals since connect: tray-arrow glyphs, unlike the speed arrows
+                    + "   ·   󰇚 " + Model.formatBytes(xray.traffic.downTotal)
+                    + "  󰕒 " + Model.formatBytes(xray.traffic.upTotal)
             color: statusRow.kind === "error" ? root.errorColor
                    : statusRow.kind === "traffic" && statusRow.live ? root.foreground : root.dim
             font.family: root.fontFamily
@@ -709,6 +711,8 @@ Panel {
                              : statusRow.kind === "action" ? xray.actionStatus
                              : statusRow.live ? "Download " + Model.formatSpeed(xray.traffic.downSpeed)
                                                 + ", upload " + Model.formatSpeed(xray.traffic.upSpeed)
+                                                + ", total down " + Model.formatBytes(xray.traffic.downTotal)
+                                                + ", up " + Model.formatBytes(xray.traffic.upTotal)
                              : "Measuring traffic"
             onTextChanged: if (statusRow.kind === "error"
                                || (statusRow.kind === "action" && !/^Testing \d/.test(xray.actionStatus)))
