@@ -389,7 +389,7 @@ Item {
     if (!run(_action, [manager, "off"], function(resp) {
       _actionDeadline.stop()
       pending = ""
-      if (resp.ok) flash("Disconnected")
+      if (resp.ok) actionStatus = ""        // the hero says Not protected
       else { actionStatus = ""; lastError = "Couldn't disconnect: " + (resp.message || "no details") }
       traffic = null
       refresh()
