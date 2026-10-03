@@ -453,7 +453,7 @@ Item {
       _longDeadline.stop()
       var what = label.charAt(0).toUpperCase() + label.substring(1)
       var msg = resp.message || "no details"
-      if (resp.ok) flash(typeof okText === "function" ? okText(resp.data || {}) : okText)
+      if (resp.ok && okText) flash(typeof okText === "function" ? okText(resp.data || {}) : okText)
       else { actionStatus = ""; lastError = msg.indexOf(what) === 0 ? msg : what + " failed: " + msg }
       if (after) after(resp)
       refresh()
@@ -470,21 +470,16 @@ Item {
   function testNodes(nodes) {
     if (testing) { stopTest(); return }
     var list = nodes || []
-    var keys = [], total = 0, first = ""
+    var keys = [], total = 0
     for (var i = 0; i < list.length && keys.length < 200; i++) {
       if (!list[i].key || list[i].key === "auto") continue
-      if (first === "") first = list[i].name
       keys.push(String(list[i].key))
     }
     var all = touch ? touch.nodes : []
     for (var j = 0; j < all.length; j++) if (all[j].key !== "auto") total++
     var subset = keys.length > 0 && keys.length < total
-    var label = !subset ? "Testing " + total + " nodes…"
-              : keys.length === 1 ? "Testing " + scrub(first) + "…"
-              : "Testing " + keys.length + " nodes…"
     runLong([manager, "test"].concat(subset ? keys : []), "latency test", 660000,
-            "",                                // results show in the list; no status line
-            label, undefined, function(resp) {
+            "", "", undefined, function(resp) {    // the Test button and the list show it
       // no status line either way: the Test button counts the failures
       if (!resp.ok) lastError = ""
     })
@@ -503,14 +498,14 @@ Item {
 
   function updateSubscriptions() {
     runLong([manager, "update"], "update", 240000,
-            "", "Updating subscriptions…", undefined, quietUpdate)   // the button and the list show it
+            "", "", undefined, quietUpdate)       // the button and the list show it
   }
 
   function updateSub(index) {
     var i = parseInt(index, 10)
     if (!isFinite(i) || i < 0 || i > 63) return
     runLong([manager, "update", String(i)], "update", 180000,
-            "", "Updating subscription…", undefined, quietUpdate)
+            "", "", undefined, quietUpdate)
   }
 
   // Import progress and failures, shown next to the URL field itself (the

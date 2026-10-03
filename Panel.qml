@@ -177,7 +177,7 @@ Panel {
     else if (r === "regions" && xray.regions[chipIndex]) pickRegion(xray.regions[chipIndex].code)
     else if (r === "ads") { if (xray.geo || xray.adblock) xray.setAdblock(!xray.adblock) }
     else if (r === "dns" && dnsOptions[chipIndex]) chooseDns(dnsOptions[chipIndex].value)
-    else if (r === "login") persistSetting("autoConnect", !autoConnect)
+    else if (r === "login") toggleAutoConnect()
     else if (r === "subs") { if (xray.subs.length > 0) xray.updateSubscriptions() }
     else if (r === "sub" && xray.subs[cursorSub]) {
       // the Manual group has no Update: its only chip is Remove
@@ -218,6 +218,7 @@ Panel {
     nodeIndex = abs - len
   }
   readonly property bool autoConnect: settings ? settings.autoConnect === true : false
+  function toggleAutoConnect() { persistSetting("autoConnect", !autoConnect) }
   readonly property string lastNodeKey: settings ? String(settings.lastNodeKey || "") : ""
 
   // Off while the kill switch holds lets traffic out unprotected, so it takes
@@ -716,7 +717,7 @@ Panel {
           id: statusRow
           readonly property bool live: xray.connected && xray.traffic !== null
           readonly property string errText: xray.errorText !== "" ? xray.errorText : "The xray manager is not answering"
-          readonly property string kind: xray.actionStatus !== "" && xray.pending === "" && !xray.testing && !xray.updating ? "action"
+          readonly property string kind: xray.actionStatus !== "" && xray.pending === "" ? "action"
                                        : xray.errorText !== "" && !xray.blocked && !xray.dropped ? "error"
                                        : !xray.reachable ? "error"
                                        : root.firstRun || !xray.connected ? "none" : "traffic"
@@ -1062,117 +1063,25 @@ Panel {
               Item { Layout.fillWidth: true }
             }
 
-            RowLayout {
-              width: parent.width
-              spacing: Style.space(8)
-
-              PanelSectionHeader {
-                id: adblockLabel
-                text: "ADBLOCK"
-                Layout.preferredWidth: root.settingLabelWidth
-                Layout.alignment: Qt.AlignVCenter
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-              }
-
-              ToggleSwitch {
-                id: adblockSwitch
-                trackHeight: Math.round(adblockLabel.font.pixelSize * 1.2)
-                cursorPad: Style.space(3)
-                Layout.alignment: Qt.AlignVCenter
-                checked: xray.adblock
-                busy: xray.busy
-                hasCursor: root.cursorRow === "ads"
-                opacity: xray.busy || !(xray.geo || xray.adblock) ? 0.45 : 1.0
-                foreground: root.foreground
-                onToggled: if (xray.geo || xray.adblock) xray.setAdblock(!xray.adblock)
-                onHovered: function(h) { if (h) root.cursorActive = false }
-                Accessible.role: Accessible.CheckBox
-                Accessible.name: "Ad blocking"
-                Accessible.checked: xray.adblock
-                Accessible.focusable: true
-                Accessible.focused: hasCursor
-              }
-
-              Text {
-                textFormat: Text.PlainText
-                Layout.fillWidth: true
-                text: xray.geo ? "Blocks known ad and tracker domains"
-                               : "Needs geo data: install v2ray-geoip and v2ray-domain-list-community"
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
-                wrapMode: xray.geo ? Text.NoWrap : Text.WordWrap                // the package names are the point
-                elide: xray.geo ? Text.ElideRight : Text.ElideNone
-
-                // the whole line toggles, not just the small switch
-                MouseArea {
-                  id: adblockText
-                  anchors.fill: parent
-                  anchors.topMargin: -Style.space(6)
-                  anchors.bottomMargin: -Style.space(6)
-                  hoverEnabled: true
-                  enabled: xray.geo || xray.adblock
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: if (!xray.busy) xray.setAdblock(!xray.adblock)
-                  onEntered: root.cursorActive = false
-                }
-                PanelToolTip {
-                  visible: adblockText.containsMouse
-                  text: "Blocks known ad and tracker domains"
-                  fontFamily: root.fontFamily
-                }
-              }
+            SettingToggle {
+              label: "ADBLOCK"
+              a11yName: "Ad blocking"
+              checked: xray.adblock
+              busy: xray.busy
+              usable: xray.geo || xray.adblock
+              hasCursor: root.cursorRow === "ads"
+              note: xray.geo ? "Blocks known ad and tracker domains"
+                             : "Needs geo data: install v2ray-geoip and v2ray-domain-list-community"
+              onFlip: if (!xray.busy) xray.setAdblock(!xray.adblock)
             }
 
-
-            RowLayout {
-              width: parent.width
-              spacing: Style.space(8)
-
-              PanelSectionHeader {
-                id: loginLabel
-                text: "LOGIN"
-                Layout.preferredWidth: root.settingLabelWidth
-                Layout.alignment: Qt.AlignVCenter
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-              }
-
-              ToggleSwitch {
-                trackHeight: Math.round(loginLabel.font.pixelSize * 1.2)
-                cursorPad: Style.space(3)
-                Layout.alignment: Qt.AlignVCenter
-                checked: root.autoConnect
-                hasCursor: root.cursorRow === "login"
-                foreground: root.foreground
-                onToggled: root.persistSetting("autoConnect", !root.autoConnect)
-                onHovered: function(h) { if (h) root.cursorActive = false }
-                Accessible.role: Accessible.CheckBox
-                Accessible.name: "Connect at login"
-                Accessible.checked: root.autoConnect
-                Accessible.focusable: true
-                Accessible.focused: hasCursor
-              }
-
-              Text {
-                textFormat: Text.PlainText
-                Layout.fillWidth: true
-                text: "Connect when you log in"
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
-                elide: Text.ElideRight
-                MouseArea {
-                  anchors.fill: parent
-                  anchors.topMargin: -Style.space(6)
-                  anchors.bottomMargin: -Style.space(6)
-                  hoverEnabled: true
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: root.persistSetting("autoConnect", !root.autoConnect)
-                  onEntered: root.cursorActive = false
-                }
-              }
+            SettingToggle {
+              label: "LOGIN"
+              a11yName: "Connect at login"
+              checked: root.autoConnect
+              hasCursor: root.cursorRow === "login"
+              note: "Connect when you log in"
+              onFlip: root.toggleAutoConnect()
             }
 
           }
@@ -1566,6 +1475,67 @@ Panel {
         fontSize: chips.fontSize
         onClicked: chips.changed(modelData.value)
         onHovered: function(h) { chips.hovered(index, h) }
+      }
+    }
+  }
+
+  // A settings row: label, switch, and a note that toggles too (a small
+  // switch is a small target). `usable` false greys it and blocks clicks.
+  component SettingToggle: RowLayout {
+    id: st
+    property string label: ""
+    property string a11yName: ""
+    property string note: ""
+    property bool checked: false
+    property bool busy: false
+    property bool usable: true
+    property bool hasCursor: false
+    signal flip()
+    width: parent ? parent.width : 0
+    spacing: Style.space(8)
+    PanelSectionHeader {
+      id: stLabel
+      text: st.label
+      Layout.preferredWidth: root.settingLabelWidth
+      Layout.alignment: Qt.AlignVCenter
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+    }
+    ToggleSwitch {
+      trackHeight: Math.round(stLabel.font.pixelSize * 1.2)
+      cursorPad: Style.space(3)
+      Layout.alignment: Qt.AlignVCenter
+      checked: st.checked
+      busy: st.busy
+      hasCursor: st.hasCursor
+      opacity: st.busy || !st.usable ? 0.45 : 1.0
+      foreground: root.foreground
+      onToggled: if (st.usable) st.flip()
+      onHovered: function(h) { if (h) root.cursorActive = false }
+      Accessible.role: Accessible.CheckBox
+      Accessible.name: st.a11yName
+      Accessible.checked: st.checked
+      Accessible.focusable: true
+      Accessible.focused: hasCursor
+    }
+    Text {
+      textFormat: Text.PlainText
+      Layout.fillWidth: true
+      text: st.note
+      color: root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+      wrapMode: st.usable ? Text.NoWrap : Text.WordWrap      // a missing-package note must show in full
+      elide: st.usable ? Text.ElideRight : Text.ElideNone
+      MouseArea {
+        anchors.fill: parent
+        anchors.topMargin: -Style.space(6)
+        anchors.bottomMargin: -Style.space(6)
+        hoverEnabled: true
+        enabled: st.usable
+        cursorShape: Qt.PointingHandCursor
+        onClicked: st.flip()
+        onEntered: root.cursorActive = false
       }
     }
   }
