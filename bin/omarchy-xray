@@ -22,6 +22,22 @@ the two explicit TUN install steps):
   rule rm <index>    own routing rules, checked before the presets
   dns <preset>       DNS the TUN uses: cloudflare, google, quad9, adguard (DoH through
                      the tunnel) or system (the network's own DNS, outside the tunnel)
+  fav <key>          star / unstar a node (starred nodes sort first)
+  set <key> <value>  autofav on|off (Auto only among starred nodes), lan on|off
+                     (socks/http for the local network, with a password),
+                     mux on|off|<1-1024>, loglevel error|warning|info|debug
+  set ua <text|default>  User-Agent for subscription downloads
+  chain <key|off>    first hop: the selected node (or Auto) is dialed through this one
+  share <key> [qr]   the node's share link (or its outbound JSON); qr: also a PNG path
+  whoami             exit IP and country, asked through the tunnel
+  speed [key]        download speed (Cloudflare, 25 MB max): the tunnel, or one node
+                     on its own through a throwaway core
+  scan               import from a QR code on screen (drag a region; grim, slurp, zbar)
+  geo update         fresh geoip/geosite.dat (Loyalsoldier, sha256-checked) into
+                     ~/.config/omarchy-xray/geo; the widget refreshes them weekly
+  set subupdate <auto|off|hours>  auto-update interval (auto: the provider's, or 24 h)
+  settings export    print the settings (no subscriptions, no secrets) as JSON
+  settings import -  read such JSON from stdin
   dns custom <addr>  your own server through the tunnel: an IP, or https:// tls://
                      tcp:// quic:// h2c:// with an IP or a host name
   on | off | restart start / stop / restart the tunnel
@@ -74,6 +90,7 @@ CFG = HOME / ".config/omarchy-xray"
 CONF = CFG / "config.json"
 STATE = CFG / "state.json"
 LAT = CFG / "latency.json"
+SPEED = CFG / "speed.json"
 CUSTOM = CFG / "custom.json"
 UNIT_DIR = HOME / ".config/systemd/user"
 SERVICE = "omarchy-xray.service"
@@ -126,6 +143,9 @@ IP = tool("ip") or "/usr/bin/ip"
 CURL = tool("curl") or "/usr/bin/curl"
 
 SOCKS, HTTP, METRICS = 20170, 20171, 15491
+LAN_SOCKS, LAN_HTTP = 20172, 20173       # only with `set lan on`, password-protected
+LOGLEVELS = ("error", "warning", "info", "debug")
+MAX_FAVS = 500
 TUN_NAME = "xray0"
 TUN_GW4, TUN_DNS = "198.18.0.1/30", "198.18.0.2"
 TUN_GW6 = "fdfe:dcba:9876::1/126"
@@ -181,6 +201,11 @@ REGIONS = {
 }
 ASSET_DIRS = ("/usr/share/xray", "/usr/local/share/xray", "/usr/share/v2ray",
               "/usr/local/share/v2ray", "/opt/xray")
+GEO_DIR = CFG / "geo"
+GEO_URL = "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/"
+GEO_MAX_BYTES = 64 * 1024 * 1024
+GEO_DAYS = 7                      # a downloaded set refreshes weekly
+SPEED_URL = "https://speed.cloudflare.com/__down?bytes=25000000"
 
 # --- security bounds ---------------------------------------------------------
 MAX_SUB_BYTES = 2 * 1024 * 1024  # per-subscription download cap
@@ -247,7 +272,7 @@ SS_METHODS = {"aes-128-gcm": "aes-128-gcm", "aes-256-gcm": "aes-256-gcm",
               "2022-blake3-aes-256-gcm": "2022-blake3-aes-256-gcm",
               "2022-blake3-chacha20-poly1305": "2022-blake3-chacha20-poly1305"}
 PROTOCOLS = {"vless", "vmess", "trojan", "shadowsocks", "hysteria"}
-RESERVED_TAGS = {"proxy", "direct", "block", "tls-fragment", "dns-out", "tun-in", "socks-in",
+RESERVED_TAGS = {"proxy", "direct", "block", "tls-fragment", "chain-hop", "lan-socks", "lan-http", "dns-out", "tun-in", "socks-in",
                  "http-in", "auto"}
 
 
@@ -353,6 +378,7 @@ def asset_dir():
         cands.append(os.path.dirname(os.path.realpath(XRAY)))
     except OSError:
         pass
+    cands.append(str(GEO_DIR))           # `geo update` downloads; newer than the distro's
     cands.extend(ASSET_DIRS)
     for d in cands:
         if os.path.isfile(os.path.join(d, "geoip.dat")) and \
@@ -541,6 +567,27 @@ def load_state():
         st["routing"] = "global"
     st["adblock"] = st.get("adblock") is True
     st["fragment"] = st.get("fragment") is True
+    favs = st.get("favorites") if isinstance(st.get("favorites"), list) else []
+    st["favorites"] = [f for f in favs if isinstance(f, str) and re.fullmatch(r"k[0-9a-f]{10}", f)][:MAX_FAVS]
+    for k in ("autoFavorites", "lan", "mux"):
+        st[k] = st.get(k) is True
+    mc = st.get("muxConcurrency")
+    st["muxConcurrency"] = mc if isinstance(mc, int) and not isinstance(mc, bool) and 1 <= mc <= 1024 else 8
+    ua = st.get("userAgent")
+    if not (isinstance(ua, str) and ua_ok(ua)):
+        st.pop("userAgent", None)
+    if not (isinstance(st.get("chain"), str) and any(n.get("id") == st["chain"] for n in st.get("nodes", []))):
+        st["chain"] = ""
+    su = st.get("subUpdate")
+    if not (isinstance(su, int) and not isinstance(su, bool) and 0 <= su <= 168):
+        st.pop("subUpdate", None)
+    if st.get("loglevel") not in LOGLEVELS:
+        st["loglevel"] = "warning"
+    la = st.get("lanAuth") if isinstance(st.get("lanAuth"), dict) else {}
+    if not (isinstance(la.get("user"), str) and isinstance(la.get("pass"), str)
+            and re.fullmatch(r"[0-9a-f]{8,64}", la["user"]) and re.fullmatch(r"[0-9a-f]{16,64}", la["pass"])):
+        la = {"user": os.urandom(4).hex(), "pass": os.urandom(12).hex()}
+    st["lanAuth"] = la
     fo = st.get("fragmentOpts") if isinstance(st.get("fragmentOpts"), dict) else {}
     st["fragmentOpts"] = {k: fo[k] if fragment_opt_ok(k, fo.get(k)) else v
                           for k, v in FRAGMENT_DEFAULTS.items()}
@@ -590,7 +637,11 @@ def device_headers():
     return h
 
 
-def fetch(url, via_proxy=False):
+def ua_ok(ua):
+    return 0 < len(ua) <= 128 and re.fullmatch(r"[\x20-\x7e]+", ua) is not None
+
+
+def fetch(url, via_proxy=False, ua="", cap=MAX_SUB_BYTES):
     """Returns (body, headers). HTTPS only, byte-capped, redirect-checked."""
     import urllib.request
 
@@ -616,7 +667,7 @@ def fetch(url, via_proxy=False):
         handlers.append(urllib.request.ProxyHandler({}))
     opener = urllib.request.build_opener(*handlers)
     req = urllib.request.Request(url, headers=dict(device_headers(),
-                                 **{"User-Agent": "omarchy-xray/" + VERSION, "Accept": "*/*"}))
+                                 **{"User-Agent": ua or "omarchy-xray/" + VERSION, "Accept": "*/*"}))
     try:
         r = opener.open(req, timeout=FETCH_TIMEOUT)
     except ValueError:
@@ -632,8 +683,8 @@ def fetch(url, via_proxy=False):
             if not chunk:
                 break
             buf += chunk
-            if len(buf) > MAX_SUB_BYTES:
-                raise ValueError("subscription body exceeds %d bytes — refused" % MAX_SUB_BYTES)
+            if len(buf) > cap:
+                raise ValueError("download exceeds %d bytes — refused" % cap)
         headers = {k.lower(): v for k, v in r.headers.items()
                    if k.lower() in ("subscription-userinfo", "profile-title",
                                     "profile-update-interval")}
@@ -1190,7 +1241,9 @@ def parse_link(link):
     fn = PARSERS.get(scheme)
     if fn is None:
         raise Skip("unsupported link type: " + (scheme[:16] or "?"))
-    return fn(link)
+    n = fn(link)
+    n["link"] = link                     # for `share`; state.json is 0600 like the rest
+    return n
 
 
 def _ob_endpoint(ob):
@@ -1343,11 +1396,11 @@ def fetch_subs(st, only=None):
                 got = [n for t in sub["local"] for n in nodes_from_body(t.encode(), i, skipped)]
             else:
                 try:
-                    body, headers = fetch(url)
+                    body, headers = fetch(url, ua=st.get("userAgent", ""))
                 except (RuntimeError, OSError):
                     if not running:
                         raise
-                    body, headers = fetch(url, via_proxy=True)   # direct blocked? try the tunnel
+                    body, headers = fetch(url, via_proxy=True, ua=st.get("userAgent", ""))   # direct blocked? try the tunnel
                 got = nodes_from_body(body, i, skipped)
                 sub["info"] = parse_userinfo(headers.get("subscription-userinfo"))
                 sub["title"] = parse_title(headers.get("profile-title"))
@@ -1483,9 +1536,13 @@ def auto_members(st):
         m = re.match(r"^(\d+)ms$", str(lat.get(n["id"], "")))
         return int(m.group(1)) if m else None
 
-    good = sorted((n for n in st["nodes"] if ms(n) is not None), key=ms)
-    rest = [n for n in st["nodes"] if ms(n) is None and lat.get(n["id"]) != "timeout"]
-    return (good + rest)[:AUTO_MAX] or st["nodes"][:AUTO_MAX]
+    pool = st["nodes"]
+    if st.get("autoFavorites"):
+        favs = set(st.get("favorites", []))
+        pool = [n for n in pool if n["id"] in favs] or pool     # no starred node left: all
+    good = sorted((n for n in pool if ms(n) is not None), key=ms)
+    rest = [n for n in pool if ms(n) is None and lat.get(n["id"]) != "timeout"]
+    return (good + rest)[:AUTO_MAX] or pool[:AUTO_MAX]
 
 
 def node_outbound(n, tag, mode, patch=None, iface=None):
@@ -1545,6 +1602,22 @@ def fragment_opt_ok(key, v):
         and (key == "interval" or int(m.group(1)) > 0)
 
 
+def mux_target(ob):
+    """Mux breaks XTLS Vision (flow) and has no place on XHTTP or QUIC."""
+    ss = ob.get("streamSettings") or {}
+    return (ob.get("protocol") in ("vless", "vmess", "trojan", "shadowsocks")
+            and ss.get("network") not in ("xhttp", "hysteria") and '"flow": "xtls' not in json.dumps(ob))
+
+
+def lan_ip():
+    dev = default_dev()
+    if not dev:
+        return ""
+    r = sh(IP, "-4", "-o", "addr", "show", "dev", dev, timeout=5)
+    m = re.search(r"inet (\d+\.\d+\.\d+\.\d+)/", r.stdout or "")
+    return m.group(1) if m else ""
+
+
 def fragment_target(ob):
     """TLS over TCP only: REALITY and QUIC transports gain nothing from it."""
     ss = ob.get("streamSettings") or {}
@@ -1569,10 +1642,29 @@ def build_config(st, custom=None):
         {"tag": "http-in", "listen": "127.0.0.1", "port": HTTP, "protocol": "http",
          "settings": {}, "sniffing": sniff},
     ]
+    if st.get("lan"):
+        acc = [{"user": st["lanAuth"]["user"], "pass": st["lanAuth"]["pass"]}]
+        inbounds += [
+            {"tag": "lan-socks", "listen": "0.0.0.0", "port": LAN_SOCKS, "protocol": "socks",
+             "settings": {"auth": "password", "accounts": acc, "udp": True}, "sniffing": sniff},
+            {"tag": "lan-http", "listen": "0.0.0.0", "port": LAN_HTTP, "protocol": "http",
+             "settings": {"accounts": acc}, "sniffing": sniff}]
     if auto:
         outbounds = [node_outbound(n, "node-%d" % i, mode, patch) for i, n in enumerate(members)]
     else:
         outbounds = [node_outbound(members[0], "proxy", mode, patch)]
+    hop = next((n for n in st["nodes"] if n["id"] == st.get("chain")), None)
+    if hop:
+        # chain: every exit node is dialed through the first hop; a node is
+        # never chained through itself
+        for n, ob in zip(members, outbounds):
+            if n["id"] != hop["id"]:
+                ob.setdefault("streamSettings", {}).setdefault("sockopt", {})["dialerProxy"] = "chain-hop"
+        outbounds.append(node_outbound(hop, "chain-hop", mode, patch))
+    if st.get("mux"):
+        for ob in outbounds:
+            if mux_target(ob):
+                ob.setdefault("mux", {"enabled": True, "concurrency": st.get("muxConcurrency", 8)})
     direct = {"tag": "direct", "protocol": "freedom"}
     if mode == "tun":
         # docs (outbounds/freedom): resolution is controlled by sockopt.domainStrategy;
@@ -1580,7 +1672,9 @@ def build_config(st, custom=None):
         direct["streamSettings"] = {"sockopt": {"domainStrategy": "UseIP"}}
     outbounds += [direct, {"tag": "block", "protocol": "blackhole"}]
     if st.get("fragment"):
-        frag = [ob for ob in outbounds if fragment_target(ob)]
+        # with a chain only the hop talks to the network itself
+        frag = [ob for ob in outbounds if fragment_target(ob)
+                and (not hop or ob["tag"] == "chain-hop" or "dialerProxy" not in ob["streamSettings"].get("sockopt", {}))]
         if frag:
             opts = st.get("fragmentOpts") or FRAGMENT_DEFAULTS
             outbounds.append(dict(copy.deepcopy(direct), tag="tls-fragment",
@@ -1643,7 +1737,7 @@ def build_config(st, custom=None):
                                "probeInterval": "1m", "enableConcurrency": True}
 
     conf.update({
-        "log": {"loglevel": "warning"},
+        "log": {"loglevel": st.get("loglevel", "warning")},
         "stats": {},
         "metrics": {"listen": "127.0.0.1:%d" % METRICS},
         "policy": {"system": {"statsInboundUplink": True, "statsInboundDownlink": True,
@@ -1845,7 +1939,10 @@ def _prev(st):
 
 
 def cmd_import(arg):
-    url = secret_url_from_arg(arg)
+    _import_text(secret_url_from_arg(arg))
+
+
+def _import_text(url):
     if len(url) > MAX_PASTE:
         die("too long to import (over %d KiB)" % (MAX_PASTE // 1024))
     if not re.fullmatch(r"https?://\S+", url, re.I):
@@ -2106,6 +2203,263 @@ def cmd_rule(args):
     out({"ok": True, "rules": st["rules"]})
 
 
+def cmd_fav(key):
+    st = load_state()
+    k = resolve_key(st, key)
+    if k == "auto":
+        die("Auto cannot be starred")
+    favs = st["favorites"]
+    if k in favs:
+        favs.remove(k)
+    elif len(favs) >= MAX_FAVS:
+        die("too many starred nodes")
+    else:
+        favs.append(k)
+    if st.get("autoFavorites") and st["selected"] == "auto":
+        _apply(st)                       # the Auto members changed
+    else:
+        save_state(st)
+    out({"ok": True, "starred": k in favs})
+
+
+def cmd_set(key, value):
+    st = load_state()
+    onoff = {"on": True, "off": False}
+    if key in ("autofav", "lan") and value in onoff:
+        st["autoFavorites" if key == "autofav" else "lan"] = onoff[value]
+    elif key == "mux" and (value in onoff or (value.isdigit() and 1 <= int(value) <= 1024)):
+        st["mux"] = onoff.get(value, True)
+        if value.isdigit():
+            st["muxConcurrency"] = int(value)
+    elif key == "subupdate" and (value in ("auto", "off") or (value.isdigit() and 1 <= int(value) <= 168)):
+        st["subUpdate"] = {"auto": None, "off": 0}.get(value, int(value) if value.isdigit() else None)
+        if st["subUpdate"] is None:
+            st.pop("subUpdate")
+        save_state(st)                       # the widget's timer reads it from status
+        out({"ok": True, "subUpdate": st.get("subUpdate")})
+        return
+    elif key == "loglevel" and value in LOGLEVELS:
+        st["loglevel"] = value
+    elif key == "ua" and (value == "default" or ua_ok(value)):
+        if value == "default":
+            st.pop("userAgent", None)
+        else:
+            st["userAgent"] = value
+        save_state(st)                       # used at the next download
+        out({"ok": True, "ua": st.get("userAgent", "")})
+        return
+    else:
+        die("usage: omarchy-xray set autofav|lan on|off · mux on|off|<1-1024> · loglevel "
+            + "|".join(LOGLEVELS) + " · ua <text|default> · subupdate auto|off|<1-168 hours>")
+    _apply(st)
+    out({"ok": True, key: value})
+
+
+def cmd_chain(key):
+    st = load_state()
+    if key == "off":
+        st["chain"] = ""
+    else:
+        k = resolve_key(st, key)
+        if k == "auto":
+            die("the first hop must be one node")
+        st["chain"] = k
+    _apply(st)
+    n = next((n for n in st["nodes"] if n["id"] == st["chain"]), None)
+    out({"ok": True, "chain": st["chain"], "chainName": n["name"] if n else ""})
+
+
+def clip_copy(text):
+    """Into the Wayland clipboard via stdin: a secret never goes through argv."""
+    wl = tool("wl-copy")
+    if not wl:
+        die("copying needs wl-clipboard")
+    try:
+        subprocess.run([wl], input=text, text=True, timeout=10, env=child_env(
+            {k: os.environ[k] for k in ("WAYLAND_DISPLAY", "XDG_RUNTIME_DIR") if k in os.environ}),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    except (subprocess.SubprocessError, OSError):
+        die("wl-copy failed")
+
+
+def cmd_share(key, qr=""):
+    """The node's link (secret: it carries the credentials) and, with qr, a
+    PNG in the private runtime dir for the widget to show."""
+    st = load_state()
+    k = resolve_key(st, key)
+    n = next((n for n in st["nodes"] if n["id"] == k), None)
+    if n is None:
+        die("Auto has no link of its own")
+    text = n.get("link") or json.dumps(dict(n["ob"], tag="proxy"), ensure_ascii=False)
+    res = {"ok": True, "name": n["name"], "link": text, "kind": "link" if n.get("link") else "json"}
+    if qr == "copy":
+        clip_copy(text)
+        res.pop("link")                  # in the clipboard, not in the widget's logs
+    if qr == "qr":
+        png = runtime_dir() / "share.png"
+        qrenc = tool("qrencode")
+        if not qrenc:
+            die("QR needs qrencode (omarchy pkg add qrencode)")
+        r = subprocess.run([qrenc, "-o", str(png), "-s", "6", "-m", "2", "-r", "/dev/stdin"],
+                           input=text, text=True, capture_output=True, timeout=10, env=child_env())
+        if r.returncode != 0:
+            die("qrencode failed: " + _last_lines(r.stderr, 1, 120))
+        os.chmod(png, 0o600)
+        res["png"] = str(png)
+    out(res)
+
+
+def _wayland_env():
+    return child_env({k: os.environ[k] for k in ("WAYLAND_DISPLAY", "XDG_RUNTIME_DIR") if k in os.environ})
+
+
+def cmd_scan():
+    """A QR code from the screen (a region you drag) into import: a
+    subscription URL or share links. The text never touches argv or disk."""
+    grim, slurp, zbar = tool("grim"), tool("slurp"), tool("zbarimg")
+    if not (grim and slurp and zbar):
+        die("scanning needs grim, slurp and zbar (omarchy pkg add zbar)")
+    env = _wayland_env()
+    g = subprocess.run([slurp], capture_output=True, text=True, timeout=120, env=env)
+    geom = g.stdout.strip()
+    if g.returncode != 0 or not re.fullmatch(r"-?\d+,-?\d+ \d+x\d+", geom):
+        die("no region selected")
+    shot = subprocess.run([grim, "-g", geom, "-t", "png", "-"], capture_output=True, timeout=30, env=env)
+    if shot.returncode != 0 or not shot.stdout:
+        die("screenshot failed")
+    z = subprocess.run([zbar, "--raw", "-q", "-Sdisable", "-Sqrcode.enable", "-"],
+                       input=shot.stdout, capture_output=True, timeout=30, env=env)
+    text = z.stdout.decode("utf-8", "replace").strip()[:MAX_PASTE + 1]
+    if z.returncode != 0 or not text:
+        die("no QR code found in the selected region")
+    _import_text(text)
+
+
+def _speed_curl(port):
+    """Mbit/s through a local SOCKS port (25 MB, 15 s at most); None if under 1 MB came."""
+    r = sh(CURL, "-s", "-o", "/dev/null", "--max-time", "15", "-w", "%{speed_download} %{size_download}",
+           "--socks5-hostname", "127.0.0.1:%d" % port, SPEED_URL, timeout=20)
+    try:
+        bps, size = (float(x) for x in (r.stdout or "").split()[:2])
+    except ValueError:
+        return None
+    return round(bps * 8 / 1e6, 1) if size >= 1000000 else None
+
+
+def cmd_speed(key=""):
+    """Download speed: the running tunnel, or one node through a throwaway
+    core (as the latency test: bound to the physical link while TUN is up)."""
+    st = load_state()
+    running = running_units()[0]
+    k = resolve_key(st, key) if key else ""
+    if k == "auto":
+        die("pick one node: Auto has no speed of its own")
+    if not k or (running and k == st["selected"]):
+        if not running:
+            die("not connected — pick a node to test it on its own")
+        mbps = _speed_curl(SOCKS)
+        k = st["selected"]
+    else:
+        n = next(n for n in st["nodes"] if n["id"] == k)
+        res = _probe_batch([n], default_dev() if tun_active() else None, runtime_dir(), probe=_speed_curl)
+        mbps = res[0] if res else None
+    if mbps is None:
+        die("speed test failed")
+    if k and k != "auto":
+        sp = {kk: v for kk, v in load_json(SPEED, {}).items() if any(n["id"] == kk for n in st["nodes"])}
+        sp[k] = mbps
+        _cfg_dir()
+        atomic_write(SPEED, json.dumps(sp), 0o600)
+    out({"ok": True, "mbps": mbps, "key": k})
+
+
+def geo_due():
+    """A downloaded set older than GEO_DAYS (never the distro's own files)."""
+    try:
+        return time.time() - (GEO_DIR / "geosite.dat").stat().st_mtime > GEO_DAYS * 86400
+    except OSError:
+        return False
+
+
+def cmd_geo(verb):
+    """geo update: fresh geoip.dat + geosite.dat (Loyalsoldier), checked
+    against the release's sha256 files, swapped in whole."""
+    if verb != "update":
+        die("usage: omarchy-xray geo update")
+    via = user_active()
+    _cfg_dir()
+    GEO_DIR.mkdir(mode=0o700, exist_ok=True)
+    got = {}
+    for name in ("geoip.dat", "geosite.dat"):
+        try:
+            body, _ = fetch(GEO_URL + name, via, cap=GEO_MAX_BYTES)
+            want, _ = fetch(GEO_URL + name + ".sha256sum", via, cap=4096)
+        except (ValueError, RuntimeError) as e:
+            die("%s: %s" % (name, e))
+        if hashlib.sha256(body).hexdigest() != (want.decode("ascii", "replace").split() or [""])[0]:
+            die(name + ": checksum mismatch — refused")
+        got[name] = body
+    for name, body in got.items():
+        tmp = GEO_DIR / (name + ".tmp")
+        with open(tmp, "wb") as f:
+            f.write(body)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, GEO_DIR / name)
+    st = load_state()
+    write_user_units()                       # XRAY_LOCATION_ASSET may point here now
+    _apply(st)
+    out({"ok": True, "geo": str(GEO_DIR), "bytes": sum(map(len, got.values()))})
+
+
+def cmd_whoami():
+    """Exit IP and country through the tunnel (Cloudflare's trace page)."""
+    if not running_units()[0]:
+        die("not connected")
+    r = sh(CURL, "-s", "--max-time", "8", "--socks5-hostname", "127.0.0.1:%d" % SOCKS,
+           "https://cloudflare.com/cdn-cgi/trace", timeout=12)
+    info = dict(l.split("=", 1) for l in (r.stdout or "").splitlines()[:40] if "=" in l)
+    ip, loc = info.get("ip", ""), info.get("loc", "")
+    if not (is_ip(ip) and re.fullmatch(r"[A-Z]{2}", loc or "XX")):
+        die("could not reach the exit check through the tunnel")
+    out({"ok": True, "ip": ip, "country": loc})
+
+
+SETTINGS_KEYS = ("userAgent", "subUpdate", "routing", "adblock", "dns", "dnsCustom", "fragment", "fragmentOpts", "rules",
+                 "favorites", "autoFavorites", "mux", "muxConcurrency", "loglevel")
+
+
+def cmd_settings(verb):
+    st = load_state()
+    exported = dict({"omarchyXraySettings": 1}, **{k: st[k] for k in SETTINGS_KEYS if k in st})
+    if verb == "export":
+        out(exported)
+        return
+    if verb == "copy":
+        clip_copy(json.dumps(exported, indent=1, ensure_ascii=False))
+        out({"ok": True, "copied": True})
+        return
+    if verb == "paste":
+        wl = tool("wl-paste")
+        r = subprocess.run([wl, "-n"], capture_output=True, text=True, timeout=10, env=child_env(
+            {k: os.environ[k] for k in ("WAYLAND_DISPLAY", "XDG_RUNTIME_DIR") if k in os.environ})) if wl else None
+        raw = (r.stdout if r and r.returncode == 0 else "")[:262144]
+    elif verb != "import" or sys.stdin.isatty():
+        die("usage: omarchy-xray settings export|copy | import - (JSON on stdin)|paste")
+    else:
+        raw = sys.stdin.read(262144)
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        die("settings import: not JSON")
+    if not isinstance(data, dict) or data.get("omarchyXraySettings") != 1:
+        die("settings import: not an omarchy-xray settings export")
+    st.update({k: data[k] for k in SETTINGS_KEYS if k in data})
+    save_state(st)
+    st = load_state()                   # the same checks as any state read
+    _apply(st)
+    out({"ok": True, "imported": [k for k in SETTINGS_KEYS if k in data]})
+
+
 def cmd_dns(name, addr=""):
     if name not in DNS_PRESETS:
         die("dns must be one of: " + ", ".join(DNS_PRESETS))
@@ -2193,7 +2547,7 @@ def _curl(port):
     return "timeout"
 
 
-def _probe_batch(batch, iface, rundir):
+def _probe_batch(batch, iface, rundir, probe=None):
     ports = _free_ports(len(batch))
     conf = {"log": {"loglevel": "none"}, "inbounds": [], "outbounds": [],
             "routing": {"rules": []}}
@@ -2213,7 +2567,7 @@ def _probe_batch(batch, iface, rundir):
             return None
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=min(TEST_PARALLEL, len(ports))) as ex:
-            return list(ex.map(_curl, ports))
+            return list(ex.map(probe or _curl, ports))
     finally:
         try:
             os.killpg(proc.pid, signal.SIGTERM)
@@ -2328,6 +2682,7 @@ def cmd_status():
             # left on at logout: the proxy settings (dconf) outlive the session
             apply_system_proxy(st, False)
     lat = load_json(LAT, {})
+    speeds = load_json(SPEED, {})
     us = unit_states()
     xs, ts = us.get(SERVICE, {}), us.get(T2S_SERVICE, {})
     tun_mode = st["mode"] == "tun"
@@ -2343,6 +2698,7 @@ def cmd_status():
     now = int(time.time())
     nodes = []
     auto_tags = []
+    favs = set(st["favorites"])
     if len(st["nodes"]) > 1:
         members = auto_members(st)
         nodes.append({"key": "auto", "name": "Auto — best ping",
@@ -2354,13 +2710,14 @@ def cmd_status():
         nodes.append({"key": n["id"], "name": n["name"][:MAX_STR],
                       "address": addr_label(n["host"][:253], n["port"]),
                       "net": net_label(n), "latency": str(lat.get(n["id"], ""))[:32],
-                      "sub": n.get("sub", 0)})
+                      "sub": n.get("sub", 0), "fav": n["id"] in favs,
+                      "speed": speeds.get(n["id"]) if isinstance(speeds.get(n["id"]), (int, float)) else None})
     subs, due = [], False
     for i, s in enumerate(st["subs"]):
-        interval = s.get("interval") or DEFAULT_UPDATE_HOURS
+        interval = st.get("subUpdate") or s.get("interval") or DEFAULT_UPDATE_HOURS
         fetched = int(s.get("fetched") or 0)
         local = "url" not in s                     # the Manual group: nothing to download
-        if fetched and not local and now - fetched > interval * 3600:
+        if fetched and not local and st.get("subUpdate") != 0 and now - fetched > interval * 3600:
             due = True
         subs.append({"index": i, "local": local,
                      "host": "manual" if local else urllib.parse.urlsplit(s["url"]).hostname or "subscription",
@@ -2386,9 +2743,24 @@ def cmd_status():
         "fragment": st["fragment"],
         "fragmentOpts": st["fragmentOpts"],
         "rules": st["rules"],
+        "favorites": len(st["favorites"]),
+        "autoFavorites": st["autoFavorites"],
+        "mux": st["mux"],
+        "muxConcurrency": st["muxConcurrency"],
+        "loglevel": st["loglevel"],
+        "userAgent": st.get("userAgent", ""),
+        "chain": st["chain"],
+        "chainName": next((n["name"][:MAX_STR] for n in st["nodes"] if n["id"] == st["chain"]), ""),
+        "lan": st["lan"],
+        # the LAN password is for the user to type into a phone: shown, never logged
+        "lanInfo": {"ip": lan_ip(), "socks": LAN_SOCKS, "http": LAN_HTTP,
+                    "user": st["lanAuth"]["user"], "pass": st["lanAuth"]["pass"]} if st["lan"] else None,
         "dns": st["dns"],
         "dnsCustom": st.get("dnsCustom", ""),
         "geo": asset_dir() is not None,
+        "geoOwn": (GEO_DIR / "geosite.dat").exists(),
+        "geoDue": geo_due(),
+        "subUpdate": st.get("subUpdate", -1),          # -1: the provider's interval (or 24 h)
         "xray": os.path.isfile(XRAY),
         "tunInstalled": tun_installed(),
         # off clears it; a crash leaves it set - that is a drop
@@ -2909,7 +3281,7 @@ def _rebind():
 # --- main --------------------------------------------------------------------
 
 ROOT_COMMANDS = {"tun-install", "tun-uninstall"}
-LOCKED_COMMANDS = {"import", "subremove", "update", "select", "mode", "routing", "adblock", "fragment", "rule", "dns",
+LOCKED_COMMANDS = {"import", "subremove", "update", "select", "mode", "routing", "adblock", "fragment", "rule", "dns", "fav", "set", "settings", "chain", "scan", "geo", "speed",
                    "on", "restart", "tun-remove", "cleanup"}
 _LOCK_FD = None
 
@@ -2951,6 +3323,15 @@ def main():
         "adblock": lambda: cmd_adblock(arg),
         "fragment": lambda: cmd_fragment(rest[:4]),
         "rule": lambda: cmd_rule(rest[:3]),
+        "fav": lambda: cmd_fav(arg),
+        "set": lambda: cmd_set(arg, rest[1] if len(rest) > 1 else ""),
+        "whoami": cmd_whoami,
+        "scan": cmd_scan,
+        "speed": lambda: cmd_speed(arg),
+        "geo": lambda: cmd_geo(arg),
+        "chain": lambda: cmd_chain(arg),
+        "share": lambda: cmd_share(arg, rest[1] if len(rest) > 1 else ""),
+        "settings": lambda: cmd_settings(arg),
         "dns": lambda: cmd_dns(arg, rest[1] if len(rest) > 1 else ""),
         "on": cmd_on,
         "off": cmd_off,

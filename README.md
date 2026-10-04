@@ -24,7 +24,7 @@ commands and reads JSON back.
 - **Protocols**: VLESS, VMess, Trojan, Shadowsocks (incl. 2022), Hysteria2 share links and Xray-JSON subscriptions (Remnawave/Marzban style), every transport the current core supports ([table](#protocols-and-transports)).
 - **Auto**: up to 32 nodes (best tested latency first) behind a `leastPing` balancer fed by Xray's observatory (`generate_204` every minute).
 - **Modes**: proxy (no privileges) and TUN (whole system, one-time setup).
-- **Settings** (a page of its own, opened from the summary row): routing **ALL** / **<CC> DIRECT**, **DNS** (Cloudflare, Google, Quad9, AdGuard, the network's own, or **OWN**: any IP or `https://`/`tls://`/`tcp://`/`quic://`/`h2c://` server through the tunnel; TUN only), **Adblock**, **Fragment** (splits the TLS ClientHello of TLS nodes against DPI; not REALITY or QUIC), **Rules** (a domain, IP/CIDR, `geosite:…` or `geoip:…` sent DIRECT, through the VPN or blocked, checked before the presets), **Login** (connect when you log in; off, every login starts with the VPN off and leftover proxy settings cleared).
+- **Settings** (a page of its own, opened from the summary row): routing **ALL** / **<CC> DIRECT**, **DNS** (Cloudflare, Google, Quad9, AdGuard, the network's own, or **OWN**: any IP or `https://`/`tls://`/`tcp://`/`quic://`/`h2c://` server through the tunnel; TUN only), **Adblock**, **Fragment** (splits the TLS ClientHello of TLS nodes against DPI; not REALITY or QUIC), **Rules** (a domain, IP/CIDR, `geosite:…` or `geoip:…` sent DIRECT, through the VPN or blocked, checked before the presets), **Auto** (all or starred only), **Chain**, **Mux**, **LAN**, **Log** level, **UA**, **Backup** (settings via the clipboard), **Login** (connect when you log in; off, every login starts with the VPN off and leftover proxy settings cleared).
 - **Subscriptions**: traffic used/total and expiry (`subscription-userinfo`), `profile-title`, refresh every `profile-update-interval` (default 24 h); fetched through the tunnel when direct is blocked. **Update all** shows `Fail N` when some fail.
 - **Latency**: batched, one xray process per 32 nodes; runs 20 s after the shell starts and every 30 min. **Test** shows `Fail N` for nodes that did not answer.
 - **Bar icon**: click opens the panel, right-click connects/disconnects, middle-click refreshes; bright when on, dimmed when off.
@@ -136,6 +136,19 @@ omarchy-xray on | off | restart
 omarchy-xray mode proxy|tun
 omarchy-xray routing global|<region>-direct   # e.g. kz-direct
 omarchy-xray dns cloudflare|google|quad9|adguard|system
+omarchy-xray fav <key>              # star / unstar (starred first; Auto can use only them)
+omarchy-xray set autofav|lan on|off # lan: socks 20172 / http 20173 for your network, with a password
+omarchy-xray set mux on|off|<n>     # multiplexing, n streams (not Vision/XHTTP/Hysteria2)
+omarchy-xray set loglevel error|warning|info|debug
+omarchy-xray set ua <text|default>  # subscription User-Agent
+omarchy-xray chain <key|off>        # first hop: the exit node is dialed through it
+omarchy-xray share <key> [qr|copy]  # share link (or Xray JSON); qr writes a PNG, copy uses the clipboard
+omarchy-xray whoami                 # exit IP and country, through the tunnel
+omarchy-xray speed                  # download speed through the tunnel
+omarchy-xray scan                   # import from a QR code on screen (grim, slurp, zbar)
+omarchy-xray geo update             # fresh geoip/geosite.dat, sha256-checked; weekly from the widget
+omarchy-xray set subupdate 6        # auto-update every 6 h (auto = provider's interval, off)
+omarchy-xray settings export|copy|import -|paste   # settings without subscriptions or passwords
 omarchy-xray dns custom https://dns.example/dns-query   # or an IP, tls://…, quic://…
 omarchy-xray adblock on|off
 omarchy-xray fragment on|off [packets length interval]   # e.g. on tlshello 100-200 10-20

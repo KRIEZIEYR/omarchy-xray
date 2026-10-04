@@ -138,13 +138,15 @@ class Base(unittest.TestCase):
         self._saved = {k: getattr(M, k) for k in (
             "CFG", "CONF", "STATE", "LAT", "CUSTOM", "UNIT_DIR", "UNIT", "T2S_UNIT",
             "XRAY", "default_dev", "bootstrap_dns", "running_units", "apply_system_proxy",
-            "core_version")}
+            "core_version", "GEO_DIR", "fetch", "SPEED")}
         self.proxy_calls = []
         M.apply_system_proxy = lambda st, on: self.proxy_calls.append(on)   # never the real gsettings
         M.CFG = self.tmp / "cfg"
         M.CONF = M.CFG / "config.json"
         M.STATE = M.CFG / "state.json"
         M.LAT = M.CFG / "latency.json"
+        M.SPEED = M.CFG / "speed.json"
+        M.GEO_DIR = M.CFG / "geo"
         M.CUSTOM = M.CFG / "custom.json"
         M.UNIT_DIR = self.tmp / "units"
         M.UNIT = M.UNIT_DIR / M.SERVICE
@@ -462,6 +464,103 @@ class ConfigBuilding(Base):
         self.assertIn("https://dns.example/dns-query", servers)
         self.assertIn("full:dns.example", servers[0]["domains"])      # resolved by bootstrap
         self.assertCoreAccepts(conf)
+
+    def test_mux_lan_loglevel(self):
+        ns = self.nodes()
+        st = self.state(ns, mux=True, muxConcurrency=4, lan=True, loglevel="info",
+                        lanAuth={"user": "abcd1234", "pass": "0123456789abcdef0123"})
+        for n in ns:
+            conf = M.build_config(dict(st, selected=n["id"]))
+            proxy = conf["outbounds"][0]
+            self.assertEqual("mux" in proxy, M.mux_target(n["ob"]), n["name"])
+            self.assertCoreAccepts(conf)
+        self.assertEqual(conf["log"]["loglevel"], "info")
+        lan = [i for i in conf["inbounds"] if i["tag"] == "lan-socks"][0]
+        self.assertEqual(lan["listen"], "0.0.0.0")
+        self.assertEqual(lan["settings"]["auth"], "password")
+        loop = [i for i in conf["inbounds"] if i["tag"] == "socks-in"][0]
+        self.assertEqual(loop["listen"], "127.0.0.1")       # local apps keep the open loopback one
+
+    def test_auto_favorites(self):
+        ns = self.nodes()
+        st = self.state(ns, selected="auto", autoFavorites=True, favorites=[ns[2]["id"], ns[3]["id"]])
+        self.assertEqual({n["id"] for n in M.auto_members(st)}, {ns[2]["id"], ns[3]["id"]})
+        st["favorites"] = []
+        self.assertEqual(len(M.auto_members(st)), min(len(ns), M.AUTO_MAX))
+
+    def test_settings_roundtrip(self):
+        ns = self.nodes()
+        M.STATE.parent.mkdir(parents=True, exist_ok=True)
+        M.STATE.write_text(json.dumps(self.state(ns, rules=[{"target": "block", "value": "ads.example"}],
+                                                 loglevel="debug", lan=True)))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            M.cmd_settings("export")
+        exp = json.loads(buf.getvalue())
+        self.assertEqual(exp["rules"], [{"target": "block", "value": "ads.example"}])
+        self.assertNotIn("lanAuth", exp)
+        self.assertNotIn("subs", exp)
+        self.assertNotIn("lan", exp)
+
+    def test_subupdate_setting(self):
+        M.STATE.parent.mkdir(parents=True, exist_ok=True)
+        M.STATE.write_text(json.dumps(self.state(self.nodes())))
+        with contextlib.redirect_stdout(io.StringIO()):
+            M.cmd_set("subupdate", "off")
+        self.assertEqual(M.load_state()["subUpdate"], 0)
+        with contextlib.redirect_stdout(io.StringIO()):
+            M.cmd_set("subupdate", "auto")
+        self.assertNotIn("subUpdate", M.load_state())
+        with self.assertRaises(SystemExit), contextlib.redirect_stdout(io.StringIO()):
+            M.cmd_set("subupdate", "999")
+
+    def test_geo_checksum_mismatch_refused(self):
+        M.fetch = lambda url, via=False, ua="", cap=0: (b"x" * 10, {}) if url.endswith(".dat") else (b"0" * 64 + b"  f\n", {})
+        M.user_active, saved = (lambda: False), M.user_active
+        try:
+            with self.assertRaises(SystemExit), contextlib.redirect_stdout(io.StringIO()):
+                M.cmd_geo("update")
+        finally:
+            M.user_active = saved
+        self.assertFalse((M.GEO_DIR / "geosite.dat").exists())
+        self.assertFalse(M.geo_due())
+
+    def test_speed_one_node(self):
+        ns = self.nodes()
+        M.STATE.parent.mkdir(parents=True, exist_ok=True)
+        M.STATE.write_text(json.dumps(self.state(ns)))
+        saved = (M.running_units, M._probe_batch, M.tun_active)
+        M.running_units, M.tun_active = (lambda: (False, False)), (lambda: False)
+        calls = []
+        M._probe_batch = lambda batch, iface, rundir, probe=None: calls.append(batch[0]["id"]) or [42.5]
+        try:
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                M.cmd_speed(ns[1]["id"])
+            self.assertEqual(json.loads(buf.getvalue())["mbps"], 42.5)
+            self.assertEqual(calls, [ns[1]["id"]])
+            self.assertEqual(json.loads(M.SPEED.read_text()), {ns[1]["id"]: 42.5})
+            M._probe_batch = lambda *a, **k: [None]
+            with self.assertRaises(SystemExit), contextlib.redirect_stdout(io.StringIO()):
+                M.cmd_speed(ns[1]["id"])
+            with self.assertRaises(SystemExit), contextlib.redirect_stdout(io.StringIO()):
+                M.cmd_speed("")                       # not connected, no node
+        finally:
+            M.running_units, M._probe_batch, M.tun_active = saved
+
+    def test_chain_share_ua(self):
+        ns = [self.node("vless-ws-tls"), self.node("vless-reality-vision"), self.node("hy2-hop")]
+        st = self.state(ns, chain=ns[1]["id"], fragment=True)
+        conf = M.build_config(st)
+        proxy, hop = conf["outbounds"][0], [o for o in conf["outbounds"] if o["tag"] == "chain-hop"][0]
+        self.assertEqual(proxy["streamSettings"]["sockopt"]["dialerProxy"], "chain-hop")
+        self.assertNotIn("dialerProxy", hop["streamSettings"].get("sockopt", {}))
+        self.assertNotIn("tls-fragment", [o["tag"] for o in conf["outbounds"]])  # hop is REALITY
+        self.assertCoreAccepts(conf)
+        conf = M.build_config(dict(st, selected=ns[1]["id"]))        # never through itself
+        self.assertNotIn("dialerProxy", conf["outbounds"][0]["streamSettings"].get("sockopt", {}))
+        self.assertEqual(ns[0]["link"], LINKS["vless-ws-tls"])
+        self.assertTrue(M.ua_ok("v2rayN/7.0") and not M.ua_ok("bad\nua") and not M.ua_ok("x" * 200))
 
     def test_rule_match(self):
         self.assertEqual(M.rule_match("Sub.Example.ORG"), ("domain", "domain:sub.example.org"))
@@ -957,7 +1056,7 @@ class Hardening(Base):
             M.uctl, M.sctl, M.apply_system_proxy, M.SYS_UNIT, M._escalate = saved
 
     def test_sub_error_never_carries_the_url(self):
-        def boom(url, via_proxy=False):
+        def boom(url, via_proxy=False, ua=""):
             raise RuntimeError("download failed for %s" % url)
         saved = M.fetch
         M.fetch = boom

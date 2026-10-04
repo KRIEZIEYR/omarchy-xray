@@ -40,7 +40,9 @@ function groupsFromStatus(data, maxNodes, nowSec) {
       address: String(src.address || ""),
       net: String(src.net || ""),
       latency: String(src.latency || ""),
-      sub: typeof src.sub === "number" ? src.sub : 0
+      sub: typeof src.sub === "number" ? src.sub : 0,
+      fav: src.fav === true,
+      speed: typeof src.speed === "number" && src.speed > 0 ? src.speed : 0
     }
     if (node.key === "") continue
     node.connected = connected !== "" && node.key === connected
@@ -98,6 +100,31 @@ function subLow(info, nowSec) {
 /* Both parts in one line, for the subscriptions list. */
 function subInfoLabel(info, nowSec) {
   return [subUsageLabel(info), subExpiryLabel(info, nowSec)].filter(function(x) { return x }).join(" · ")
+}
+
+/* Starred nodes first in every group; with byLatency, then fastest first
+   (untested and failed ones keep their order at the end). Stable. */
+function sortGroups(groups, byLatency) {
+  function ms(n) { var m = /^(\d+)ms$/.exec(String(n.latency || "")); return m ? parseInt(m[1], 10) : Infinity }
+  return (groups || []).map(function(g) {
+    var nodes = g.nodes.map(function(n, i) { return { n: n, i: i } })
+    nodes.sort(function(a, b) {
+      if (a.n.fav !== b.n.fav) return a.n.fav ? -1 : 1
+      if (byLatency) { var d = ms(a.n) - ms(b.n); if (d !== 0 && !isNaN(d)) return d }
+      return a.i - b.i
+    })
+    var out = {}
+    for (var k in g) out[k] = g[k]
+    out.nodes = nodes.map(function(x) { return x.n })
+    return out
+  })
+}
+
+/* "FI" -> regional-indicator flag; anything else -> "". */
+function flagOf(cc) {
+  var c = String(cc || "").toUpperCase()
+  if (!/^[A-Z]{2}$/.test(c)) return ""
+  return String.fromCodePoint(0x1F1E6 + c.charCodeAt(0) - 65, 0x1F1E6 + c.charCodeAt(1) - 65)
 }
 
 function skippedLabel(skipped) {
@@ -224,6 +251,13 @@ function autoPickName(autoMembers, nodes, tag) {
 }
 
 /* ---- formatting ------------------------------------------------------------- */
+
+// Mbit/s of a node's last speed test, short: "84M", "1.2G"
+function mbpsLabel(mbps) {
+  var m = Number(mbps) || 0
+  if (m <= 0) return ""
+  return m >= 1000 ? (m / 1000).toFixed(1) + "G" : Math.round(m) + "M"
+}
 
 function formatSpeed(bytesPerSec) {
   return formatBytes(bytesPerSec) + "/s"

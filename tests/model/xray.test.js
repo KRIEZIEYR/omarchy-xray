@@ -19,6 +19,19 @@ module.exports = function ({ Xray, assert, eq }) {
     ]
   }
 
+  eq('flag', Xray.flagOf('fi'), '\u{1F1EB}\u{1F1EE}')
+  eq('no flag', Xray.flagOf('x1'), '')
+
+  /* ---- sortGroups ---- */
+  {
+    const g = [{ title: 'A', nodes: [
+      { key: 'a', latency: '300ms', fav: false }, { key: 'b', latency: 'timeout', fav: true },
+      { key: 'c', latency: '50ms', fav: false }, { key: 'd', latency: '', fav: false }] }]
+    eq('favorites first, list order', Xray.sortGroups(g, false)[0].nodes.map(n => n.key), ['b', 'a', 'c', 'd'])
+    eq('favorites first, then ping', Xray.sortGroups(g, true)[0].nodes.map(n => n.key), ['b', 'c', 'a', 'd'])
+    eq('input untouched', g[0].nodes.map(n => n.key), ['a', 'b', 'c', 'd'])
+  }
+
   /* ---- groupsFromStatus ---- */
   {
     const t = Xray.groupsFromStatus(status, 1000, NOW)
@@ -141,6 +154,8 @@ module.exports = function ({ Xray, assert, eq }) {
     eq('fastest key', Xray.fastestKey(t.nodes), 'b')
     eq('fastest none', Xray.fastestKey([{ key: 'x', latency: 'timeout' }]), '')
   }
+
+  eq('mbps label', [Xray.mbpsLabel(84.2), Xray.mbpsLabel(1234), Xray.mbpsLabel(0)], ['84M', '1.2G', ''])
 
   /* ---- formatSpeed / formatBytes ---- */
   eq('speed zero', Xray.formatSpeed(0), '0 B/s')

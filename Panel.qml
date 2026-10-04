@@ -32,7 +32,7 @@ Panel {
   readonly property bool firstRun: xray.reachable && xray.touch !== null && xray.subs.length === 0
   property bool subsOpen: false
   readonly property bool subsShown: subsOpen || xray.subs.length === 0
-  readonly property real settingLabelWidth: Style.space(52)
+  readonly property real settingLabelWidth: Style.space(64)
   readonly property string lastRegion: settings ? String(settings.lastRegion || "") : ""
   // DIRECT remembers its country, so ALL <-> DIRECT is one click.
   readonly property var routeRegion: {
@@ -71,14 +71,16 @@ Panel {
   // so the nodes start right under the switch.
   property bool settingsOpen: false      // remembered while the shell runs
   readonly property var settingRows: !xray.reachable || firstRun ? []
+      // the same order as on the page
       : ["hero", "settings"].concat(settingsOpen ? ["mode", "route"].concat(regionsOpen ? ["regions"] : [],
-          ["dns", "dnsown", "ads", "fragment"], xray.fragment ? ["fragopts"] : [], ["login", "ruleadd"], xray.rules.map(function(r, i) { return "rule" + i })) : [])
+          ["login", "dns", "dnsown", "ads", "fragment"], xray.fragment ? ["fragopts"] : [],
+          ["mux"], xray.mux ? ["muxc"] : [], ["auto", "chain", "subupd", "lan", "log", "ua", "geo", "backup", "ruleadd"], xray.rules.map(function(r, i) { return "rule" + i })) : [])
   readonly property string settingsSummary: (xray.mode === "tun" ? "TUN" : "PROXY")
       + " · " + (xray.region ? xray.region.code.toUpperCase() + " DIRECT" : "ALL")
       + (xray.adblock ? " · ADBLOCK" : "")
       + (xray.fragment ? " · FRAG" : "")
       + (xray.rules.length ? " · " + xray.rules.length + " RULES" : "")
-      + " · " + dnsOptions[dnsIndex()].label
+      + " · " + (xray.dns === "custom" ? "OWN DNS" : dnsOptions[dnsIndex()].label)
   function toggleSettings() {
     var onRow = cursorRow === "settings"
     if (settingsOpen) regionsOpen = false
@@ -116,6 +118,59 @@ Panel {
     var h = nodeList.headerItem
     if (h) xray.setFragment(true, [h.fragPackets.text, h.fragLength.text, h.fragInterval.text])
   }
+  // On/off pills: several switches share one row; each pill is lit while on.
+  readonly property var trafficPills: [
+    { key: "ads", label: "ADBLOCK", on: xray.adblock, usable: xray.geo || xray.adblock,
+      tooltip: xray.geo ? "Blocks known ad and tracker domains" : "Needs v2ray-geoip and v2ray-domain-list-community" },
+    { key: "fragment", label: "FRAGMENT", on: xray.fragment, usable: true,
+      tooltip: "Splits the TLS handshake against DPI · not REALITY" },
+    { key: "mux", label: "MUX", on: xray.mux, usable: true,
+      tooltip: "Fewer handshakes · not Vision, XHTTP, Hysteria2" }
+  ]
+  readonly property var switchPills: [
+    { key: "login", label: "LOGIN", on: autoConnect, usable: true, tooltip: "Connect when you log in" },
+    { key: "lan", label: "LAN", on: xray.lan, usable: true, tooltip: "Your network can use this VPN, with a password" }
+  ]
+  function flipPill(key) {
+    if (key === "login") toggleAutoConnect()
+    else if (key === "ads") toggleAdblock()
+    else if (key === "fragment") toggleFragment()
+    else if (key === "mux") guarded(function() { xray.setOption("mux", xray.mux ? "off" : "on", xray.mux ? "Mux off" : "Mux on") })
+    else if (key === "lan") guarded(function() { xray.setOption("lan", xray.lan ? "off" : "on", xray.lan ? "Local network access off" : "Local network access on") })
+  }
+  readonly property var autoOptions: [
+    { value: "all", label: "ALL", tooltip: "Auto picks among the best 32 nodes" },
+    { value: "fav", label: "★ ONLY", tooltip: "Auto picks only among starred nodes (all, if none is starred)" }
+  ]
+  readonly property var logOptions: [
+    { value: "error", label: "ERROR", tooltip: "Only errors in the journal" },
+    { value: "warning", label: "WARN", tooltip: "Errors and warnings (default)" },
+    { value: "info", label: "INFO", tooltip: "Connections too" },
+    { value: "debug", label: "DEBUG", tooltip: "Everything: for a bug report, then back" }
+  ]
+  readonly property var subUpdateOptions: [
+    { value: "auto", label: "AUTO", tooltip: "As often as the provider asks, else daily" },
+    { value: "6", label: "6H", tooltip: "Every 6 hours" },
+    { value: "24", label: "24H", tooltip: "Once a day" },
+    { value: "off", label: "OFF", tooltip: "Only when you press Update" }
+  ]
+  readonly property string subUpdateValue: xray.subUpdate === 0 ? "off" : xray.subUpdate > 0 ? String(xray.subUpdate) : "auto"
+  readonly property var geoOptions: [
+    { value: "update", label: "UPDATE", tooltip: "Fresh geoip/geosite lists (Loyalsoldier), then weekly by themselves" }
+  ]
+  readonly property var backupOptions: [
+    { value: "copy", label: "COPY", tooltip: "Settings into the clipboard: no subscriptions, no passwords" },
+    { value: "paste", label: "PASTE", tooltip: "Settings from the clipboard (an earlier COPY)" }
+  ]
+  function optIndex(opts, v) { return Math.max(0, opts.findIndex(function(o) { return o.value === v })) }
+  function guarded(fn) { if (xray.busy) { xray.busyRefused(); return } fn() }
+  function focusField(name) {
+    var f = nodeList.headerItem ? nodeList.headerItem[name] : null
+    if (f) f.forceActiveFocus()
+  }
+  readonly property bool sortByLatency: settings ? settings.sortByLatency === true : false
+  function cursorNodeOrNull() { return cursorRow === "node" ? selectedNode() : null }
+
   function toggleFragment() {
     if (xray.busy) { xray.busyRefused(); return }
     xray.setFragment(!xray.fragment)
@@ -144,6 +199,20 @@ Panel {
     if (r === "fragment") return "TLS fragmentation " + (xray.fragment ? "on" : "off")
     if (r === "fragopts") return "Fragmentation parameters"
     if (r === "dnsown") return "Own DNS server " + (xray.dnsCustom || "not set")
+    if (r === "traffic" || r === "switches") {
+      var pl = (r === "traffic" ? trafficPills : switchPills)[c]
+      return pl ? pl.label + " " + (pl.on ? "on" : "off") : ""
+    }
+    if (r === "auto") return "Auto picks from " + (xray.autoFavorites ? "starred nodes" : "all nodes")
+    if (r === "chain") return "First hop " + (xray.chainName || "off")
+    if (r === "mux") return "Multiplexing " + (xray.mux ? "on" : "off")
+    if (r === "muxc") return "Mux streams " + xray.muxConcurrency
+    if (r === "lan") return "Local network access " + (xray.lan ? "on" : "off")
+    if (r === "log") return "Log level " + xray.loglevel
+    if (r === "ua") return "Subscription user agent " + (xray.userAgent || "default")
+    if (r === "subupd") return "Subscriptions update " + subUpdateValue
+    if (r === "geo") return "Update geo data"
+    if (r === "backup") return c === 1 ? "Paste settings" : "Copy settings"
     if (r === "ruleadd") return "New rule, target " + ruleTargetLabel(ruleTarget)
     if (cursorRule >= 0 && xray.rules[cursorRule]) return "Rule " + xray.rules[cursorRule].value + " " + ruleTargetLabel(xray.rules[cursorRule].target)
     if (r === "subs") return "Update all"
@@ -169,9 +238,7 @@ Panel {
     { value: "google", label: "GOOGLE", tooltip: "Google 8.8.8.8" },
     { value: "quad9", label: "QUAD9", tooltip: "Quad9 9.9.9.9, blocks known malware domains" },
     { value: "adguard", label: "ADGUARD", tooltip: "AdGuard, filters ads and trackers" },
-    { value: "system", label: "SYS", tooltip: "Your network's own DNS, outside the tunnel: your provider sees the lookups" },
-    { value: "custom", label: "OWN", tooltip: xray.dnsCustom !== "" ? "Your server " + xray.dnsCustom + ", through the tunnel"
-                                                                     : "Your own server: type it in the line below" }
+    { value: "system", label: "SYS", tooltip: "Your network's own DNS, outside the tunnel: your provider sees the lookups" }
   ]
   function dnsIndex() { return Math.max(0, dnsOptions.findIndex(function(o) { return o.value === xray.dns })) }
   function chooseDns(v) {
@@ -198,6 +265,8 @@ Panel {
   function chipCount(row) {
     return row === "mode" ? 2 : row === "route" ? 3 : row === "dns" ? dnsOptions.length
          : row === "ruleadd" ? ruleTargets.length
+         : row === "traffic" ? 3 : row === "switches" ? 2 : row === "fragopts" ? 3
+         : row === "auto" ? 2 : row === "log" ? logOptions.length : row === "backup" ? 2 : row === "subupd" ? subUpdateOptions.length
          : row === "regions" ? xray.regions.length
          : row === "subs" ? 1
          : row === "sub" ? (xray.subs[cursorSub] && xray.subs[cursorSub].local ? 1 : 2) : 1
@@ -207,6 +276,9 @@ Panel {
     if (row === "mode") return xray.mode === "tun" ? 1 : 0
     if (row === "route") return xray.region ? 1 : 0
     if (row === "dns") return dnsIndex()
+    if (row === "auto") return xray.autoFavorites ? 1 : 0
+    if (row === "log") return optIndex(logOptions, xray.loglevel)
+    if (row === "subupd") return optIndex(subUpdateOptions, subUpdateValue)
     if (row === "ruleadd") return Math.max(0, ruleTargets.findIndex(function(o) { return o.value === ruleTarget }))
     if (row !== "regions") return 0
     for (var i = 0; i < xray.regions.length; i++)
@@ -236,7 +308,20 @@ Panel {
     else if (r === "login") toggleAutoConnect()
     else if (r === "fragment") toggleFragment()
     else if (r === "dnsown") focusDnsField()
-    else if (r === "fragopts") { var f = nodeList.headerItem ? nodeList.headerItem.fragPackets : null; if (f) f.forceActiveFocus() }
+    else if (r === "auto") guarded(function() { xray.setOption("autofav", chipIndex === 1 ? "on" : "off",
+                                                              chipIndex === 1 ? "Auto: starred nodes only" : "Auto: all nodes") })
+    else if (r === "chain") focusField("chainField")
+    else if (r === "mux") guarded(function() { xray.setOption("mux", xray.mux ? "off" : "on", xray.mux ? "Mux off" : "Mux on") })
+    else if (r === "muxc") focusField("muxField")
+    else if (r === "lan") guarded(function() { xray.setOption("lan", xray.lan ? "off" : "on", xray.lan ? "Local network access off" : "Local network access on") })
+    else if (r === "log") guarded(function() { xray.setOption("loglevel", logOptions[chipIndex].value, "Log level: " + logOptions[chipIndex].label) })
+    else if (r === "ua") focusField("uaField")
+    else if (r === "subupd") guarded(function() { xray.setOption("subupdate", subUpdateOptions[chipIndex].value, "Subscriptions update: " + subUpdateOptions[chipIndex].label) })
+    else if (r === "geo") guarded(function() { xray.updateGeo() })
+    else if (r === "backup") guarded(function() { xray.settingsClipboard(chipIndex === 1 ? "paste" : "copy") })
+    else if (r === "fragopts") focusField(["fragPackets", "fragLength", "fragInterval"][chipIndex] || "fragPackets")
+    else if (r === "traffic" && trafficPills[chipIndex]) flipPill(trafficPills[chipIndex].key)
+    else if (r === "switches" && switchPills[chipIndex]) flipPill(switchPills[chipIndex].key)
     else if (r === "ruleadd") focusRuleField()
     else if (cursorRule >= 0) removeRule(cursorRule)
     else if (r === "subs") { if (xray.subs.length > 0) xray.updateSubscriptions() }
@@ -353,7 +438,7 @@ Panel {
 
   // Flat, filtered node list the cursor walks over; the first row of each
   // group carries the group's header text.
-  readonly property var visibleGroups: settingsOpen ? [] : Model.filterNodes(xray.touch ? xray.touch.groups : [], filterQuery)
+  readonly property var visibleGroups: settingsOpen ? [] : Model.filterNodes(Model.sortGroups(xray.touch ? xray.touch.groups : [], sortByLatency), filterQuery)
   readonly property var visibleRows: {
     var out = []
     for (var g = 0; g < visibleGroups.length; g++) {
@@ -430,7 +515,12 @@ Panel {
     nodeIndex = next
     if (nodeIndex < 0) {
       chipIndex = currentChip(cursorRow)
-      nodeList.positionViewAtBeginning()
+      if (settingsOpen) {
+        // ponytail: rows are not items of the list, so the page scrolls in
+        // proportion to the row; exact if rows ever become delegates
+        var f = (nodeIndex + settingRows.length) / Math.max(1, settingRows.length - 1)
+        nodeList.contentY = nodeList.originY + f * Math.max(0, nodeList.contentHeight - nodeList.height)
+      } else nodeList.positionViewAtBeginning()
     } else if (nodeIndex < visibleNodes.length) {
       nodeList.positionViewAtIndex(nodeIndex, ListView.Contain)
     } else {
@@ -459,14 +549,29 @@ Panel {
         xray.testNodes([root.selectedNode()])          // the node under the cursor, as right-click
       else xray.testNodes(root.visibleNodes)
     }
+    else if (k === "d") speedTestCursor()
     else if (k === "l") xray.openLogs()
     else if (k === "r") xray.updateSubscriptions()             // Ctrl+U/W stay text editing
     else if (k === "o") xray.openFolder()
     else if (k === "a") root.focusSubUrl()
+    else if (k === "f") { var fn = root.cursorNodeOrNull(); if (fn) xray.toggleFav(fn) }
+    else if (k === "s") {
+      var sn = root.cursorNodeOrNull()
+      if (xray.share && (!sn || sn.key === xray.share.key)) xray.share = null
+      else if (sn) xray.shareNode(sn, "qr")
+    }
     else if (k === "c") {
       // a toggle, as the switch and the bar's right-click
       if (!xray.toggleBusy) root.requestToggle()
     }
+  }
+
+  // the node under the cursor on its own, else the tunnel; again stops it
+  function speedTestCursor() {
+    if (xray.speedTesting) { xray.stopSpeed(); return }
+    var n = cursorNodeOrNull()
+    if (!n && !tunnelUp) { xray.flash("Put the cursor on a node, or connect first"); return }
+    guarded(function() { xray.speedTest(n && n.key !== "auto" ? n : null) })
   }
 
   function startTypeAhead(t) {
@@ -489,7 +594,7 @@ Panel {
   Timer {
     interval: 1000
     repeat: true
-    running: xray.testing && root.opened
+    running: (xray.testing || xray.speedTesting) && root.opened
     onTriggered: root.nowMs = Date.now()
   }
   readonly property string elapsedText: {
@@ -675,6 +780,9 @@ Panel {
       // Inline editors get every key (kit contract); they handle Up/Down/Enter/Esc themselves.
       blocked: (nodeList.headerItem !== null && (nodeList.headerItem.search.activeFocus || nodeList.headerItem.ruleField.activeFocus
                                                  || nodeList.headerItem.dnsField.activeFocus
+                                                 || nodeList.headerItem.chainField.activeFocus
+                                                 || nodeList.headerItem.muxField.activeFocus
+                                                 || nodeList.headerItem.uaField.activeFocus
                                                  || nodeList.headerItem.fragFocused))
                || (nodeList.footerItem !== null && nodeList.footerItem.subUrl.activeFocus)
       anchors.fill: parent
@@ -725,7 +833,8 @@ Panel {
           id: hero
           width: parent.width
           title: xray.heroTitle
-          meta: xray.heroState
+          meta: xray.heroState + (xray.connected && xray.exitIp !== ""
+                ? "  ·  " + Model.flagOf(xray.exitCountry) + " " + xray.exitIp : "")
           foreground: root.foreground
           fontFamily: root.fontFamily
           iconOpacity: root.onTarget ? 1.0 : 0.5
@@ -861,10 +970,25 @@ Panel {
             if (r === "mode") return root.modeOptions[c].tooltip
             if (r === "route") return c < 2 ? root.routeOptions[c].tooltip : "Change the direct country"
             if (r === "settings") return root.settingsOpen ? "Enter goes back to the nodes" : "Enter opens the settings"
-            if (r === "dnsown") return "Enter edits · an IP, or https:// tls:// tcp:// quic:// h2c:// with a host"
+            if (r === "traffic" || r === "switches") {
+              var pp = (r === "traffic" ? root.trafficPills : root.switchPills)[c]
+              return pp ? pp.tooltip + " · Enter toggles" : ""
+            }
+            if (r === "fragopts") return ["packets: tlshello or 1-3", "length: bytes per piece", "interval: ms between pieces"][c] + " · Enter edits"
+            var hintOpts = { auto: root.autoOptions, log: root.logOptions, backup: root.backupOptions, subupd: root.subUpdateOptions, geo: root.geoOptions }
+            if (hintOpts[r]) {
+              var o = hintOpts[r]
+              return o[c] ? o[c].tooltip : ""
+            }
+            if (r === "chain") return "Enter edits · traffic goes through this node first"
+            if (r === "mux") return "Fewer handshakes · not Vision, XHTTP, Hysteria2"
+            if (r === "muxc") return "Enter edits · streams per connection, 1-1024"
+            if (r === "lan") return "Your network can use this VPN, with a password"
+            if (r === "ua") return "Enter edits · empty: default"
+            if (r === "dnsown") return "Enter edits · IP or https/tls/quic URL"
             if (r === "fragopts") return "Enter edits · in a field Enter applies, Esc restores"
-            if (r === "fragment") return "Splits the TLS handshake so DPI can't read it · TLS nodes only, not REALITY"
-            if (r === "ruleadd") return root.ruleTargets[c].tooltip + " · Enter, then type a domain, IP or geosite:…"
+            if (r === "fragment") return "Splits the TLS handshake against DPI · not REALITY"
+            if (r === "ruleadd") return root.ruleTargets[c].tooltip + " · Enter to type"
             if (root.cursorRule >= 0) return "Enter removes this rule"
             if (r === "login") return "Connects to the selected node when you log in"
             if (r === "dns") return root.dnsOptions[c].tooltip + (xray.mode === "tun" ? "" : " · used in TUN mode")
@@ -894,6 +1018,7 @@ Panel {
                    : root.urlFocused ? [["URL", "Enter adds it · Esc back to the list"]]
                    : [["MOVE", "j/k · h/l · Enter apply · Home switch · ? hide"],
                       ["ACT", "Ctrl+C on/off · Ctrl+T test · Ctrl+R update"],
+                      ["NODE", "Ctrl+F star · Ctrl+S share (QR) · Ctrl+D speed"],
                       ["MANAGE", "Ctrl+A add sub · Ctrl+O folder · Ctrl+L logs"]]
             delegate: RowLayout {
               required property var modelData
@@ -955,9 +1080,12 @@ Panel {
           property alias search: searchField
           property alias ruleField: ruleField
           property alias dnsField: dnsField
-          property alias fragPackets: fragPacketsRow.field
-          property alias fragLength: fragLengthRow.field
-          property alias fragInterval: fragIntervalRow.field
+          property alias chainField: chainRow.field
+          property alias muxField: muxRow.field
+          property alias uaField: uaRow.field
+          property alias fragPackets: fragPacketsField
+          property alias fragLength: fragLengthField
+          property alias fragInterval: fragIntervalField
           readonly property bool fragFocused: fragPackets.activeFocus || fragLength.activeFocus || fragInterval.activeFocus
           width: nodeList.width
           spacing: Style.space(4)
@@ -989,23 +1117,20 @@ Panel {
             Item { Layout.fillWidth: true }
           }
 
+          // A page of its own, in groups: each title names what its rows
+          // change, rows carry a quiet label and their control; what a row
+          // does lives in its tooltip and the keyboard hint line.
           Column {
             visible: xray.reachable && !root.firstRun && root.settingsOpen
             width: parent.width
-            spacing: Style.space(4)
+            spacing: nodeList.spacing      // the node list's rhythm
+
+            SectionTitle { text: "CONNECTION"; first: true }
 
             RowLayout {
               width: parent.width
               spacing: Style.space(8)
-
-              PanelSectionHeader {
-                text: "MODE"
-                Layout.preferredWidth: root.settingLabelWidth
-                Layout.alignment: Qt.AlignVCenter
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-              }
-
+              RowLabel { text: "Mode" }
               ChipGroup {
                 options: root.modeOptions
                 value: xray.mode
@@ -1027,15 +1152,7 @@ Panel {
             RowLayout {
               width: parent.width
               spacing: Style.space(8)
-
-              PanelSectionHeader {
-                text: "ROUTE"
-                Layout.preferredWidth: root.settingLabelWidth
-                Layout.alignment: Qt.AlignVCenter
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-              }
-
+              RowLabel { text: "Route" }
               ChipGroup {
                 options: root.routeOptions
                 value: xray.region ? "direct" : "global"
@@ -1073,7 +1190,8 @@ Panel {
 
             Flow {
               visible: root.regionsOpen
-              width: parent.width
+              x: root.settingLabelWidth + Style.space(8)
+              width: parent.width - x
               spacing: Style.space(4)
 
               Repeater {
@@ -1105,6 +1223,7 @@ Panel {
             Text {
               textFormat: Text.PlainText
               visible: root.regionsOpen
+              leftPadding: root.settingLabelWidth + Style.space(8)
               width: parent.width
               text: {
                 var i = root.cursorRow === "regions" ? root.chipIndex : (root.cursorActive ? -1 : root.regionHover)
@@ -1118,67 +1237,83 @@ Panel {
               wrapMode: Text.WordWrap
             }
 
-            RowLayout {
-              width: parent.width
-              spacing: Style.space(8)
-
-              PanelSectionHeader {
-                text: "DNS"
-                Layout.preferredWidth: root.settingLabelWidth
-                Layout.alignment: Qt.AlignVCenter
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-              }
-
-              ChipGroup {
-                options: root.dnsOptions
-                value: xray.dns
-                cursorIndex: root.cursorRow === "dns" ? root.chipIndex : -1
-                Accessible.role: Accessible.Grouping
-                Accessible.name: "DNS: " + root.dnsOptions[root.dnsIndex()].tooltip
-                Accessible.description: "Options: Cloudflare, Google, Quad9, AdGuard, system. h and l switch"
-                Accessible.focusable: true
-                Accessible.focused: cursorIndex >= 0
-                opacity: xray.busy ? 0.45 : 1.0
-                onChanged: function(v) { root.chooseDns(v) }
-                onHovered: function(i, h) { if (h) root.cursorActive = false }
-              }
-
-              Item { Layout.fillWidth: true }
+            SettingToggle {
+              label: "Login"
+              a11yName: "Connect at login"
+              checked: root.autoConnect
+              hasCursor: root.cursorRow === "login"
+              note: "Connect when you log in"
+              onFlip: root.toggleAutoConnect()
             }
 
-            // OWN: any server Xray can ask, through the tunnel.
+            SectionTitle { text: "DNS"; trailing: xray.mode === "tun" ? "" : "used in TUN" }
+
             RowLayout {
               width: parent.width
               spacing: Style.space(8)
-
-              Item { Layout.preferredWidth: root.settingLabelWidth }
-
-              RowField {
-                id: dnsField
+              RowLabel { text: "Server"; Layout.alignment: Qt.AlignTop; topPadding: Style.space(4) }
+              // five chips do not fit beside the label: they wrap, still in the control column
+              Flow {
+                id: dnsChips
                 Layout.fillWidth: true
-                icon: "󰇖"
-                text: xray.dnsCustom
-                placeholderText: "Own DNS: 9.9.9.9 or https://dns.example/dns-query"
-                maximumLength: 200
-                Accessible.name: "Own DNS server"
-                Keys.onPressed: function(event) {
-                  if (event.key === Qt.Key_Escape) {
-                    text = xray.dnsCustom
-                    keyCatcher.forceActiveFocus()
-                    event.accepted = true
-                  } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                    if (xray.busy) xray.busyRefused()
-                    else if (text.trim() !== "") xray.setDns("custom", text.trim())
-                    keyCatcher.forceActiveFocus()
-                    event.accepted = true
+                spacing: Style.space(4)
+                opacity: xray.busy ? 0.45 : 1.0
+                Accessible.role: Accessible.Grouping
+                Accessible.name: "DNS: " + (xray.dns === "custom" ? "own server " + xray.dnsCustom : root.dnsOptions[root.dnsIndex()].tooltip)
+                Accessible.description: "h and l switch"
+                Repeater {
+                  model: root.dnsOptions
+                  delegate: Button {
+                    required property var modelData
+                    required property int index
+                    text: modelData.label
+                    tooltipText: modelData.tooltip
+                    selected: modelData.value === xray.dns
+                    hasCursor: root.cursorRow === "dns" && root.chipIndex === index
+                    bordered: true
+                    implicitHeight: root.ctlHeight
+                    foreground: root.foreground
+                    fontFamily: root.fontFamily
+                    fontSize: Style.font.caption
+                    onClicked: root.chooseDns(modelData.value)
+                    onHovered: function(h) { if (h) root.cursorActive = false }
                   }
                 }
               }
             }
 
+            // Own server: Enter switches DNS to it; the check mark says it is in use.
+            RowLayout {
+              width: parent.width
+              spacing: Style.space(8)
+              RowLabel { text: "Own" }
+            RowField {
+              id: dnsField
+              Layout.fillWidth: true
+              icon: xray.dns === "custom" ? "󰄬" : "󰇖"
+              text: xray.dnsCustom
+              placeholderText: "9.9.9.9 or https://…"
+              maximumLength: 200
+              Accessible.name: "Own DNS server"
+              Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_Escape) {
+                  text = xray.dnsCustom
+                  keyCatcher.forceActiveFocus()
+                  event.accepted = true
+                } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                  if (xray.busy) xray.busyRefused()
+                  else if (text.trim() !== "") xray.setDns("custom", text.trim())
+                  keyCatcher.forceActiveFocus()
+                  event.accepted = true
+                }
+              }
+            }
+            }
+
+            SectionTitle { text: "TRAFFIC" }
+
             SettingToggle {
-              label: "ADBLOCK"
+              label: "Adblock"
               a11yName: "Ad blocking"
               checked: xray.adblock
               usable: xray.geo || xray.adblock
@@ -1190,68 +1325,187 @@ Panel {
             }
 
             SettingToggle {
-              label: "LOGIN"
-              a11yName: "Connect at login"
-              checked: root.autoConnect
-              hasCursor: root.cursorRow === "login"
-              note: "Connect when you log in"
-              onFlip: root.toggleAutoConnect()
-            }
-
-            SettingToggle {
-              label: "FRAGMENT"
+              label: "Fragment"
               a11yName: "TLS fragmentation"
               checked: xray.fragment
               busy: xray.busy
               hasCursor: root.cursorRow === "fragment"
-              note: "Split the TLS handshake against DPI (TLS nodes, not REALITY)"
+              note: "Splits the TLS handshake against DPI · not REALITY"
               onFlip: root.toggleFragment()
             }
 
-            // Xray's freedom.fragment: which packets to split, piece size in
-            // bytes, pause between pieces in ms. Shown only while it is on.
-            FragRow { id: fragPacketsRow; key: "packets"; label: "PACKETS"; hint: "tlshello, or a packet range like 1-3" }
-            FragRow { id: fragLengthRow; key: "length"; label: "LENGTH"; hint: "piece size in bytes: 100-200" }
-            FragRow { id: fragIntervalRow; key: "interval"; label: "INTERVAL"; hint: "pause between pieces in ms: 10-20" }
+            // Fragment's three parameters side by side, Mux's stream count:
+            // shown only while their pill is on.
+            RowLayout {
+              visible: xray.fragment
+              width: parent.width
+              spacing: Style.space(4)
+              RowLabel { text: "Pieces"; leftPadding: Style.space(10) }
+              FragField { id: fragPacketsField; key: "packets"; hint: "tlshello"; col: 0 }
+              FragField { id: fragLengthField; key: "length"; hint: "100-200"; col: 1 }
+              FragField { id: fragIntervalField; key: "interval"; hint: "10-20"; col: 2 }
+            }
 
-            PanelSeparator { foreground: root.foreground }
+            SettingToggle {
+              label: "Mux"
+              a11yName: "Multiplexing"
+              checked: xray.mux
+              busy: xray.busy
+              hasCursor: root.cursorRow === "mux"
+              note: "Fewer handshakes · not Vision, XHTTP, Hysteria2"
+              onFlip: root.guarded(function() { xray.setOption("mux", xray.mux ? "off" : "on") })
+            }
 
-            // Own rules, checked before the presets: a domain, an IP or
-            // network, geosite:… or geoip:…, each sent DIRECT, via the VPN or blocked.
+            FieldRow {
+              id: muxRow
+              sub: true
+              visible: xray.mux
+              label: "Streams"
+              value: String(xray.muxConcurrency)
+              hint: "1-1024"
+              row: "muxc"
+              onSubmitted: function(t) { if (/^\d+$/.test(t)) root.guarded(function() { xray.setOption("mux", t) }) }
+            }
+
+            SectionTitle { text: "NODES" }
+
+            ChipRow {
+              label: "Auto"
+              options: root.autoOptions
+              value: xray.autoFavorites ? "fav" : "all"
+              row: "auto"
+              onChanged: function(v) { root.guarded(function() { xray.setOption("autofav", v === "fav" ? "on" : "off") }) }
+            }
+
+            FieldRow {
+              id: chainRow
+              label: "Chain"
+              value: xray.chainName
+              hint: "off · type a node name"
+              icon: "󰌷"
+              row: "chain"
+              onSubmitted: function(t) { root.guarded(function() { xray.setChain(t === "" ? "off" : t) }) }
+            }
+
+            ChipRow {
+              label: "Update"
+              options: root.subUpdateOptions
+              value: root.subUpdateValue
+              row: "subupd"
+              onChanged: function(v) { root.guarded(function() { xray.setOption("subupdate", v, "Subscriptions update: " + v) }) }
+            }
+
+            SectionTitle { text: "SYSTEM" }
+
+            SettingToggle {
+              label: "LAN"
+              a11yName: "Local network access"
+              checked: xray.lan
+              busy: xray.busy
+              hasCursor: root.cursorRow === "lan"
+              note: "Your network can use this VPN, with a password"
+              onFlip: root.guarded(function() { xray.setOption("lan", xray.lan ? "off" : "on") })
+            }
+
+            // What a phone needs, one fact per line so nothing runs off the edge.
+            Column {
+              visible: xray.lan && !!xray.lanInfo
+              width: parent.width
+              leftPadding: root.settingLabelWidth + Style.space(8)
+              spacing: Style.space(2)
+              Repeater {
+                model: xray.lanInfo ? [
+                  ["address", (xray.lanInfo.ip || "no address")],
+                  ["socks5", String(xray.lanInfo.socks)], ["http", String(xray.lanInfo.http)],
+                  ["user", xray.lanInfo.user], ["password", xray.lanInfo.pass]] : []
+                delegate: Row {
+                  required property var modelData
+                  spacing: Style.space(8)
+                  Text {
+                    textFormat: Text.PlainText
+                    width: Style.space(56)
+                    text: modelData[0]
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                  }
+                  TextEdit {
+                    textFormat: TextEdit.PlainText
+                    readOnly: true
+                    selectByMouse: true          // copy the password by hand
+                    text: modelData[1]
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                  }
+                }
+              }
+            }
+
+            ChipRow {
+              label: "Log"
+              options: root.logOptions
+              value: xray.loglevel
+              row: "log"
+              onChanged: function(v) { root.guarded(function() { xray.setOption("loglevel", v) }) }
+            }
+
+            FieldRow {
+              id: uaRow
+              label: "UA"
+              value: xray.userAgent
+              hint: "default"
+              row: "ua"
+              onSubmitted: function(t) { root.guarded(function() { xray.setOption("ua", t === "" ? "default" : t, "User-Agent saved: used at the next update") }) }
+            }
+
+            ChipRow {
+              label: "Geo"
+              options: root.geoOptions
+              row: "geo"
+              trailing: xray.geoOwn ? "weekly" : xray.geo ? "distro" : "missing"
+              onChanged: function(v) { root.guarded(function() { xray.updateGeo() }) }
+            }
+
+            ChipRow {
+              label: "Backup"
+              options: root.backupOptions
+              value: ""
+              row: "backup"
+              onChanged: function(v) { root.guarded(function() { xray.settingsClipboard(v) }) }
+            }
+
+            SectionTitle { text: "RULES"; trailing: xray.rules.length ? String(xray.rules.length) : "" }
+
             RowLayout {
               width: parent.width
               spacing: Style.space(8)
-
-              PanelSectionHeader {
-                text: "RULES"
-                Layout.preferredWidth: root.settingLabelWidth
-                Layout.alignment: Qt.AlignVCenter
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-              }
-
-              ChipGroup {
-                options: root.ruleTargets
-                value: root.ruleTarget
-                cursorIndex: root.cursorRow === "ruleadd" ? root.chipIndex : -1
-                Accessible.role: Accessible.Grouping
-                Accessible.name: "New rule target: " + root.ruleTargetLabel(root.ruleTarget)
-                Accessible.description: "Options: direct, VPN, block. h and l switch, Enter types the rule"
-                Accessible.focusable: true
-                Accessible.focused: cursorIndex >= 0
-                onChanged: function(v) { root.ruleTarget = v; ruleField.forceActiveFocus() }
-                onHovered: function(i, h) { if (h) root.cursorActive = false }
-              }
-
+              RowLabel { text: "Send to" }
+            ChipGroup {
+              options: root.ruleTargets
+              value: root.ruleTarget
+              cursorIndex: root.cursorRow === "ruleadd" ? root.chipIndex : -1
+              Accessible.role: Accessible.Grouping
+              Accessible.name: "New rule target: " + root.ruleTargetLabel(root.ruleTarget)
+              Accessible.description: "Options: direct, VPN, block. h and l switch, Enter types the rule"
+              Accessible.focusable: true
+              Accessible.focused: cursorIndex >= 0
+              onChanged: function(v) { root.ruleTarget = v; ruleField.forceActiveFocus() }
+              onHovered: function(i, h) { if (h) root.cursorActive = false }
+            }
               Item { Layout.fillWidth: true }
             }
 
+            RowLayout {
+              width: parent.width
+              spacing: Style.space(8)
+              RowLabel { text: "Match" }
             RowField {
               id: ruleField
-              width: parent.width
+              Layout.fillWidth: true
               icon: "󰐕"
               Accessible.name: "New rule, " + root.ruleTargetLabel(root.ruleTarget)
-              placeholderText: "example.com, 10.0.0.0/8, geosite:… → " + root.ruleTargetLabel(root.ruleTarget)
+              placeholderText: "domain, IP/CIDR or geosite:…"
               maximumLength: 253
               Keys.onPressed: function(event) {
                 if (event.key === Qt.Key_Escape) {
@@ -1264,6 +1518,7 @@ Panel {
                 }
               }
             }
+            }
 
             Repeater {
               model: xray.rules
@@ -1273,12 +1528,9 @@ Panel {
                 width: parent ? parent.width : 0
                 spacing: Style.space(8)
 
-                PanelSectionHeader {
+                RowLabel {
                   text: root.ruleTargetLabel(modelData.target)
-                  Layout.preferredWidth: root.settingLabelWidth
-                  Layout.alignment: Qt.AlignVCenter
-                  foreground: modelData.target === "block" ? root.errorColor : root.foreground
-                  fontFamily: root.fontFamily
+                  color: modelData.target === "block" ? root.errorColor : root.dim
                 }
 
                 Text {
@@ -1306,7 +1558,8 @@ Panel {
               textFormat: Text.PlainText
               visible: xray.rules.length === 0
               width: parent.width
-              text: "No rules yet. They win over ROUTE and ADBLOCK."
+              leftPadding: root.settingLabelWidth + Style.space(8)
+              text: "Checked before Route and Adblock."
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
@@ -1333,6 +1586,13 @@ Panel {
               }
 
               TextActionButton {
+                label: root.sortByLatency ? "󰒿 PING" : "󰒿 LIST"
+                a11yName: "Order: " + (root.sortByLatency ? "fastest first" : "as in the subscription")
+                tooltip: root.sortByLatency ? "Fastest first · click: subscription order" : "Subscription order · click: fastest first"
+                onClicked: root.persistSetting("sortByLatency", !root.sortByLatency)
+              }
+
+              TextActionButton {
                 label: xray.testing ? "Stop · " + root.elapsedText : root.failCount > 0 ? "Test · Fail " + root.failCount : "Test"
                 tooltip: xray.testing ? "Stop the latency test, finished results are kept (Ctrl+T)"
                          : (root.filterQuery !== "" ? "Latency-test the filtered nodes" : "Latency-test all nodes")
@@ -1340,6 +1600,50 @@ Panel {
                            + ". Ctrl+T tests the node under the cursor, or all; right-click tests one"
                 enabled: xray.testing || (root.visibleNodes.length > 0 && !xray.busy)
                 onClicked: xray.testNodes(root.visibleNodes)
+              }
+            }
+
+            // Ctrl+S on a node: its QR for a phone, the link into the clipboard.
+            ColumnLayout {
+              visible: !!xray.share
+              width: parent.width
+              spacing: Style.space(4)
+
+              RowLayout {
+                Layout.fillWidth: true
+                spacing: Style.space(6)
+                PanelSectionHeader {
+                  Layout.fillWidth: true
+                  text: xray.share ? "SHARE · " + xray.share.name : ""
+                  elide: Text.ElideRight
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                }
+                TextActionButton {
+                  label: "Copy link"
+                  tooltip: xray.share && xray.share.kind === "json" ? "Copy its Xray JSON (no share link for this one)"
+                                                                    : "Copy the link: it carries the credentials"
+                  onClicked: if (xray.share) xray.shareNode({ key: xray.share.key, name: xray.share.name }, "copy")
+                }
+                TextActionButton {
+                  label: "󰅖"
+                  a11yName: "Close share"
+                  tooltip: "Close (Ctrl+S)"
+                  onClicked: xray.share = null
+                }
+              }
+
+              Image {
+                Layout.alignment: Qt.AlignHCenter
+                visible: !!xray.share && xray.share.png !== ""
+                // the stamp makes a new QR load over the same file name
+                source: xray.share && xray.share.png ? "file://" + xray.share.png + "?" + xray.share.stamp : ""
+                cache: false
+                smooth: false
+                fillMode: Image.PreserveAspectFit
+                Layout.preferredWidth: Math.min(parent.width, Style.space(220))
+                Layout.preferredHeight: Layout.preferredWidth
+                Accessible.name: "QR code for " + (xray.share ? xray.share.name : "")
               }
             }
 
@@ -1513,6 +1817,14 @@ Panel {
               }
 
               Item { Layout.fillWidth: true }
+
+              TextActionButton {
+                label: "󰐲 QR"
+                a11yName: "Scan a QR code on screen"
+                tooltip: "Drag a box around a QR code on screen: a subscription or a server"
+                enabled: !xray.busy
+                onClicked: xray.scanQr()
+              }
 
               TextActionButton {
                 visible: xray.subs.length > 0
@@ -1740,37 +2052,139 @@ Panel {
   // A settings row: label, switch, and a note that toggles too (a small
   // switch is a small target). `usable` false greys it and blocks clicks.
   // One Xray freedom.fragment parameter, shown only while fragmentation is on.
-  component FragRow: RowLayout {
-    id: fr
+  // One Xray freedom.fragment parameter; Enter applies all three.
+  component FragField: RowField {
+    id: ff
     property string key: ""
-    property string label: ""
     property string hint: ""
-    property alias field: frField
-    visible: xray.fragment
+    property int col: 0
+    Layout.fillWidth: true
+    leftPadding: Style.space(6)
+    text: xray.fragmentOpts[ff.key] || ""
+    placeholderText: ff.hint
+    maximumLength: 16
+    Accessible.name: "Fragmentation " + ff.key
+    // the kit field shows no cursor ring: a hovered border marks the keyboard spot
+    background: BorderSurface {
+      radius: Style.cornerRadius
+      color: ff.activeFocus ? Style.focusFillFor(root.foreground, Color.accent) : "transparent"
+      borderSpec: ff.activeFocus ? Border.controlSpec("focus", root.foreground, Color.accent)
+                : ff.hovered || (root.cursorRow === "fragopts" && root.chipIndex === ff.col)
+                  ? Border.controlSpec("hover-cursor", root.foreground, Color.accent)
+                  : Border.controlSpec("normal", root.foreground, Color.accent)
+    }
+    Keys.onPressed: function(event) {
+      if (event.key === Qt.Key_Escape) {
+        text = xray.fragmentOpts[ff.key] || ""
+        keyCatcher.forceActiveFocus()
+        event.accepted = true
+      } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+        root.applyFragmentOpts()
+        keyCatcher.forceActiveFocus()
+        event.accepted = true
+      }
+    }
+  }
+
+  // Several on/off switches as one row of pills: lit = on.
+  component PillRow: Flow {
+    id: pr
+    property var options: []
+    property string row: ""
+    width: parent ? parent.width : 0
+    spacing: Style.space(4)
+    Repeater {
+      model: pr.options
+      delegate: Button {
+        required property var modelData
+        required property int index
+        text: (modelData.on ? "󰄬 " : "") + modelData.label
+        tooltipText: modelData.tooltip
+        selected: modelData.on
+        bordered: true
+        hasCursor: root.cursorRow === pr.row && root.chipIndex === index
+        opacity: modelData.usable && !xray.busy ? 1.0 : 0.45
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        fontSize: Style.font.caption
+        implicitHeight: root.ctlHeight
+        Accessible.role: Accessible.CheckBox
+        Accessible.name: modelData.label
+        Accessible.checked: modelData.on
+        Accessible.description: modelData.tooltip
+        Accessible.focusable: true
+        Accessible.focused: hasCursor
+        onClicked: if (modelData.usable) root.flipPill(modelData.key)
+        onHovered: function(h) { if (h) root.cursorActive = false }
+      }
+    }
+  }
+
+  // Label + chips; the cursor walks the chips when its row is current.
+  component ChipRow: RowLayout {
+    id: cr
+    property string label: ""
+    property var options: []
+    property string value: ""
+    property string row: ""
+    property string trailing: ""         // a result beside the chips (speed, geo source)
+    signal changed(string v)
     width: parent ? parent.width : 0
     spacing: Style.space(8)
-    PanelSectionHeader {
-      text: fr.label
-      Layout.preferredWidth: root.settingLabelWidth
-      Layout.alignment: Qt.AlignVCenter
-      foreground: root.foreground
-      fontFamily: root.fontFamily
+    RowLabel { text: cr.label }
+    ChipGroup {
+      options: cr.options
+      value: cr.value
+      cursorIndex: root.cursorRow === cr.row ? root.chipIndex : -1
+      opacity: xray.busy ? 0.45 : 1.0
+      Accessible.role: Accessible.Grouping
+      Accessible.name: cr.label + ": " + cr.value
+      Accessible.focusable: true
+      Accessible.focused: cursorIndex >= 0
+      onChanged: function(v) { cr.changed(v) }
+      onHovered: function(i, h) { if (h) root.cursorActive = false }
     }
+    Text {
+      visible: cr.trailing !== ""
+      textFormat: Text.PlainText
+      text: cr.trailing
+      color: root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+    }
+    Item { Layout.fillWidth: true }
+  }
+
+  // Label + one text field: Enter submits, Esc restores the saved value.
+  component FieldRow: RowLayout {
+    id: fw
+    property string label: ""
+    property string value: ""
+    property string hint: ""
+    property string icon: ""
+    property string row: ""
+    property alias field: fwField
+    property bool sub: false             // a parameter of the row above: indented label
+    signal submitted(string text)
+    width: parent ? parent.width : 0
+    spacing: Style.space(8)
+    RowLabel { text: fw.label; leftPadding: fw.sub ? Style.space(10) : 0 }
     RowField {
-      id: frField
+      id: fwField
       Layout.fillWidth: true
-      leftPadding: Style.space(8)
-      text: xray.fragmentOpts[fr.key] || ""
-      placeholderText: fr.hint
-      maximumLength: 16
-      Accessible.name: "Fragmentation " + fr.key + ", " + fr.hint
+      icon: fw.icon
+      leftPadding: fw.icon !== "" ? root.rowTextInset : Style.space(8)
+      text: fw.value
+      placeholderText: fw.hint
+      maximumLength: 128
+      Accessible.name: fw.label + ", " + fw.hint
       Keys.onPressed: function(event) {
         if (event.key === Qt.Key_Escape) {
-          text = xray.fragmentOpts[fr.key] || ""
+          text = fw.value
           keyCatcher.forceActiveFocus()
           event.accepted = true
         } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-          root.applyFragmentOpts()
+          fw.submitted(text.trim())
           keyCatcher.forceActiveFocus()
           event.accepted = true
         }
@@ -1778,7 +2192,47 @@ Panel {
     }
   }
 
-  component SettingToggle: RowLayout {
+  // Group title: more space above than below, optional quiet trailing note.
+  component SectionTitle: RowLayout {
+    id: sct
+    property string text: ""
+    property string trailing: ""
+    property bool first: false
+    width: parent ? parent.width : 0
+    spacing: Style.space(8)
+    PanelSectionHeader {
+      Layout.fillWidth: true
+      topPadding: sct.first ? Math.ceil(fontSize * 0.15) : Style.space(4)   // as a node group header
+      text: sct.text
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+    }
+    Text {
+      textFormat: Text.PlainText
+      visible: sct.trailing !== ""
+      Layout.alignment: Qt.AlignBottom
+      text: sct.trailing
+      color: root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+  }
+
+  // Quiet row label inside a group: the group title is the loud one.
+  component RowLabel: Text {
+    textFormat: Text.PlainText
+    Layout.preferredWidth: root.settingLabelWidth
+    Layout.alignment: Qt.AlignVCenter
+    color: root.dim
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.bodySmall
+    elide: Text.ElideRight
+  }
+
+  // A settings row: label, then the switch at the right edge. What it does
+  // is the tooltip (and the keyboard hint); only a reason it cannot be used
+  // shows inline, wrapped, so it never runs off the panel.
+  component SettingToggle: ColumnLayout {
     id: st
     property string label: ""
     property string a11yName: ""
@@ -1789,50 +2243,60 @@ Panel {
     property bool hasCursor: false
     signal flip()
     width: parent ? parent.width : 0
-    spacing: Style.space(8)
-    PanelSectionHeader {
-      id: stLabel
-      text: st.label
-      Layout.preferredWidth: root.settingLabelWidth
-      Layout.alignment: Qt.AlignVCenter
-      foreground: root.foreground
-      fontFamily: root.fontFamily
-    }
-    ToggleSwitch {
-      trackHeight: Math.round(stLabel.font.pixelSize * 1.2)
-      cursorPad: Style.space(3)
-      Layout.alignment: Qt.AlignVCenter
-      checked: st.checked
-      hasCursor: st.hasCursor
-      opacity: st.usable && !st.busy ? 1.0 : 0.45
-      foreground: root.foreground
-      onToggled: if (st.usable) st.flip()
-      onHovered: function(h) { if (h) root.cursorActive = false }
-      Accessible.role: Accessible.CheckBox
-      Accessible.name: st.a11yName
-      Accessible.checked: st.checked
-      Accessible.focusable: true
-      Accessible.focused: hasCursor
+    spacing: Style.space(2)
+    RowLayout {
+      Layout.fillWidth: true
+      spacing: Style.space(8)
+      RowLabel {
+        id: stLabel
+        text: st.label
+        color: stHover.containsMouse ? root.foreground : root.dim
+        MouseArea {
+          id: stHover
+          anchors.fill: parent
+          anchors.topMargin: -Style.space(6)
+          anchors.bottomMargin: -Style.space(6)
+          hoverEnabled: true
+          enabled: st.usable
+          cursorShape: Qt.PointingHandCursor
+          onClicked: st.flip()
+          onEntered: root.cursorActive = false
+        }
+        PanelToolTip {
+          visible: stHover.containsMouse && st.note !== ""
+          text: st.note
+          fontFamily: root.fontFamily
+        }
+      }
+      ToggleSwitch {
+        trackHeight: Math.round(Style.font.caption * 1.2)
+        cursorPad: Style.space(3)
+        Layout.alignment: Qt.AlignVCenter
+        checked: st.checked
+        hasCursor: st.hasCursor
+        opacity: st.usable && !st.busy ? 1.0 : 0.45
+        foreground: root.foreground
+        onToggled: if (st.usable) st.flip()
+        onHovered: function(h) { if (h) root.cursorActive = false }
+        Accessible.role: Accessible.CheckBox
+        Accessible.name: st.a11yName
+        Accessible.description: st.note
+        Accessible.checked: st.checked
+        Accessible.focusable: true
+        Accessible.focused: hasCursor
+      }
+      Item { Layout.fillWidth: true }
     }
     Text {
       textFormat: Text.PlainText
+      visible: !st.usable && st.note !== ""
       Layout.fillWidth: true
+      leftPadding: root.settingLabelWidth + Style.space(8)
       text: st.note
       color: root.dim
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall
-      wrapMode: st.usable ? Text.NoWrap : Text.WordWrap      // a missing-package note must show in full
-      elide: st.usable ? Text.ElideRight : Text.ElideNone
-      MouseArea {
-        anchors.fill: parent
-        anchors.topMargin: -Style.space(6)
-        anchors.bottomMargin: -Style.space(6)
-        hoverEnabled: true
-        enabled: st.usable
-        cursorShape: Qt.PointingHandCursor
-        onClicked: st.flip()
-        onEntered: root.cursorActive = false
-      }
+      wrapMode: Text.WordWrap
     }
   }
 
@@ -1854,6 +2318,33 @@ Panel {
     Accessible.focusable: true
     Accessible.focused: hasCursor
     Accessible.onPressAction: if (enabled) clicked()
+  }
+
+  // A small clickable glyph inside a node row (above the row's own MouseArea).
+  component NodeIcon: Text {
+    id: ni
+    property string icon: ""
+    property bool lit: false
+    property string tip: ""
+    signal clicked()
+    textFormat: Text.PlainText
+    text: icon
+    color: lit || niMouse.containsMouse ? root.foreground : root.dim
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.bodySmall
+    Layout.alignment: Qt.AlignVCenter
+    Accessible.role: Accessible.Button
+    Accessible.name: tip
+    Accessible.onPressAction: ni.clicked()
+    MouseArea {
+      id: niMouse
+      anchors.fill: parent
+      anchors.margins: -Style.space(3)        // a target bigger than the glyph
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: ni.clicked()
+    }
+    PanelToolTip { visible: niMouse.containsMouse; text: ni.tip; fontFamily: root.fontFamily }
   }
 
   component NodeRow: CursorSurface {
@@ -1892,7 +2383,7 @@ Panel {
     MouseArea {
       id: nodeMouse
       anchors.fill: parent
-      acceptedButtons: Qt.LeftButton | Qt.RightButton
+      acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
       onPositionChanged: function(mouse) {
@@ -1900,7 +2391,8 @@ Panel {
       }
       onClicked: function(mouse) {
         if (!nodeRow.node) return
-        if (mouse.button === Qt.RightButton) xray.testNodes([nodeRow.node])
+        if (mouse.button === Qt.MiddleButton) xray.toggleFav(nodeRow.node)
+        else if (mouse.button === Qt.RightButton) xray.testNodes([nodeRow.node])
         else xray.selectNode(nodeRow.node)
       }
     }
@@ -1927,12 +2419,33 @@ Panel {
       Text {
         textFormat: Text.PlainText
         Layout.fillWidth: true
+        id: nodeName
         text: nodeRow.node ? nodeRow.node.name : ""
         color: root.foreground
         font.family: root.fontFamily
         font.pixelSize: Style.font.body
         font.bold: nodeRow.isConnected
         elide: Text.ElideRight
+      }
+
+      // Per-node actions: speed test, star. Dim until hovered or set.
+      NodeIcon {
+        visible: !!nodeRow.node && nodeRow.node.key !== "auto"
+        icon: "󰓅"
+        lit: xray.speedTesting && xray.speedKey === (nodeRow.node ? nodeRow.node.key : "")
+        tip: lit ? "Measuring… click to stop" : "Speed test, this node on its own (up to 25 MB)"
+        onClicked: {
+          if (xray.speedTesting) xray.stopSpeed()
+          else root.guarded(function() { xray.speedTest(nodeRow.node) })
+        }
+      }
+
+      NodeIcon {
+        visible: !!nodeRow.node && nodeRow.node.key !== "auto"
+        icon: nodeRow.node && nodeRow.node.fav ? "★" : "☆"
+        lit: !!nodeRow.node && nodeRow.node.fav
+        tip: lit ? "Unstar" : "Star: sorts first, Auto can use only starred"
+        onClicked: xray.toggleFav(nodeRow.node)
       }
 
       Text {
@@ -1946,19 +2459,39 @@ Panel {
         Layout.alignment: Qt.AlignVCenter
       }
 
-      Text {
-        textFormat: Text.PlainText
+      // Fixed, right-aligned cell: ping, the speed under it; results line up
+      // and never shift the name. Two short lines fit the row's height.
+      Column {
         visible: !!nodeRow.node && nodeRow.node.key !== "auto"
-        // Fixed, right-aligned cell: results line up and never shift the name.
+        readonly property bool two: !!nodeRow.node && nodeRow.node.speed > 0
         Layout.preferredWidth: root.latencyCellWidth
-        horizontalAlignment: Text.AlignRight
-        text: (nodeRow.fastest ? "󰉁 " : "") + nodeRow.latencyText
-        Accessible.ignored: true
-        color: nodeRow.latencyBadLat ? root.dim : root.foreground      // "timeout" says it; don't shout
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall      // the number nodes are chosen by
-        font.bold: nodeRow.fastest
+        // never taller than the name: a speed line must not grow the row
+        Layout.preferredHeight: nodeName.implicitHeight
         Layout.alignment: Qt.AlignVCenter
+        spacing: -Style.space(3)
+        topPadding: two ? -Style.space(3) : (nodeName.implicitHeight - children[0].implicitHeight) / 2
+        Text {
+          textFormat: Text.PlainText
+          width: parent.width
+          horizontalAlignment: Text.AlignRight
+          text: (nodeRow.fastest ? "󰉁 " : "") + nodeRow.latencyText
+          Accessible.ignored: true
+          color: nodeRow.latencyBadLat ? root.dim : root.foreground      // "timeout" says it; don't shout
+          font.family: root.fontFamily
+          font.pixelSize: parent.two ? Style.font.caption : Style.font.bodySmall      // the number nodes are chosen by
+          font.bold: nodeRow.fastest
+        }
+        Text {
+          textFormat: Text.PlainText
+          visible: !!nodeRow.node && nodeRow.node.speed > 0
+          width: parent.width
+          horizontalAlignment: Text.AlignRight
+          text: nodeRow.node ? "󰓅 " + Model.mbpsLabel(nodeRow.node.speed) : ""
+          Accessible.ignored: true
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
       }
     }
 
@@ -1967,6 +2500,7 @@ Panel {
       text: (nodeRow.node && nodeRow.node.key !== "auto" && nodeRow.node.address
                ? nodeRow.node.address + (nodeRow.node.net ? " · " + nodeRow.node.net : "") + (nodeRow.fastest ? " · fastest" : "") + "\n" : "")
             + (nodeRow.isConnected ? "Connected · right-click to test latency" : xray.connected ? "Click to switch · right-click to test latency" : "Click to select · right-click to test latency")
+            + (nodeRow.node && nodeRow.node.key !== "auto" ? "\nMiddle-click: " + (nodeRow.node.fav ? "unstar" : "star") + " · Ctrl+S: share" : "")
       fontFamily: root.fontFamily
     }
   }

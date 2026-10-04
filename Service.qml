@@ -46,13 +46,32 @@ Item {
   property var rules: []                 // [{target: direct|proxy|block, value}]
   property string dns: "cloudflare"
   property string dnsCustom: ""
+  property bool autoFavorites: false
+  property bool mux: false
+  property int muxConcurrency: 8
+  property string loglevel: "warning"
+  property bool lan: false
+  property var lanInfo: null
+  property string userAgent: ""
+  property string chain: ""
+  property string chainName: ""
+  // where traffic leaves the tunnel, asked once per connect
+  property string exitIp: ""
+  property string exitCountry: ""
+  // the node being shared: name, PNG path (private runtime dir), link kind
+  property var share: null
   property bool geo: false
+  property bool geoOwn: false             // a downloaded set (geo update), not the distro's
+  property int subUpdate: -1              // hours; -1 the provider's interval, 0 off
+  property string speedKey: ""             // the node being measured
+  property string speed: ""               // last speed test, e.g. "84.2 Mbit/s"
   property bool tunInstalled: false
   property var subs: []
   property string skippedText: ""
   property var autoMembers: []
   readonly property string metricsUrl: "http://127.0.0.1:15491/debug/vars"   // the manager's METRICS
   property string _statusRaw: ""
+  property real _lastGeoUpdate: 0
   property real _lastAutoUpdate: 0
   property string _busyText: ""
   property real longStartedMs: 0         // a flash over a long job falls back to this
@@ -116,6 +135,7 @@ Item {
 
   readonly property bool busy: _action.running || _long.running
   readonly property bool testing: _long.running && _long._label === "latency test"
+  readonly property bool speedTesting: _long.running && _long._label === "speed"
   // The connect toggle only waits for short commands: a latency test (up to
   // 11 min) must not swallow disconnect. Other long jobs rewrite state and
   // would race a node switch, so they still hold it.
@@ -264,7 +284,8 @@ Item {
                   "import": "Adding", "remove": "Removing the subscription",
                   "mode switch": "Switching mode", "TUN setup": "TUN setup", "routing": "Applying routing",
                   "adblock": "Applying ad blocking", "dns": "Changing DNS",
-                  "fragment": "Applying fragmentation", "rule": "Changing the rules", "status": "Reading status" }
+                  "fragment": "Applying fragmentation", "rule": "Changing the rules",
+                  "settings": "Applying the settings", "chain": "Applying the chain", "fav": "Starring", "status": "Reading status" }
     return names[label] || "The last command"
   }
 
@@ -328,7 +349,18 @@ Item {
     rules = Array.isArray(d.rules) ? d.rules.slice(0, 200) : []
     if (typeof d.dns === "string") dns = d.dns
     if (typeof d.dnsCustom === "string") dnsCustom = d.dnsCustom
+    autoFavorites = d.autoFavorites === true
+    mux = d.mux === true
+    if (typeof d.muxConcurrency === "number") muxConcurrency = d.muxConcurrency
+    if (typeof d.loglevel === "string") loglevel = d.loglevel
+    lan = d.lan === true
+    if (JSON.stringify(d.lanInfo || null) !== JSON.stringify(lanInfo)) lanInfo = d.lanInfo || null
+    userAgent = typeof d.userAgent === "string" ? d.userAgent : ""
+    chain = typeof d.chain === "string" ? d.chain : ""
+    chainName = typeof d.chainName === "string" ? scrub(d.chainName) : ""
     geo = d.geo === true
+    geoOwn = d.geoOwn === true
+    subUpdate = typeof d.subUpdate === "number" ? d.subUpdate : -1
     tunInstalled = d.tunInstalled === true
     skippedText = Model.skippedLabel(d.skipped)
     autoMembers = d.autoMembers || []
@@ -351,6 +383,9 @@ Item {
       _lastAutoUpdate = Date.now()
       _quietNext = true
       updateSubscriptions()
+    } else if (d.geoDue === true && !busy && !panelOpen && Date.now() - _lastGeoUpdate > 3600000) {
+      _lastGeoUpdate = Date.now()
+      runLong([manager, "geo", "update"], "geo", 300000, "", "", undefined, quietUpdate)
     }
 
     // Drops come from the manager's unit states (a crash while enabled), so
@@ -393,6 +428,7 @@ Item {
         lastError = "Couldn't switch to " + scrub(node.name) + ": " + (resp.message || "no details"); refresh(); return
       }
       persistLastNode(node.key)
+      exitIp = ""; exitCountry = ""; _exitTimer.restart()      // a new exit
       if (!coreRunning) { cmdOn(); return }
       pending = ""; actionStatus = ""
       refresh()
@@ -585,6 +621,80 @@ Item {
   }
 
   // opts: [packets, length, interval]; the manager validates them
+  // set autofav|lan|mux|loglevel|ua <value>
+  function setOption(key, value, okText) {
+    runLong([manager, "set", key, String(value).slice(0, 128)], "settings", 120000, okText || "Saved", "Applying…")
+  }
+
+  function setChain(key) {
+    runLong([manager, "chain", String(key).slice(0, 128)], "chain", 120000,
+            function(d) { return d.chainName ? "First hop: " + scrub(d.chainName) : "Chain off" }, "Applying the chain…")
+  }
+
+  function toggleFav(node) {
+    if (!node || !node.key || node.key === "auto") return
+    if (!run(_action, [manager, "fav", node.key], function(resp) {
+      _actionDeadline.stop()
+      if (!resp.ok) lastError = "Couldn't star " + scrub(node.name) + ": " + resp.message
+      refresh()
+    })) { busyRefused(); return }
+    armDeadline(_action, _actionDeadline, 30000, "fav")
+  }
+
+  // how: "qr" (PNG for the panel) or "copy" (link into the clipboard)
+  function shareNode(node, how) {
+    if (!node || !node.key || node.key === "auto") return
+    if (!run(_probe, [manager, "share", node.key, how], function(resp) {
+      if (!resp.ok) { lastError = resp.message; return }
+      if (how === "copy") flash("Link copied: " + scrub(node.name) + " · it carries the credentials")
+      else share = { name: scrub(resp.data.name || node.name), png: String(resp.data.png || ""),
+                     kind: resp.data.kind || "link", stamp: Date.now(), key: node.key }
+    })) busyRefused()
+  }
+
+  function settingsClipboard(verb) {
+    runLong([manager, "settings", verb], "settings", 120000,
+            verb === "copy" ? "Settings copied (no subscriptions, no passwords)" : "Settings pasted", "Working…")
+  }
+
+  function updateGeo() {
+    runLong([manager, "geo", "update"], "geo", 300000,
+            function(d) { return "Geo data updated: " + Math.round((d.bytes || 0) / 1048576) + " MB" },
+            "Downloading geo data…")
+  }
+
+  // The panel steps aside while you drag a region around the QR code.
+  function scanQr() {
+    if (panelRef) panelRef.close()
+    runLong([manager, "scan"], "import", 180000,
+            function(d) {
+              return d.manual ? "Added " + d.manual + (d.manual === 1 ? " server" : " servers") + " to Manual"
+                              : "Subscription added: " + (d.nodes || 0) + " nodes available"
+            }, "Select the QR code on screen…")
+  }
+
+  // node: one node on its own; none (or the connected one): the tunnel
+  function speedTest(node) {
+    var args = [manager, "speed"]
+    if (node && node.key && node.key !== "auto") args.push(node.key)
+    speed = ""
+    speedKey = node && node.key ? node.key : ""
+    runLong(args, "speed", 40000,
+            function(d) { speed = d.mbps + " Mbit/s"; return (node ? scrub(node.name) : "Download") + ": " + speed },
+            "Measuring speed…")
+  }
+  function stopSpeed() { if (speedTesting) try { _long.signal(15) } catch (e) {} }
+
+  function checkExit() {
+    run(_probe, [manager, "whoami"], function(resp) {
+      exitIp = resp.ok ? String(resp.data.ip || "") : ""
+      exitCountry = resp.ok ? String(resp.data.country || "") : ""
+    })
+  }
+  onConnectedChanged: { exitIp = ""; exitCountry = ""; if (connected) _exitTimer.restart() }
+  // after a connect or a node switch: give the tunnel a moment first
+  Timer { id: _exitTimer; interval: 2500; onTriggered: if (root.connected) root.checkExit() }
+
   function setFragment(on, opts) {
     var args = [manager, "fragment", on ? "on" : "off"]
     if (opts) args = args.concat(opts.map(function(v) { return String(v).trim().slice(0, 16) }))
@@ -728,6 +838,22 @@ Item {
     stderr: StdioCollector { id: actionStderr; waitForEnd: true }
     onExited: function(exitCode) {
       root.finish(_action, String(actionStdout.text || ""), String(actionStderr.text || ""), exitCode)
+    }
+  }
+
+  // Side jobs (exit check, share) that must not hold the action slot.
+  Process {
+    id: _probe
+    property var _done: null
+    property string _label: ""
+    property bool _terminating: false
+    clearEnvironment: true
+    running: false
+    command: []
+    stdout: StdioCollector { id: probeStdout; waitForEnd: true }
+    stderr: StdioCollector { id: probeStderr; waitForEnd: true }
+    onExited: function(exitCode) {
+      root.finish(_probe, String(probeStdout.text || ""), String(probeStderr.text || ""), exitCode)
     }
   }
 
