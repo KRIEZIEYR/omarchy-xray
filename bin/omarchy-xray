@@ -34,8 +34,9 @@ the two explicit TUN install steps):
                      on its own through a throwaway core
   scan               import from a QR code on screen (drag a region; grim, slurp, zbar)
   geo update         fresh geoip/geosite.dat (Loyalsoldier, sha256-checked) into
-                     ~/.config/omarchy-xray/geo; the widget refreshes them weekly
+                     ~/.config/omarchy-xray/geo; the widget refreshes them (set geoupdate)
   set subupdate <auto|off|hours>  auto-update interval (auto: the provider's, or 24 h)
+  set geoupdate <off|days>        how often the widget refreshes downloaded geo data (7)
   settings export    print the settings (no subscriptions, no secrets) as JSON
   settings import -  read such JSON from stdin
   dns custom <addr>  your own server through the tunnel: an IP, or https:// tls://
@@ -578,6 +579,9 @@ def load_state():
         st.pop("userAgent", None)
     if not (isinstance(st.get("chain"), str) and any(n.get("id") == st["chain"] for n in st.get("nodes", []))):
         st["chain"] = ""
+    gd = st.get("geoDays")
+    if not (isinstance(gd, int) and not isinstance(gd, bool) and 0 <= gd <= 90):
+        st.pop("geoDays", None)
     su = st.get("subUpdate")
     if not (isinstance(su, int) and not isinstance(su, bool) and 0 <= su <= 168):
         st.pop("subUpdate", None)
@@ -2238,6 +2242,11 @@ def cmd_set(key, value):
         save_state(st)                       # the widget's timer reads it from status
         out({"ok": True, "subUpdate": st.get("subUpdate")})
         return
+    elif key == "geoupdate" and (value == "off" or (value.isdigit() and 1 <= int(value) <= 90)):
+        st["geoDays"] = 0 if value == "off" else int(value)
+        save_state(st)                       # the widget's timer reads it from status
+        out({"ok": True, "geoDays": st["geoDays"]})
+        return
     elif key == "loglevel" and value in LOGLEVELS:
         st["loglevel"] = value
     elif key == "ua" and (value == "default" or ua_ok(value)):
@@ -2250,7 +2259,7 @@ def cmd_set(key, value):
         return
     else:
         die("usage: omarchy-xray set autofav|lan on|off · mux on|off|<1-1024> · loglevel "
-            + "|".join(LOGLEVELS) + " · ua <text|default> · subupdate auto|off|<1-168 hours>")
+            + "|".join(LOGLEVELS) + " · ua <text|default> · subupdate auto|off|<1-168 hours> · geoupdate off|<1-90 days>")
     _apply(st)
     out({"ok": True, key: value})
 
@@ -2373,10 +2382,13 @@ def cmd_speed(key=""):
     out({"ok": True, "mbps": mbps, "key": k})
 
 
-def geo_due():
-    """A downloaded set older than GEO_DAYS (never the distro's own files)."""
+def geo_due(st):
+    """A downloaded set older than its interval (never the distro's own files)."""
+    days = st.get("geoDays", GEO_DAYS)
+    if not days:
+        return False
     try:
-        return time.time() - (GEO_DIR / "geosite.dat").stat().st_mtime > GEO_DAYS * 86400
+        return time.time() - (GEO_DIR / "geosite.dat").stat().st_mtime > days * 86400
     except OSError:
         return False
 
@@ -2424,7 +2436,7 @@ def cmd_whoami():
     out({"ok": True, "ip": ip, "country": loc})
 
 
-SETTINGS_KEYS = ("userAgent", "subUpdate", "routing", "adblock", "dns", "dnsCustom", "fragment", "fragmentOpts", "rules",
+SETTINGS_KEYS = ("userAgent", "subUpdate", "geoDays", "routing", "adblock", "dns", "dnsCustom", "fragment", "fragmentOpts", "rules",
                  "favorites", "autoFavorites", "mux", "muxConcurrency", "loglevel")
 
 
@@ -2759,7 +2771,8 @@ def cmd_status():
         "dnsCustom": st.get("dnsCustom", ""),
         "geo": asset_dir() is not None,
         "geoOwn": (GEO_DIR / "geosite.dat").exists(),
-        "geoDue": geo_due(),
+        "geoDue": geo_due(st),
+        "geoDays": st.get("geoDays", GEO_DAYS),
         "subUpdate": st.get("subUpdate", -1),          # -1: the provider's interval (or 24 h)
         "xray": os.path.isfile(XRAY),
         "tunInstalled": tun_installed(),

@@ -514,6 +514,16 @@ class ConfigBuilding(Base):
         with self.assertRaises(SystemExit), contextlib.redirect_stdout(io.StringIO()):
             M.cmd_set("subupdate", "999")
 
+    def test_geo_interval(self):
+        M.GEO_DIR.mkdir(parents=True)
+        f = M.GEO_DIR / "geosite.dat"
+        f.write_bytes(b"x")
+        old = M.time.time() - 3 * 86400
+        os.utime(f, (old, old))
+        self.assertFalse(M.geo_due({}))                # default 7 days
+        self.assertTrue(M.geo_due({"geoDays": 2}))
+        self.assertFalse(M.geo_due({"geoDays": 0}))    # off
+
     def test_geo_checksum_mismatch_refused(self):
         M.fetch = lambda url, via=False, ua="", cap=0: (b"x" * 10, {}) if url.endswith(".dat") else (b"0" * 64 + b"  f\n", {})
         M.user_active, saved = (lambda: False), M.user_active
@@ -523,7 +533,7 @@ class ConfigBuilding(Base):
         finally:
             M.user_active = saved
         self.assertFalse((M.GEO_DIR / "geosite.dat").exists())
-        self.assertFalse(M.geo_due())
+        self.assertFalse(M.geo_due({}))
 
     def test_speed_one_node(self):
         ns = self.nodes()

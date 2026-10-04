@@ -74,7 +74,7 @@ Panel {
       // the same order as on the page
       : ["hero", "settings"].concat(settingsOpen ? ["mode", "route"].concat(regionsOpen ? ["regions"] : [],
           ["login", "dns", "dnsown", "ads", "fragment"], xray.fragment ? ["fragopts"] : [],
-          ["mux"], xray.mux ? ["muxc"] : [], ["auto", "chain", "subupd", "lan", "log", "ua", "geo", "backup", "ruleadd"], xray.rules.map(function(r, i) { return "rule" + i })) : [])
+          ["mux"], xray.mux ? ["muxc"] : [], ["auto", "chain", "subupd", "lan", "log", "ua", "geo", "geodays", "backup", "ruleadd"], xray.rules.map(function(r, i) { return "rule" + i })) : [])
   readonly property string settingsSummary: (xray.mode === "tun" ? "TUN" : "PROXY")
       + " · " + (xray.region ? xray.region.code.toUpperCase() + " DIRECT" : "ALL")
       + (xray.adblock ? " · ADBLOCK" : "")
@@ -158,6 +158,24 @@ Panel {
   readonly property var geoOptions: [
     { value: "update", label: "UPDATE", tooltip: "Fresh geoip/geosite lists (Loyalsoldier), then weekly by themselves" }
   ]
+  // Subscription User-Agents: some panels send a different format (or
+  // more nodes) to the client they recognise.
+  readonly property var uaOptions: [
+    { value: "", label: "Default" },
+    { value: "v2rayN/7.13.8", label: "v2rayN" },
+    { value: "v2rayNG/1.10.16", label: "v2rayNG" },
+    { value: "Happ/2.0.0", label: "Happ" },
+    { value: "Streisand/1.6.53", label: "Streisand" },
+    { value: "HiddifyNext/2.5.7", label: "Hiddify" },
+    { value: "clash-verge/v2.3.1", label: "Clash Verge" },
+    { value: "sing-box 1.12.0", label: "sing-box" }
+  ]
+  readonly property var geoDaysOptions: [
+    { value: "1", label: "1D", tooltip: "Every day" },
+    { value: "7", label: "7D", tooltip: "Every week (default)" },
+    { value: "30", label: "30D", tooltip: "Every month" },
+    { value: "0", label: "OFF", tooltip: "Only when you press Update" }
+  ]
   readonly property var backupOptions: [
     { value: "copy", label: "COPY", tooltip: "Settings into the clipboard: no subscriptions, no passwords" },
     { value: "paste", label: "PASTE", tooltip: "Settings from the clipboard (an earlier COPY)" }
@@ -194,7 +212,7 @@ Panel {
     if (r === "route") return c === 2 ? "Change the direct country" : "Route " + (c === 1 ? "direct" : "all")
     if (r === "regions") return xray.regions[c] ? xray.regions[c].name : ""
     if (r === "ads") return "Ad blocking " + (xray.adblock ? "on" : "off")
-    if (r === "dns") return "DNS " + (dnsOptions[c] ? dnsOptions[c].tooltip : "")
+    if (r === "dns") return "DNS " + (xray.dns === "custom" ? "own server " + xray.dnsCustom : dnsOptions[dnsIndex()].tooltip)
     if (r === "login") return "Connect at login " + (autoConnect ? "on" : "off")
     if (r === "fragment") return "TLS fragmentation " + (xray.fragment ? "on" : "off")
     if (r === "fragopts") return "Fragmentation parameters"
@@ -212,6 +230,7 @@ Panel {
     if (r === "ua") return "Subscription user agent " + (xray.userAgent || "default")
     if (r === "subupd") return "Subscriptions update " + subUpdateValue
     if (r === "geo") return "Update geo data"
+    if (r === "geodays") return "Geo data refresh " + (xray.geoDays ? "every " + xray.geoDays + " days" : "off")
     if (r === "backup") return c === 1 ? "Paste settings" : "Copy settings"
     if (r === "ruleadd") return "New rule, target " + ruleTargetLabel(ruleTarget)
     if (cursorRule >= 0 && xray.rules[cursorRule]) return "Rule " + xray.rules[cursorRule].value + " " + ruleTargetLabel(xray.rules[cursorRule].target)
@@ -240,6 +259,12 @@ Panel {
     { value: "adguard", label: "ADGUARD", tooltip: "AdGuard, filters ads and trackers" },
     { value: "system", label: "SYS", tooltip: "Your network's own DNS, outside the tunnel: your provider sees the lookups" }
   ]
+  // the dropdown: presets with their address, and your own server once set
+  readonly property var dnsMenu: [
+    { value: "cloudflare", label: "Cloudflare" }, { value: "google", label: "Google" },
+    { value: "quad9", label: "Quad9" }, { value: "adguard", label: "AdGuard" },
+    { value: "system", label: "System" }
+  ].concat(xray.dnsCustom ? [{ value: "custom", label: "Own" }] : [])
   function dnsIndex() { return Math.max(0, dnsOptions.findIndex(function(o) { return o.value === xray.dns })) }
   function chooseDns(v) {
     if (xray.busy) { xray.busyRefused(); return }
@@ -263,10 +288,10 @@ Panel {
   ]
 
   function chipCount(row) {
-    return row === "mode" ? 2 : row === "route" ? 3 : row === "dns" ? dnsOptions.length
+    return row === "mode" ? 2 : row === "route" ? 3 : row === "dns" ? 1
          : row === "ruleadd" ? ruleTargets.length
          : row === "traffic" ? 3 : row === "switches" ? 2 : row === "fragopts" ? 3
-         : row === "auto" ? 2 : row === "log" ? logOptions.length : row === "backup" ? 2 : row === "subupd" ? subUpdateOptions.length
+         : row === "auto" ? 2 : row === "log" ? logOptions.length : row === "backup" ? 2 : row === "subupd" ? subUpdateOptions.length : row === "geodays" ? geoDaysOptions.length
          : row === "regions" ? xray.regions.length
          : row === "subs" ? 1
          : row === "sub" ? (xray.subs[cursorSub] && xray.subs[cursorSub].local ? 1 : 2) : 1
@@ -275,10 +300,10 @@ Panel {
   function currentChip(row) {
     if (row === "mode") return xray.mode === "tun" ? 1 : 0
     if (row === "route") return xray.region ? 1 : 0
-    if (row === "dns") return dnsIndex()
     if (row === "auto") return xray.autoFavorites ? 1 : 0
     if (row === "log") return optIndex(logOptions, xray.loglevel)
     if (row === "subupd") return optIndex(subUpdateOptions, subUpdateValue)
+    if (row === "geodays") return optIndex(geoDaysOptions, String(xray.geoDays))
     if (row === "ruleadd") return Math.max(0, ruleTargets.findIndex(function(o) { return o.value === ruleTarget }))
     if (row !== "regions") return 0
     for (var i = 0; i < xray.regions.length; i++)
@@ -304,7 +329,7 @@ Panel {
     }
     else if (r === "regions" && xray.regions[chipIndex]) pickRegion(xray.regions[chipIndex].code)
     else if (r === "ads") toggleAdblock()
-    else if (r === "dns" && dnsOptions[chipIndex]) chooseDns(dnsOptions[chipIndex].value)
+    else if (r === "dns") { var dd2 = nodeList.headerItem ? nodeList.headerItem.dnsDropdown : null; if (dd2) dd2.open() }
     else if (r === "login") toggleAutoConnect()
     else if (r === "fragment") toggleFragment()
     else if (r === "dnsown") focusDnsField()
@@ -315,8 +340,9 @@ Panel {
     else if (r === "muxc") focusField("muxField")
     else if (r === "lan") guarded(function() { xray.setOption("lan", xray.lan ? "off" : "on", xray.lan ? "Local network access off" : "Local network access on") })
     else if (r === "log") guarded(function() { xray.setOption("loglevel", logOptions[chipIndex].value, "Log level: " + logOptions[chipIndex].label) })
-    else if (r === "ua") focusField("uaField")
+    else if (r === "ua") { var dd = nodeList.headerItem ? nodeList.headerItem.uaDropdown : null; if (dd) dd.open() }
     else if (r === "subupd") guarded(function() { xray.setOption("subupdate", subUpdateOptions[chipIndex].value, "Subscriptions update: " + subUpdateOptions[chipIndex].label) })
+    else if (r === "geodays") guarded(function() { var g = geoDaysOptions[chipIndex].value; xray.setOption("geoupdate", g === "0" ? "off" : g, "Geo data: " + geoDaysOptions[chipIndex].tooltip.toLowerCase()) })
     else if (r === "geo") guarded(function() { xray.updateGeo() })
     else if (r === "backup") guarded(function() { xray.settingsClipboard(chipIndex === 1 ? "paste" : "copy") })
     else if (r === "fragopts") focusField(["fragPackets", "fragLength", "fragInterval"][chipIndex] || "fragPackets")
@@ -782,7 +808,7 @@ Panel {
                                                  || nodeList.headerItem.dnsField.activeFocus
                                                  || nodeList.headerItem.chainField.activeFocus
                                                  || nodeList.headerItem.muxField.activeFocus
-                                                 || nodeList.headerItem.uaField.activeFocus
+                                                 || nodeList.headerItem.uaDropdown.popupOpen || nodeList.headerItem.dnsDropdown.popupOpen
                                                  || nodeList.headerItem.fragFocused))
                || (nodeList.footerItem !== null && nodeList.footerItem.subUrl.activeFocus)
       anchors.fill: parent
@@ -975,7 +1001,7 @@ Panel {
               return pp ? pp.tooltip + " · Enter toggles" : ""
             }
             if (r === "fragopts") return ["packets: tlshello or 1-3", "length: bytes per piece", "interval: ms between pieces"][c] + " · Enter edits"
-            var hintOpts = { auto: root.autoOptions, log: root.logOptions, backup: root.backupOptions, subupd: root.subUpdateOptions, geo: root.geoOptions }
+            var hintOpts = { auto: root.autoOptions, log: root.logOptions, backup: root.backupOptions, subupd: root.subUpdateOptions, geo: root.geoOptions, geodays: root.geoDaysOptions }
             if (hintOpts[r]) {
               var o = hintOpts[r]
               return o[c] ? o[c].tooltip : ""
@@ -984,14 +1010,14 @@ Panel {
             if (r === "mux") return "Fewer handshakes · not Vision, XHTTP, Hysteria2"
             if (r === "muxc") return "Enter edits · streams per connection, 1-1024"
             if (r === "lan") return "Your network can use this VPN, with a password"
-            if (r === "ua") return "Enter edits · empty: default"
+            if (r === "ua") return "Enter opens the list · the next update uses it"
             if (r === "dnsown") return "Enter edits · IP or https/tls/quic URL"
             if (r === "fragopts") return "Enter edits · in a field Enter applies, Esc restores"
             if (r === "fragment") return "Splits the TLS handshake against DPI · not REALITY"
             if (r === "ruleadd") return root.ruleTargets[c].tooltip + " · Enter to type"
             if (root.cursorRule >= 0) return "Enter removes this rule"
             if (r === "login") return "Connects to the selected node when you log in"
-            if (r === "dns") return root.dnsOptions[c].tooltip + (xray.mode === "tun" ? "" : " · used in TUN mode")
+            if (r === "dns") return "Enter opens the list" + (xray.mode === "tun" ? "" : " · used in TUN mode")
             if (r === "ads") return xray.geo ? "ADBLOCK: known ad and tracker domains" : "ADBLOCK needs the geo data packages"
             if (r === "hero") return root.killArmed ? "Enter again: traffic goes direct, unprotected"
                                       : xray.blocked ? "Waiting is safe: nothing leaks. Enter, then Enter again, turns it off"
@@ -1082,7 +1108,8 @@ Panel {
           property alias dnsField: dnsField
           property alias chainField: chainRow.field
           property alias muxField: muxRow.field
-          property alias uaField: uaRow.field
+          property alias uaDropdown: uaDropdown
+          property alias dnsDropdown: dnsDropdown
           property alias fragPackets: fragPacketsField
           property alias fragLength: fragLengthField
           property alias fragInterval: fragIntervalField
@@ -1251,35 +1278,22 @@ Panel {
             RowLayout {
               width: parent.width
               spacing: Style.space(8)
-              RowLabel { text: "Server"; Layout.alignment: Qt.AlignTop; topPadding: Style.space(4) }
-              // five chips do not fit beside the label: they wrap, still in the control column
-              Flow {
-                id: dnsChips
-                Layout.fillWidth: true
-                spacing: Style.space(4)
-                opacity: xray.busy ? 0.45 : 1.0
-                Accessible.role: Accessible.Grouping
-                Accessible.name: "DNS: " + (xray.dns === "custom" ? "own server " + xray.dnsCustom : root.dnsOptions[root.dnsIndex()].tooltip)
-                Accessible.description: "h and l switch"
-                Repeater {
-                  model: root.dnsOptions
-                  delegate: Button {
-                    required property var modelData
-                    required property int index
-                    text: modelData.label
-                    tooltipText: modelData.tooltip
-                    selected: modelData.value === xray.dns
-                    hasCursor: root.cursorRow === "dns" && root.chipIndex === index
-                    bordered: true
-                    implicitHeight: root.ctlHeight
-                    foreground: root.foreground
-                    fontFamily: root.fontFamily
-                    fontSize: Style.font.caption
-                    onClicked: root.chooseDns(modelData.value)
-                    onHovered: function(h) { if (h) root.cursorActive = false }
-                  }
-                }
+              RowLabel { text: "Server" }
+              Dropdown {
+                id: dnsDropdown
+                showLabel: false
+                rowHeight: root.ctlHeight
+                popupRowHeight: root.ctlHeight
+                Layout.preferredWidth: Style.space(150)
+                options: root.dnsMenu
+                value: xray.dns
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                hasCursor: root.cursorRow === "dns"
+                onHovered: function(h) { if (h) root.cursorActive = false }
+                onChanged: function(v) { root.chooseDns(v) }
               }
+              Item { Layout.fillWidth: true }
             }
 
             // Own server: Enter switches DNS to it; the check mark says it is in use.
@@ -1450,21 +1464,42 @@ Panel {
               onChanged: function(v) { root.guarded(function() { xray.setOption("loglevel", v) }) }
             }
 
-            FieldRow {
-              id: uaRow
-              label: "UA"
-              value: xray.userAgent
-              hint: "default"
-              row: "ua"
-              onSubmitted: function(t) { root.guarded(function() { xray.setOption("ua", t === "" ? "default" : t, "User-Agent saved: used at the next update") }) }
+            RowLayout {
+              width: parent.width
+              spacing: Style.space(8)
+              RowLabel { text: "UA" }
+              Dropdown {
+                id: uaDropdown
+                showLabel: false
+                rowHeight: root.ctlHeight            // as tall as the chips beside it
+                popupRowHeight: root.ctlHeight
+                Layout.preferredWidth: Style.space(150)
+                options: root.uaOptions
+                value: xray.userAgent
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                hasCursor: root.cursorRow === "ua"
+                onHovered: function(h) { if (h) root.cursorActive = false }
+                onChanged: function(v) { root.guarded(function() { xray.setOption("ua", v === "" ? "default" : v, "User-Agent saved: used at the next update") }) }
+              }
+              Item { Layout.fillWidth: true }
             }
 
             ChipRow {
               label: "Geo"
               options: root.geoOptions
               row: "geo"
-              trailing: xray.geoOwn ? "weekly" : xray.geo ? "distro" : "missing"
+              trailing: xray.geoOwn ? "downloaded" : xray.geo ? "distro" : "missing"
               onChanged: function(v) { root.guarded(function() { xray.updateGeo() }) }
+            }
+
+            ChipRow {
+              label: "Every"
+              sub: true
+              options: root.geoDaysOptions
+              value: String(xray.geoDays)
+              row: "geodays"
+              onChanged: function(v) { root.guarded(function() { xray.setOption("geoupdate", v === "0" ? "off" : v, "Geo data: " + (v === "0" ? "only by hand" : "every " + v + " days")) }) }
             }
 
             ChipRow {
@@ -2128,10 +2163,11 @@ Panel {
     property string value: ""
     property string row: ""
     property string trailing: ""         // a result beside the chips (speed, geo source)
+    property bool sub: false             // a parameter of the row above: indented label
     signal changed(string v)
     width: parent ? parent.width : 0
     spacing: Style.space(8)
-    RowLabel { text: cr.label }
+    RowLabel { text: cr.label; leftPadding: cr.sub ? Style.space(10) : 0 }
     ChipGroup {
       options: cr.options
       value: cr.value
@@ -2193,28 +2229,35 @@ Panel {
   }
 
   // Group title: more space above than below, optional quiet trailing note.
-  component SectionTitle: RowLayout {
+  // A group title; every group after the first opens with a hairline.
+  component SectionTitle: Column {
     id: sct
     property string text: ""
     property string trailing: ""
     property bool first: false
     width: parent ? parent.width : 0
-    spacing: Style.space(8)
-    PanelSectionHeader {
-      Layout.fillWidth: true
-      topPadding: sct.first ? Math.ceil(fontSize * 0.15) : Style.space(4)   // as a node group header
-      text: sct.text
-      foreground: root.foreground
-      fontFamily: root.fontFamily
-    }
-    Text {
-      textFormat: Text.PlainText
-      visible: sct.trailing !== ""
-      Layout.alignment: Qt.AlignBottom
-      text: sct.trailing
-      color: root.dim
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.caption
+    topPadding: sct.first ? 0 : Style.space(6)
+    spacing: Style.space(6)
+    PanelSeparator { visible: !sct.first; width: parent.width; foreground: root.foreground }
+    RowLayout {
+      width: parent.width
+      spacing: Style.space(8)
+      PanelSectionHeader {
+        Layout.fillWidth: true
+        topPadding: sct.first ? Math.ceil(fontSize * 0.15) : 0
+        text: sct.text
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+      }
+      Text {
+        textFormat: Text.PlainText
+        visible: sct.trailing !== ""
+        Layout.alignment: Qt.AlignBottom
+        text: sct.trailing
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+      }
     }
   }
 

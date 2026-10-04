@@ -62,6 +62,7 @@ Item {
   property var share: null
   property bool geo: false
   property bool geoOwn: false             // a downloaded set (geo update), not the distro's
+  property int geoDays: 7                 // 0: no automatic geo refresh
   property int subUpdate: -1              // hours; -1 the provider's interval, 0 off
   property string speedKey: ""             // the node being measured
   property string speed: ""               // last speed test, e.g. "84.2 Mbit/s"
@@ -360,6 +361,7 @@ Item {
     chainName = typeof d.chainName === "string" ? scrub(d.chainName) : ""
     geo = d.geo === true
     geoOwn = d.geoOwn === true
+    geoDays = typeof d.geoDays === "number" ? d.geoDays : 7
     subUpdate = typeof d.subUpdate === "number" ? d.subUpdate : -1
     tunInstalled = d.tunInstalled === true
     skippedText = Model.skippedLabel(d.skipped)
@@ -680,8 +682,8 @@ Item {
     speed = ""
     speedKey = node && node.key ? node.key : ""
     runLong(args, "speed", 40000,
-            function(d) { speed = d.mbps + " Mbit/s"; return (node ? scrub(node.name) : "Download") + ": " + speed },
-            "Measuring speed…")
+            "", "", undefined,                // the node row shows it: no status line
+            function(resp) { if (resp.ok) speed = resp.data.mbps + " Mbit/s"; refresh() })
   }
   function stopSpeed() { if (speedTesting) try { _long.signal(15) } catch (e) {} }
 
