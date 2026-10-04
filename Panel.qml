@@ -71,10 +71,13 @@ Panel {
   // so the nodes start right under the switch.
   property bool settingsOpen: false      // remembered while the shell runs
   readonly property var settingRows: !xray.reachable || firstRun ? []
-      : ["hero", "settings"].concat(settingsOpen ? ["mode", "route"].concat(regionsOpen ? ["regions"] : [], ["dns", "ads", "login"]) : [])
+      : ["hero", "settings"].concat(settingsOpen ? ["mode", "route"].concat(regionsOpen ? ["regions"] : [],
+          ["dns", "dnsown", "ads", "fragment"], xray.fragment ? ["fragopts"] : [], ["login", "ruleadd"], xray.rules.map(function(r, i) { return "rule" + i })) : [])
   readonly property string settingsSummary: (xray.mode === "tun" ? "TUN" : "PROXY")
       + " · " + (xray.region ? xray.region.code.toUpperCase() + " DIRECT" : "ALL")
       + (xray.adblock ? " · ADBLOCK" : "")
+      + (xray.fragment ? " · FRAG" : "")
+      + (xray.rules.length ? " · " + xray.rules.length + " RULES" : "")
       + " · " + dnsOptions[dnsIndex()].label
   function toggleSettings() {
     var onRow = cursorRow === "settings"
@@ -82,7 +85,41 @@ Panel {
     settingsOpen = !settingsOpen
     if (onRow) nodeIndex = settingRows.indexOf("settings") - settingRows.length
   }
-  readonly property int footerRows: xray.reachable ? 1 + (subsShown ? xray.subs.length : 0) : 0
+  // Settings are a page of their own: while open, nodes and subscriptions step aside.
+  readonly property int footerRows: xray.reachable && !settingsOpen ? 1 + (subsShown ? xray.subs.length : 0) : 0
+  readonly property int cursorRule: cursorRow.indexOf("rule") === 0 && cursorRow !== "ruleadd" ? parseInt(cursorRow.substring(4), 10) : -1
+  // Target for the next rule: picked with the chips (h/l) before typing.
+  property string ruleTarget: "direct"
+  readonly property var ruleTargets: [
+    { value: "direct", label: "DIRECT", tooltip: "Goes around the VPN" },
+    { value: "proxy", label: "VPN", tooltip: "Always through the VPN, also under a DIRECT country" },
+    { value: "block", label: "BLOCK", tooltip: "Never loads" }
+  ]
+  function ruleTargetLabel(v) {
+    for (var i = 0; i < ruleTargets.length; i++) if (ruleTargets[i].value === v) return ruleTargets[i].label
+    return v
+  }
+  function addRule(text) {
+    if (xray.busy) { xray.busyRefused(); return false }
+    var v = String(text || "").trim()
+    if (v === "") return false
+    xray.addRule(ruleTarget, v)
+    return true
+  }
+  function removeRule(i) {
+    if (xray.busy) { xray.busyRefused(); return }
+    xray.removeRule(i)
+  }
+  // Enter in any of the three fields applies all three.
+  function applyFragmentOpts() {
+    if (xray.busy) { xray.busyRefused(); return }
+    var h = nodeList.headerItem
+    if (h) xray.setFragment(true, [h.fragPackets.text, h.fragLength.text, h.fragInterval.text])
+  }
+  function toggleFragment() {
+    if (xray.busy) { xray.busyRefused(); return }
+    xray.setFragment(!xray.fragment)
+  }
   property int chipIndex: 0
   readonly property string cursorRow: !cursorActive ? ""
       : nodeIndex < 0 ? (settingRows[settingRows.length + nodeIndex] || "")
@@ -104,6 +141,11 @@ Panel {
     if (r === "ads") return "Ad blocking " + (xray.adblock ? "on" : "off")
     if (r === "dns") return "DNS " + (dnsOptions[c] ? dnsOptions[c].tooltip : "")
     if (r === "login") return "Connect at login " + (autoConnect ? "on" : "off")
+    if (r === "fragment") return "TLS fragmentation " + (xray.fragment ? "on" : "off")
+    if (r === "fragopts") return "Fragmentation parameters"
+    if (r === "dnsown") return "Own DNS server " + (xray.dnsCustom || "not set")
+    if (r === "ruleadd") return "New rule, target " + ruleTargetLabel(ruleTarget)
+    if (cursorRule >= 0 && xray.rules[cursorRule]) return "Rule " + xray.rules[cursorRule].value + " " + ruleTargetLabel(xray.rules[cursorRule].target)
     if (r === "subs") return "Update all"
     if (r === "sub") { var s = xray.subs[cursorSub]; return s ? (s.title || s.host) : "" }
     return ""
@@ -127,12 +169,19 @@ Panel {
     { value: "google", label: "GOOGLE", tooltip: "Google 8.8.8.8" },
     { value: "quad9", label: "QUAD9", tooltip: "Quad9 9.9.9.9, blocks known malware domains" },
     { value: "adguard", label: "ADGUARD", tooltip: "AdGuard, filters ads and trackers" },
-    { value: "system", label: "SYS", tooltip: "Your network's own DNS, outside the tunnel: your provider sees the lookups" }
+    { value: "system", label: "SYS", tooltip: "Your network's own DNS, outside the tunnel: your provider sees the lookups" },
+    { value: "custom", label: "OWN", tooltip: xray.dnsCustom !== "" ? "Your server " + xray.dnsCustom + ", through the tunnel"
+                                                                     : "Your own server: type it in the line below" }
   ]
   function dnsIndex() { return Math.max(0, dnsOptions.findIndex(function(o) { return o.value === xray.dns })) }
   function chooseDns(v) {
     if (xray.busy) { xray.busyRefused(); return }
+    if (v === "custom" && xray.dnsCustom === "") { focusDnsField(); return }
     if (v !== xray.dns) xray.setDns(v)
+  }
+  function focusDnsField() {
+    var f = nodeList.headerItem ? nodeList.headerItem.dnsField : null
+    if (f) f.forceActiveFocus()
   }
   function toggleAdblock() {
     if (xray.busy) { xray.busyRefused(); return }
@@ -148,6 +197,7 @@ Panel {
 
   function chipCount(row) {
     return row === "mode" ? 2 : row === "route" ? 3 : row === "dns" ? dnsOptions.length
+         : row === "ruleadd" ? ruleTargets.length
          : row === "regions" ? xray.regions.length
          : row === "subs" ? 1
          : row === "sub" ? (xray.subs[cursorSub] && xray.subs[cursorSub].local ? 1 : 2) : 1
@@ -157,6 +207,7 @@ Panel {
     if (row === "mode") return xray.mode === "tun" ? 1 : 0
     if (row === "route") return xray.region ? 1 : 0
     if (row === "dns") return dnsIndex()
+    if (row === "ruleadd") return Math.max(0, ruleTargets.findIndex(function(o) { return o.value === ruleTarget }))
     if (row !== "regions") return 0
     for (var i = 0; i < xray.regions.length; i++)
       if (xray.routing === xray.regions[i].code + "-direct") return i
@@ -167,6 +218,7 @@ Panel {
     if (cursorRow === "") return
     pointerGate.reset()
     chipIndex = Math.max(0, Math.min(chipCount(cursorRow) - 1, chipIndex + dx))
+    if (cursorRow === "ruleadd") ruleTarget = ruleTargets[chipIndex].value
   }
 
   function activateChip() {
@@ -182,6 +234,11 @@ Panel {
     else if (r === "ads") toggleAdblock()
     else if (r === "dns" && dnsOptions[chipIndex]) chooseDns(dnsOptions[chipIndex].value)
     else if (r === "login") toggleAutoConnect()
+    else if (r === "fragment") toggleFragment()
+    else if (r === "dnsown") focusDnsField()
+    else if (r === "fragopts") { var f = nodeList.headerItem ? nodeList.headerItem.fragPackets : null; if (f) f.forceActiveFocus() }
+    else if (r === "ruleadd") focusRuleField()
+    else if (cursorRule >= 0) removeRule(cursorRule)
     else if (r === "subs") { if (xray.subs.length > 0) xray.updateSubscriptions() }
     else if (r === "sub" && xray.subs[cursorSub]) {
       // the Manual group has no Update: its only chip is Remove
@@ -296,7 +353,7 @@ Panel {
 
   // Flat, filtered node list the cursor walks over; the first row of each
   // group carries the group's header text.
-  readonly property var visibleGroups: Model.filterNodes(xray.touch ? xray.touch.groups : [], filterQuery)
+  readonly property var visibleGroups: settingsOpen ? [] : Model.filterNodes(xray.touch ? xray.touch.groups : [], filterQuery)
   readonly property var visibleRows: {
     var out = []
     for (var g = 0; g < visibleGroups.length; g++) {
@@ -413,6 +470,7 @@ Panel {
   }
 
   function startTypeAhead(t) {
+    if (settingsOpen) toggleSettings()        // typing filters the nodes
     var search = nodeList.headerItem ? nodeList.headerItem.search : null
     if (!search) return
     if (t !== "/") search.text = t          // the field's onTextChanged sets filterQuery
@@ -439,7 +497,13 @@ Panel {
     return Math.floor(sec / 60) + ":" + ("0" + sec % 60).slice(-2)
   }
 
+  function focusRuleField() {
+    var f = nodeList.headerItem ? nodeList.headerItem.ruleField : null
+    if (f) f.forceActiveFocus()
+  }
+
   function focusSubUrl() {
+    if (settingsOpen) toggleSettings()
     subsOpen = true
     Qt.callLater(function() {
       if (!nodeList.footerItem) return
@@ -609,7 +673,9 @@ Panel {
       id: keyCatcher
       readonly property real sideInset: Math.max(0, Style.spacing.popupPadding - panel.padding)
       // Inline editors get every key (kit contract); they handle Up/Down/Enter/Esc themselves.
-      blocked: (nodeList.headerItem !== null && nodeList.headerItem.search.activeFocus)
+      blocked: (nodeList.headerItem !== null && (nodeList.headerItem.search.activeFocus || nodeList.headerItem.ruleField.activeFocus
+                                                 || nodeList.headerItem.dnsField.activeFocus
+                                                 || nodeList.headerItem.fragFocused))
                || (nodeList.footerItem !== null && nodeList.footerItem.subUrl.activeFocus)
       anchors.fill: parent
       anchors.leftMargin: sideInset
@@ -794,7 +860,12 @@ Panel {
             var r = root.cursorRow, c = root.chipIndex
             if (r === "mode") return root.modeOptions[c].tooltip
             if (r === "route") return c < 2 ? root.routeOptions[c].tooltip : "Change the direct country"
-            if (r === "settings") return root.settingsOpen ? "Enter hides the settings" : "Enter shows mode, route, DNS, ad blocking and login"
+            if (r === "settings") return root.settingsOpen ? "Enter goes back to the nodes" : "Enter opens the settings"
+            if (r === "dnsown") return "Enter edits · an IP, or https:// tls:// tcp:// quic:// h2c:// with a host"
+            if (r === "fragopts") return "Enter edits · in a field Enter applies, Esc restores"
+            if (r === "fragment") return "Splits the TLS handshake so DPI can't read it · TLS nodes only, not REALITY"
+            if (r === "ruleadd") return root.ruleTargets[c].tooltip + " · Enter, then type a domain, IP or geosite:…"
+            if (root.cursorRule >= 0) return "Enter removes this rule"
             if (r === "login") return "Connects to the selected node when you log in"
             if (r === "dns") return root.dnsOptions[c].tooltip + (xray.mode === "tun" ? "" : " · used in TUN mode")
             if (r === "ads") return xray.geo ? "ADBLOCK: known ad and tracker domains" : "ADBLOCK needs the geo data packages"
@@ -882,6 +953,12 @@ Panel {
 
         header: Column {
           property alias search: searchField
+          property alias ruleField: ruleField
+          property alias dnsField: dnsField
+          property alias fragPackets: fragPacketsRow.field
+          property alias fragLength: fragLengthRow.field
+          property alias fragInterval: fragIntervalRow.field
+          readonly property bool fragFocused: fragPackets.activeFocus || fragLength.activeFocus || fragInterval.activeFocus
           width: nodeList.width
           spacing: Style.space(4)
           bottomPadding: Style.space(2)
@@ -902,9 +979,9 @@ Panel {
             }
 
             TextActionButton {
-              label: root.settingsSummary + (root.settingsOpen ? "  󰅃" : "  󰅀")
-              a11yName: (root.settingsOpen ? "Hide settings. " : "Show settings. ") + "Now: " + root.settingsSummary
-              tooltip: root.settingsOpen ? "Hide the settings" : "Change mode, route, DNS, ad blocking or login"
+              label: root.settingsOpen ? "󰁍  NODES" : root.settingsSummary + "  󰅂"
+              a11yName: root.settingsOpen ? "Back to the nodes" : "Open settings. Now: " + root.settingsSummary
+              tooltip: root.settingsOpen ? "Back to the nodes" : "Mode, route, DNS, ad blocking, fragmentation, rules, login"
               hasCursor: root.cursorRow === "settings"
               onClicked: root.toggleSettings()
             }
@@ -1070,6 +1147,36 @@ Panel {
               Item { Layout.fillWidth: true }
             }
 
+            // OWN: any server Xray can ask, through the tunnel.
+            RowLayout {
+              width: parent.width
+              spacing: Style.space(8)
+
+              Item { Layout.preferredWidth: root.settingLabelWidth }
+
+              RowField {
+                id: dnsField
+                Layout.fillWidth: true
+                icon: "󰇖"
+                text: xray.dnsCustom
+                placeholderText: "Own DNS: 9.9.9.9 or https://dns.example/dns-query"
+                maximumLength: 200
+                Accessible.name: "Own DNS server"
+                Keys.onPressed: function(event) {
+                  if (event.key === Qt.Key_Escape) {
+                    text = xray.dnsCustom
+                    keyCatcher.forceActiveFocus()
+                    event.accepted = true
+                  } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                    if (xray.busy) xray.busyRefused()
+                    else if (text.trim() !== "") xray.setDns("custom", text.trim())
+                    keyCatcher.forceActiveFocus()
+                    event.accepted = true
+                  }
+                }
+              }
+            }
+
             SettingToggle {
               label: "ADBLOCK"
               a11yName: "Ad blocking"
@@ -1091,11 +1198,125 @@ Panel {
               onFlip: root.toggleAutoConnect()
             }
 
+            SettingToggle {
+              label: "FRAGMENT"
+              a11yName: "TLS fragmentation"
+              checked: xray.fragment
+              busy: xray.busy
+              hasCursor: root.cursorRow === "fragment"
+              note: "Split the TLS handshake against DPI (TLS nodes, not REALITY)"
+              onFlip: root.toggleFragment()
+            }
+
+            // Xray's freedom.fragment: which packets to split, piece size in
+            // bytes, pause between pieces in ms. Shown only while it is on.
+            FragRow { id: fragPacketsRow; key: "packets"; label: "PACKETS"; hint: "tlshello, or a packet range like 1-3" }
+            FragRow { id: fragLengthRow; key: "length"; label: "LENGTH"; hint: "piece size in bytes: 100-200" }
+            FragRow { id: fragIntervalRow; key: "interval"; label: "INTERVAL"; hint: "pause between pieces in ms: 10-20" }
+
+            PanelSeparator { foreground: root.foreground }
+
+            // Own rules, checked before the presets: a domain, an IP or
+            // network, geosite:… or geoip:…, each sent DIRECT, via the VPN or blocked.
+            RowLayout {
+              width: parent.width
+              spacing: Style.space(8)
+
+              PanelSectionHeader {
+                text: "RULES"
+                Layout.preferredWidth: root.settingLabelWidth
+                Layout.alignment: Qt.AlignVCenter
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+
+              ChipGroup {
+                options: root.ruleTargets
+                value: root.ruleTarget
+                cursorIndex: root.cursorRow === "ruleadd" ? root.chipIndex : -1
+                Accessible.role: Accessible.Grouping
+                Accessible.name: "New rule target: " + root.ruleTargetLabel(root.ruleTarget)
+                Accessible.description: "Options: direct, VPN, block. h and l switch, Enter types the rule"
+                Accessible.focusable: true
+                Accessible.focused: cursorIndex >= 0
+                onChanged: function(v) { root.ruleTarget = v; ruleField.forceActiveFocus() }
+                onHovered: function(i, h) { if (h) root.cursorActive = false }
+              }
+
+              Item { Layout.fillWidth: true }
+            }
+
+            RowField {
+              id: ruleField
+              width: parent.width
+              icon: "󰐕"
+              Accessible.name: "New rule, " + root.ruleTargetLabel(root.ruleTarget)
+              placeholderText: "example.com, 10.0.0.0/8, geosite:… → " + root.ruleTargetLabel(root.ruleTarget)
+              maximumLength: 253
+              Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_Escape) {
+                  text = ""
+                  keyCatcher.forceActiveFocus()
+                  event.accepted = true
+                } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                  if (root.addRule(text)) text = ""
+                  event.accepted = true
+                }
+              }
+            }
+
+            Repeater {
+              model: xray.rules
+              delegate: RowLayout {
+                required property var modelData
+                required property int index
+                width: parent ? parent.width : 0
+                spacing: Style.space(8)
+
+                PanelSectionHeader {
+                  text: root.ruleTargetLabel(modelData.target)
+                  Layout.preferredWidth: root.settingLabelWidth
+                  Layout.alignment: Qt.AlignVCenter
+                  foreground: modelData.target === "block" ? root.errorColor : root.foreground
+                  fontFamily: root.fontFamily
+                }
+
+                Text {
+                  textFormat: Text.PlainText
+                  Layout.fillWidth: true
+                  text: modelData.value
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  elide: Text.ElideMiddle
+                }
+
+                TextActionButton {
+                  label: "󰅖"
+                  a11yName: "Remove rule " + modelData.value
+                  tooltip: "Remove this rule"
+                  enabled: !xray.busy
+                  hasCursor: root.cursorRule === index
+                  onClicked: root.removeRule(index)
+                }
+              }
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              visible: xray.rules.length === 0
+              width: parent.width
+              text: "No rules yet. They win over ROUTE and ADBLOCK."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              wrapMode: Text.WordWrap
+            }
           }
 
-          PanelSeparator { visible: xray.reachable && !root.firstRun; foreground: root.foreground }
+          PanelSeparator { visible: xray.reachable && !root.firstRun && !root.settingsOpen; foreground: root.foreground }
           Column {
-            visible: xray.reachable
+            visible: xray.reachable && !root.settingsOpen
             width: parent.width
             spacing: Style.space(6)
 
@@ -1257,6 +1478,8 @@ Panel {
 
         footer: Column {
           property alias subUrl: subUrlField
+          visible: !root.settingsOpen
+          height: visible ? implicitHeight : 0
           width: nodeList.width
           spacing: Style.space(8)
           topPadding: Style.space(8)
@@ -1516,6 +1739,45 @@ Panel {
 
   // A settings row: label, switch, and a note that toggles too (a small
   // switch is a small target). `usable` false greys it and blocks clicks.
+  // One Xray freedom.fragment parameter, shown only while fragmentation is on.
+  component FragRow: RowLayout {
+    id: fr
+    property string key: ""
+    property string label: ""
+    property string hint: ""
+    property alias field: frField
+    visible: xray.fragment
+    width: parent ? parent.width : 0
+    spacing: Style.space(8)
+    PanelSectionHeader {
+      text: fr.label
+      Layout.preferredWidth: root.settingLabelWidth
+      Layout.alignment: Qt.AlignVCenter
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+    }
+    RowField {
+      id: frField
+      Layout.fillWidth: true
+      leftPadding: Style.space(8)
+      text: xray.fragmentOpts[fr.key] || ""
+      placeholderText: fr.hint
+      maximumLength: 16
+      Accessible.name: "Fragmentation " + fr.key + ", " + fr.hint
+      Keys.onPressed: function(event) {
+        if (event.key === Qt.Key_Escape) {
+          text = xray.fragmentOpts[fr.key] || ""
+          keyCatcher.forceActiveFocus()
+          event.accepted = true
+        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+          root.applyFragmentOpts()
+          keyCatcher.forceActiveFocus()
+          event.accepted = true
+        }
+      }
+    }
+  }
+
   component SettingToggle: RowLayout {
     id: st
     property string label: ""

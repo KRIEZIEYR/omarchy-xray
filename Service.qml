@@ -41,7 +41,11 @@ Item {
     return null
   }
   property bool adblock: false
+  property bool fragment: false
+  property var fragmentOpts: ({ packets: "tlshello", length: "100-200", interval: "10-20" })
+  property var rules: []                 // [{target: direct|proxy|block, value}]
   property string dns: "cloudflare"
+  property string dnsCustom: ""
   property bool geo: false
   property bool tunInstalled: false
   property var subs: []
@@ -259,7 +263,8 @@ Item {
                   "latency test": "The latency test", "update": "The subscription update",
                   "import": "Adding", "remove": "Removing the subscription",
                   "mode switch": "Switching mode", "TUN setup": "TUN setup", "routing": "Applying routing",
-                  "adblock": "Applying ad blocking", "dns": "Changing DNS", "status": "Reading status" }
+                  "adblock": "Applying ad blocking", "dns": "Changing DNS",
+                  "fragment": "Applying fragmentation", "rule": "Changing the rules", "status": "Reading status" }
     return names[label] || "The last command"
   }
 
@@ -318,7 +323,11 @@ Item {
     routing = String(d.routing || "global")
     if (regions.length === 0 && d.regions && d.regions.slice) regions = d.regions.slice(0, 32)   // static list
     adblock = d.adblock === true
+    fragment = d.fragment === true
+    if (d.fragmentOpts && JSON.stringify(d.fragmentOpts) !== JSON.stringify(fragmentOpts)) fragmentOpts = d.fragmentOpts
+    rules = Array.isArray(d.rules) ? d.rules.slice(0, 200) : []
     if (typeof d.dns === "string") dns = d.dns
+    if (typeof d.dnsCustom === "string") dnsCustom = d.dnsCustom
     geo = d.geo === true
     tunInstalled = d.tunInstalled === true
     skippedText = Model.skippedLabel(d.skipped)
@@ -564,13 +573,35 @@ Item {
     return preset.substring(0, 2).toUpperCase()
   }
 
-  function setDns(name) {
-    runLong([manager, "dns", name], "dns", 120000, "DNS: " + name, "Changing DNS…")
+  function setDns(name, addr) {
+    var args = [manager, "dns", name]
+    if (name === "custom" && addr) args.push(String(addr).trim().slice(0, 200))
+    runLong(args, "dns", 120000, "DNS: " + (name === "custom" ? (addr || dnsCustom) : name), "Changing DNS…")
   }
 
   function setAdblock(on) {
     runLong([manager, "adblock", on ? "on" : "off"], "adblock", 120000,
             on ? "Ad blocking on" : "Ad blocking off", on ? "Turning ad blocking on…" : "Turning ad blocking off…")
+  }
+
+  // opts: [packets, length, interval]; the manager validates them
+  function setFragment(on, opts) {
+    var args = [manager, "fragment", on ? "on" : "off"]
+    if (opts) args = args.concat(opts.map(function(v) { return String(v).trim().slice(0, 16) }))
+    runLong(args, "fragment", 120000,
+            on ? "TLS fragmentation on" + (opts ? ": " + opts.join(" · ") : "") : "TLS fragmentation off",
+            "Applying fragmentation…")
+  }
+
+  // The value goes through argv: a domain or a network, never a secret.
+  function addRule(target, value) {
+    var v = String(value || "").trim().toLowerCase()
+    if (v === "" || v.length > 253 || /\s/.test(v)) return
+    runLong([manager, "rule", "add", target, v], "rule", 120000, v + " → " + target.toUpperCase(), "Adding the rule…")
+  }
+
+  function removeRule(index) {
+    runLong([manager, "rule", "rm", String(index)], "rule", 120000, "Rule removed", "Removing the rule…")
   }
 
   // The journal of both user units, in Omarchy's floating terminal.

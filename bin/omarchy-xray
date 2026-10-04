@@ -15,8 +15,15 @@ the two explicit TUN install steps):
   mode <proxy|tun>   switch mode (TUN needs the one-time `tun-setup`)
   routing <preset>   global | <region>-direct (ru by kz uz tm cn ir tr ae sa eg pk vn mm)
   adblock <on|off>   block geosite:category-ads-all
+  fragment <on|off> [packets length interval]
+                     split the TLS ClientHello of TLS nodes (DPI; not REALITY/QUIC);
+                     defaults: tlshello 100-200 10-20 (ranges "N" or "N-M")
+  rule add <direct|proxy|block> <domain|ip/cidr|geosite:x|geoip:x>
+  rule rm <index>    own routing rules, checked before the presets
   dns <preset>       DNS the TUN uses: cloudflare, google, quad9, adguard (DoH through
                      the tunnel) or system (the network's own DNS, outside the tunnel)
+  dns custom <addr>  your own server through the tunnel: an IP, or https:// tls://
+                     tcp:// quic:// h2c:// with an IP or a host name
   on | off | restart start / stop / restart the tunnel
   test [key…]        latency-test nodes (batched, parallel, bounded)
   status             machine-readable JSON for the widget (secrets redacted)
@@ -134,7 +141,24 @@ DNS_PRESETS = {
     "quad9": "https://9.9.9.9/dns-query",
     "adguard": "https://94.140.14.14/dns-query",     # also filters ads and trackers
     "system": None,       # the link's own resolvers, asked directly (not through the tunnel)
+    "custom": None,       # st["dnsCustom"], through the tunnel
 }
+DNS_SCHEMES = ("https", "tls", "tcp", "quic", "h2c")
+
+
+def dns_custom_ok(addr):
+    """Your own DNS server as Xray takes it: a bare IP or scheme://host[:port][/path]."""
+    if not isinstance(addr, str) or not 0 < len(addr) <= 200 or _CTRL_RE.search(addr) or " " in addr:
+        return False
+    if is_ip(addr):
+        return True
+    u = urllib.parse.urlsplit(addr)
+    try:
+        u.port
+        check_host(u.hostname)
+    except ValueError:
+        return False
+    return u.scheme in DNS_SCHEMES and not u.query and not u.fragment and not u.username
 PRIVATE = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16",
            "127.0.0.0/8", "::1/128", "fc00::/7", "fe80::/10"]
 # Direct-routing regions (countries with heavy censorship): the chosen one's
@@ -223,7 +247,7 @@ SS_METHODS = {"aes-128-gcm": "aes-128-gcm", "aes-256-gcm": "aes-256-gcm",
               "2022-blake3-aes-256-gcm": "2022-blake3-aes-256-gcm",
               "2022-blake3-chacha20-poly1305": "2022-blake3-chacha20-poly1305"}
 PROTOCOLS = {"vless", "vmess", "trojan", "shadowsocks", "hysteria"}
-RESERVED_TAGS = {"proxy", "direct", "block", "dns-out", "tun-in", "socks-in",
+RESERVED_TAGS = {"proxy", "direct", "block", "tls-fragment", "dns-out", "tun-in", "socks-in",
                  "http-in", "auto"}
 
 
@@ -516,6 +540,17 @@ def load_state():
     if st.get("routing") != "global" and not region_of(st.get("routing")):
         st["routing"] = "global"
     st["adblock"] = st.get("adblock") is True
+    st["fragment"] = st.get("fragment") is True
+    fo = st.get("fragmentOpts") if isinstance(st.get("fragmentOpts"), dict) else {}
+    st["fragmentOpts"] = {k: fo[k] if fragment_opt_ok(k, fo.get(k)) else v
+                          for k, v in FRAGMENT_DEFAULTS.items()}
+    rules = st.get("rules") if isinstance(st.get("rules"), list) else []
+    st["rules"] = [r for r in rules if isinstance(r, dict) and r.get("target") in RULE_TARGETS
+                   and isinstance(r.get("value"), str) and rule_match(r["value"])][:MAX_RULES]
+    if not dns_custom_ok(st.get("dnsCustom")):
+        st.pop("dnsCustom", None)
+        if st.get("dns") == "custom":
+            st["dns"] = "cloudflare"
     if st.get("dns") not in DNS_PRESETS:
         st["dns"] = "cloudflare"
     if not isinstance(st.get("skipped"), dict):
@@ -1101,14 +1136,16 @@ def parse_hy2(link):
     link = re.sub(r"^hy2://", "hysteria2://", link, flags=re.I)
     u = urllib.parse.urlsplit(link)
     host = check_host(u.hostname)
+    hop = ""
     try:
         port = check_port(u.port, 443)
     except ValueError:
-        # port hopping ("443,20000-30000"): use the first port
-        m = re.search(r":(\d{1,5})(?:[,-]\d{1,5})*$", u.netloc)
+        # port hopping ("443,20000-30000"): dial the first, hop over all
+        m = re.search(r":((\d{1,5})(?:[,-]\d{1,5})*)$", u.netloc)
         if not m:
             raise ValueError("bad port")
-        port = check_port(m.group(1))
+        port = check_port(m.group(2))
+        hop = m.group(1)
     auth = urllib.parse.unquote(u.username or "")
     if u.password is not None:
         auth += ":" + urllib.parse.unquote(u.password)
@@ -1120,12 +1157,22 @@ def parse_hy2(link):
     ts.pop("fingerprint", None)                   # QUIC: uTLS fingerprints do not apply
     s = {"network": "hysteria", "security": "tls", "tlsSettings": ts,
          "hysteriaSettings": {"version": 2, "auth": auth}}
+    hop = q.get("mport") or hop
+    if hop and not re.fullmatch(r"\d{1,5}(-\d{1,5})?(,\d{1,5}(-\d{1,5})?){0,31}", hop):
+        raise ValueError("bad port range")
+    masks = []
+    if hop:
+        # udphop dials itself, so the core wants it first (finalmask: HandleDial)
+        masks.append({"type": "udphop", "settings": {"mode": "intervalRemote", "interval": 30,
+                                                     "remotePorts": hop}})
     obfs = (q.get("obfs") or "").lower()
     if obfs:
         if obfs != "salamander":
             raise Skip("unsupported hysteria2 obfs: " + obfs[:24])
         pw = _f(q.get("obfs-password") or "", "obfs-password", MAX_STR)
-        s["finalmask"] = {"udp": [{"type": "salamander", "settings": {"password": pw}}]}
+        masks.append({"type": "salamander", "settings": {"password": pw}})
+    if masks:
+        s["finalmask"] = {"udp": masks}
     ob = {"protocol": "hysteria",
           "settings": {"version": 2, "address": host, "port": port},
           "streamSettings": s}
@@ -1456,6 +1503,54 @@ def node_outbound(n, tag, mode, patch=None, iface=None):
     return ob
 
 
+RULE_TARGETS = ("direct", "proxy", "block")
+MAX_RULES = 200
+_DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?\.)*[a-z0-9-]{1,63}$")
+
+
+def rule_match(value):
+    """A user rule's value -> ("domain"|"ip", xray matcher), or None."""
+    v = value.strip().lower()
+    if re.fullmatch(r"geo(site|ip):[a-z0-9!@._-]{1,64}", v):
+        return ("domain" if v.startswith("geosite:") else "ip"), v
+    try:
+        return "ip", str(ipaddress.ip_network(v, strict=False))
+    except ValueError:
+        pass
+    v = v.removeprefix("domain:").strip(".")
+    return ("domain", "domain:" + v) if _DOMAIN_RE.match(v) else None
+
+
+def user_rules(st, target):
+    """One xray rule per user rule, in the user's order."""
+    out = []
+    for r in st.get("rules", []):
+        kind, m = rule_match(r["value"])
+        to = target if r["target"] == "proxy" else {"outboundTag": r["target"]}
+        out.append(dict({kind: [m]}, **to))
+    return out
+
+
+FRAGMENT_DEFAULTS = {"packets": "tlshello", "length": "100-200", "interval": "10-20"}
+
+
+def fragment_opt_ok(key, v):
+    """packets: tlshello or a packet range; length/interval: "N" or "N-M"."""
+    if not isinstance(v, str) or key not in FRAGMENT_DEFAULTS:
+        return False
+    if key == "packets" and v == "tlshello":
+        return True
+    m = re.fullmatch(r"(\d{1,4})(?:-(\d{1,4}))?", v)
+    return bool(m) and int(m.group(1)) <= int(m.group(2) or m.group(1)) \
+        and (key == "interval" or int(m.group(1)) > 0)
+
+
+def fragment_target(ob):
+    """TLS over TCP only: REALITY and QUIC transports gain nothing from it."""
+    ss = ob.get("streamSettings") or {}
+    return ss.get("security") == "tls" and ss.get("network") not in ("hysteria", "kcp")
+
+
 def build_config(st, custom=None):
     custom = custom or {}
     mode = st["mode"]
@@ -1484,6 +1579,14 @@ def build_config(st, custom=None):
         # resolve via Xray's DNS instead of the system resolver pointed into the TUN.
         direct["streamSettings"] = {"sockopt": {"domainStrategy": "UseIP"}}
     outbounds += [direct, {"tag": "block", "protocol": "blackhole"}]
+    if st.get("fragment"):
+        frag = [ob for ob in outbounds if fragment_target(ob)]
+        if frag:
+            opts = st.get("fragmentOpts") or FRAGMENT_DEFAULTS
+            outbounds.append(dict(copy.deepcopy(direct), tag="tls-fragment",
+                                  settings={"fragment": dict(opts)}))
+        for ob in frag:
+            ob["streamSettings"].setdefault("sockopt", {})["dialerProxy"] = "tls-fragment"
 
     rules, conf = [], {}
     iface = None
@@ -1495,7 +1598,11 @@ def build_config(st, custom=None):
         # No rules: A/AAAA go to the built-in DNS, other query types get an
         # immediate empty answer (docs: outbounds/dns, fallback rule).
         outbounds.append({"tag": "dns-out", "protocol": "dns"})
-        hosts = sorted({n["host"] for n in members if not is_ip(n["host"])})
+        hosts = {n["host"] for n in members if not is_ip(n["host"])}
+        own = st.get("dnsCustom") if st.get("dns") == "custom" else ""
+        if own and not is_ip(own) and not is_ip(urllib.parse.urlsplit(own).hostname or ""):
+            hosts.add(urllib.parse.urlsplit(own).hostname)    # the DoH/DoT name itself
+        hosts = sorted(hosts)
         servers = []
         if hosts:
             for b in bootstrap_dns(custom):
@@ -1505,7 +1612,8 @@ def build_config(st, custom=None):
         if system:
             servers += bootstrap_dns(custom)
         else:
-            servers.append(DNS_PRESETS.get(st.get("dns")) or DNS_PRESETS["cloudflare"])
+            servers.append((st.get("dnsCustom") if st.get("dns") == "custom" else DNS_PRESETS.get(st.get("dns")))
+                           or DNS_PRESETS["cloudflare"])
         conf["dns"] = {"servers": servers, "tag": "dns-internal"}
         rules += [{"inboundTag": ["socks-in"], "port": "53", "outboundTag": "dns-out"},
                   {"inboundTag": ["dns-bootstrap"], "outboundTag": "direct"},
@@ -1515,6 +1623,7 @@ def build_config(st, custom=None):
     croute = custom.get("routing") if isinstance(custom.get("routing"), dict) else {}
     if isinstance(croute.get("rules"), list):
         rules += copy.deepcopy(croute["rules"])
+    rules += user_rules(st, target)
     if st["adblock"] and geo:
         rules.append({"domain": ["geosite:category-ads-all"], "outboundTag": "block"})
     rules.append({"ip": ["geoip:private"] if geo else PRIVATE, "outboundTag": "direct"})
@@ -1964,10 +2073,48 @@ def cmd_adblock(value):
     out({"ok": True, "adblock": st["adblock"]})
 
 
-def cmd_dns(name):
+def cmd_fragment(args):
+    if args[:1] not in (["on"], ["off"]) or len(args) not in (1, 4):
+        die("usage: omarchy-xray fragment on|off [packets length interval]")
+    st = load_state()
+    st["fragment"] = args[0] == "on"
+    if len(args) == 4:
+        opts = dict(zip(("packets", "length", "interval"), args[1:]))
+        for k, v in opts.items():
+            if not fragment_opt_ok(k, v):
+                die("fragment %s: %r is not valid (%s)" % (k, v[:32], "tlshello or N-M" if k == "packets" else "N or N-M"))
+        st["fragmentOpts"] = opts
+    _apply(st)
+    out({"ok": True, "fragment": st["fragment"], "fragmentOpts": st["fragmentOpts"]})
+
+
+def cmd_rule(args):
+    st = load_state()
+    if args[:1] == ["add"] and len(args) == 3 and args[1] in RULE_TARGETS:
+        if rule_match(args[2]) is None:
+            die("not a domain, IP/CIDR, geosite:… or geoip:…: " + args[2][:64])
+        if len(st["rules"]) >= MAX_RULES:
+            die("too many rules")
+        if args[2].startswith("geo") and asset_dir() is None:
+            die("geosite:/geoip: rules need the geo data packages")
+        st["rules"].append({"target": args[1], "value": args[2].strip().lower()})
+    elif args[:1] == ["rm"] and len(args) == 2 and args[1].isdigit() and int(args[1]) < len(st["rules"]):
+        del st["rules"][int(args[1])]
+    else:
+        die("usage: omarchy-xray rule add <direct|proxy|block> <value> | rule rm <index>")
+    _apply(st)
+    out({"ok": True, "rules": st["rules"]})
+
+
+def cmd_dns(name, addr=""):
     if name not in DNS_PRESETS:
         die("dns must be one of: " + ", ".join(DNS_PRESETS))
     st = load_state()
+    if name == "custom":
+        addr = addr.strip() or st.get("dnsCustom", "")
+        if not dns_custom_ok(addr):
+            die("custom DNS: an IP, or %s://host[:port][/path]" % "|".join(DNS_SCHEMES))
+        st["dnsCustom"] = addr
     st["dns"] = name
     if st["mode"] == "tun":
         _apply(st)
@@ -2236,7 +2383,11 @@ def cmd_status():
                      "flag": "".join(chr(0x1F1E6 + ord(ch) - 97) for ch in c)}
                     for c, v in REGIONS.items()],
         "adblock": st["adblock"],
+        "fragment": st["fragment"],
+        "fragmentOpts": st["fragmentOpts"],
+        "rules": st["rules"],
         "dns": st["dns"],
+        "dnsCustom": st.get("dnsCustom", ""),
         "geo": asset_dir() is not None,
         "xray": os.path.isfile(XRAY),
         "tunInstalled": tun_installed(),
@@ -2758,7 +2909,7 @@ def _rebind():
 # --- main --------------------------------------------------------------------
 
 ROOT_COMMANDS = {"tun-install", "tun-uninstall"}
-LOCKED_COMMANDS = {"import", "subremove", "update", "select", "mode", "routing", "adblock", "dns",
+LOCKED_COMMANDS = {"import", "subremove", "update", "select", "mode", "routing", "adblock", "fragment", "rule", "dns",
                    "on", "restart", "tun-remove", "cleanup"}
 _LOCK_FD = None
 
@@ -2782,7 +2933,7 @@ def _lock():
 def main():
     args = sys.argv[1:]
     if not args:
-        die("usage: omarchy-xray <import|subremove|update|select|mode|routing|adblock|dns|on|off|"
+        die("usage: omarchy-xray <import|subremove|update|select|mode|routing|adblock|fragment|rule|dns|on|off|"
             "restart|test|status|logs|doctor|tun-setup|tun-remove|cleanup> [arg]")
     cmd, rest = args[0], args[1:]
     arg = rest[0] if rest else ""
@@ -2798,7 +2949,9 @@ def main():
         "mode": lambda: cmd_mode(arg),
         "routing": lambda: cmd_routing(arg),
         "adblock": lambda: cmd_adblock(arg),
-        "dns": lambda: cmd_dns(arg),
+        "fragment": lambda: cmd_fragment(rest[:4]),
+        "rule": lambda: cmd_rule(rest[:3]),
+        "dns": lambda: cmd_dns(arg, rest[1] if len(rest) > 1 else ""),
         "on": cmd_on,
         "off": cmd_off,
         "restart": cmd_restart,

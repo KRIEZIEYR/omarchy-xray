@@ -24,7 +24,7 @@ commands and reads JSON back.
 - **Protocols**: VLESS, VMess, Trojan, Shadowsocks (incl. 2022), Hysteria2 share links and Xray-JSON subscriptions (Remnawave/Marzban style), every transport the current core supports ([table](#protocols-and-transports)).
 - **Auto**: up to 32 nodes (best tested latency first) behind a `leastPing` balancer fed by Xray's observatory (`generate_204` every minute).
 - **Modes**: proxy (no privileges) and TUN (whole system, one-time setup).
-- **Settings** (one summary row, expands): routing **ALL** / **<CC> DIRECT**, **DNS** (Cloudflare, Google, Quad9, AdGuard or the network's own, TUN only), **Adblock**, **Login** (connect when you log in; off, every login starts with the VPN off and leftover proxy settings cleared).
+- **Settings** (a page of its own, opened from the summary row): routing **ALL** / **<CC> DIRECT**, **DNS** (Cloudflare, Google, Quad9, AdGuard, the network's own, or **OWN**: any IP or `https://`/`tls://`/`tcp://`/`quic://`/`h2c://` server through the tunnel; TUN only), **Adblock**, **Fragment** (splits the TLS ClientHello of TLS nodes against DPI; not REALITY or QUIC), **Rules** (a domain, IP/CIDR, `geosite:…` or `geoip:…` sent DIRECT, through the VPN or blocked, checked before the presets), **Login** (connect when you log in; off, every login starts with the VPN off and leftover proxy settings cleared).
 - **Subscriptions**: traffic used/total and expiry (`subscription-userinfo`), `profile-title`, refresh every `profile-update-interval` (default 24 h); fetched through the tunnel when direct is blocked. **Update all** shows `Fail N` when some fail.
 - **Latency**: batched, one xray process per 32 nodes; runs 20 s after the shell starts and every 30 min. **Test** shows `Fail N` for nodes that did not answer.
 - **Bar icon**: click opens the panel, right-click connects/disconnects, middle-click refreshes; bright when on, dimmed when off.
@@ -52,7 +52,7 @@ Commands take Ctrl so typing never triggers them; just type to filter (`/` first
 | `vmess://` | VMess (base64 JSON and `vmess://uuid@host` forms) |
 | `trojan://` | Trojan |
 | `ss://` | Shadowsocks: SIP002, legacy base64, 2022-blake3-* (Xray has no plugins) |
-| `hysteria2://`, `hy2://` | Hysteria2 (`auth`, `sni`, `obfs=salamander`, `pinSHA256`; port hopping uses the first port) |
+| `hysteria2://`, `hy2://` | Hysteria2 (`auth`, `sni`, `obfs=salamander`, `pinSHA256`; port hopping `443,20000-30000` or `mport=` via Xray's `udphop`, every 30 s) |
 
 | `type=` | Transport | Notes |
 |---|---|---|
@@ -136,7 +136,11 @@ omarchy-xray on | off | restart
 omarchy-xray mode proxy|tun
 omarchy-xray routing global|<region>-direct   # e.g. kz-direct
 omarchy-xray dns cloudflare|google|quad9|adguard|system
+omarchy-xray dns custom https://dns.example/dns-query   # or an IP, tls://…, quic://…
 omarchy-xray adblock on|off
+omarchy-xray fragment on|off [packets length interval]   # e.g. on tlshello 100-200 10-20
+omarchy-xray rule add direct|proxy|block example.com   # or 10.0.0.0/8, geosite:…, geoip:…
+omarchy-xray rule rm 0
 omarchy-xray update [index]         # all subscriptions or one
 omarchy-xray test [key…]            # latency (first 200 nodes or the given keys, 10 min cap)
 omarchy-xray logs [n] | doctor | cleanup

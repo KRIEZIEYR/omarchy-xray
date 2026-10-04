@@ -284,7 +284,11 @@ class LinkParsing(Base):
         self.assertEqual(s["tlsSettings"]["pinnedPeerCertSha256"], "ab" * 32)
         self.assertEqual(s["tlsSettings"]["alpn"], ["h3"])
         self.assertNotIn("fingerprint", s["tlsSettings"])
-        self.assertEqual(self.node("hy2-hop")["port"], 443)
+        hop = self.node("hy2-hop")
+        self.assertEqual(hop["port"], 443)
+        # udphop dials itself: the core wants it first in finalmask.udp
+        self.assertEqual(hop["ob"]["streamSettings"]["finalmask"]["udp"][0]["settings"]["remotePorts"],
+                         "443,20000-30000")
 
     def test_skip_reasons(self):
         for key, link in SKIPPED.items():
@@ -414,6 +418,57 @@ class ConfigBuilding(Base):
         self.assertEqual(proxies[0]["tag"], "proxy")
         self.assertEqual(conf["metrics"], {"listen": "127.0.0.1:%d" % M.METRICS})
         self.assertCoreAccepts(conf)
+
+    def test_user_rules_and_fragment(self):
+        ns = [self.node("vless-ws-tls"), self.node("hy2-hop")]
+        st = self.state(ns, fragment=True, rules=[
+            {"target": "direct", "value": "example.org"},
+            {"target": "block", "value": "10.9.0.0/16"},
+            {"target": "proxy", "value": "geosite:google"}])
+        conf = M.build_config(st)
+        rules = conf["routing"]["rules"]
+        self.assertEqual(rules[0], {"domain": ["domain:example.org"], "outboundTag": "direct"})
+        self.assertEqual(rules[1], {"ip": ["10.9.0.0/16"], "outboundTag": "block"})
+        self.assertEqual(rules[2], {"domain": ["geosite:google"], "outboundTag": "proxy"})
+        proxy = conf["outbounds"][0]
+        self.assertEqual(proxy["streamSettings"]["sockopt"]["dialerProxy"], "tls-fragment")
+        self.assertIn("tls-fragment", [o["tag"] for o in conf["outbounds"]])
+        self.assertCoreAccepts(conf)
+        # QUIC node: no fragment outbound at all
+        conf = M.build_config(dict(st, selected=ns[1]["id"]))
+        self.assertNotIn("tls-fragment", [o["tag"] for o in conf["outbounds"]])
+        self.assertCoreAccepts(conf)
+
+    def test_fragment_opts(self):
+        for k, v in (("packets", "tlshello"), ("packets", "1-3"), ("length", "50"), ("interval", "0-5")):
+            self.assertTrue(M.fragment_opt_ok(k, v), (k, v))
+        for k, v in (("packets", "x"), ("length", "0"), ("length", "200-100"), ("interval", "1-2-3"), ("mtu", "1")):
+            self.assertFalse(M.fragment_opt_ok(k, v), (k, v))
+        ns = [self.node("vless-ws-tls")]
+        conf = M.build_config(self.state(ns, fragment=True, fragmentOpts={
+            "packets": "1-3", "length": "10-20", "interval": "5"}))
+        frag = [o for o in conf["outbounds"] if o["tag"] == "tls-fragment"][0]
+        self.assertEqual(frag["settings"]["fragment"], {"packets": "1-3", "length": "10-20", "interval": "5"})
+        self.assertCoreAccepts(conf)
+
+    def test_custom_dns(self):
+        for ok in ("9.9.9.9", "2606:4700::1111", "https://dns.example/dns-query", "tls://1.1.1.1", "quic://dns.example:853"):
+            self.assertTrue(M.dns_custom_ok(ok), ok)
+        for bad in ("", "udp://1.1.1.1", "https://u:p@x/q", "1.1.1.1:53", "https://x/q?a=1", "a b"):
+            self.assertFalse(M.dns_custom_ok(bad), bad)
+        ns = [self.node("vless-ws-tls")]
+        conf = M.build_config(self.state(ns, mode="tun", dns="custom", dnsCustom="https://dns.example/dns-query"))
+        servers = conf["dns"]["servers"]
+        self.assertIn("https://dns.example/dns-query", servers)
+        self.assertIn("full:dns.example", servers[0]["domains"])      # resolved by bootstrap
+        self.assertCoreAccepts(conf)
+
+    def test_rule_match(self):
+        self.assertEqual(M.rule_match("Sub.Example.ORG"), ("domain", "domain:sub.example.org"))
+        self.assertEqual(M.rule_match("1.2.3.4"), ("ip", "1.2.3.4/32"))
+        self.assertEqual(M.rule_match("geoip:ru"), ("ip", "geoip:ru"))
+        for bad in ("", "http://x.com", "a b", "geosite:", "x" * 300):
+            self.assertIsNone(M.rule_match(bad), bad)
 
     def test_tun_config(self):
         ns = self.nodes()
