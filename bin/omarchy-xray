@@ -2570,7 +2570,12 @@ def cmd_scan():
     shot = subprocess.run([grim, "-g", geom, "-t", "png", "-"], capture_output=True, timeout=30, env=env)
     if shot.returncode != 0 or not shot.stdout:
         die("screenshot failed")
-    z = subprocess.run([zbar, "--raw", "-q", "-Sdisable", "-Sqrcode.enable", "-"],
+    # a DBus-enabled zbarimg broadcasts every decoded code on the system bus
+    # (org.linuxtv.Zbar1.Code), where any local user can read the credentials;
+    # builds without DBus reject the flag, so only pass it when it exists
+    zhelp = subprocess.run([zbar, "--help"], capture_output=True, text=True, timeout=10, env=env)
+    nodbus = ["--nodbus"] if "--nodbus" in zhelp.stdout + zhelp.stderr else []
+    z = subprocess.run([zbar, *nodbus, "--raw", "-q", "-Sdisable", "-Sqrcode.enable", "-"],
                        input=shot.stdout, capture_output=True, timeout=30, env=env)
     text = z.stdout.decode("utf-8", "replace").strip()[:MAX_PASTE + 1]
     if z.returncode != 0 or not text:
