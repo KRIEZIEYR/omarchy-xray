@@ -1819,14 +1819,6 @@ Panel {
               Item { Layout.fillWidth: true }
 
               TextActionButton {
-                label: "󰐲 QR"
-                a11yName: "Scan a QR code on screen"
-                tooltip: "Drag a box around a QR code on screen: a subscription or a server"
-                enabled: !xray.busy
-                onClicked: xray.scanQr()
-              }
-
-              TextActionButton {
                 visible: xray.subs.length > 0
                 label: xray.updating ? "Updating…" : root.subFailCount > 0 ? "Update all · Fail " + root.subFailCount : "Update all"
                 tooltip: "Download every subscription again (Ctrl+R)"
@@ -1859,8 +1851,16 @@ Panel {
 
               TextActionButton {
                 label: "Add"
-                enabled: subUrlField.text.trim() !== "" && !xray.busy
-                onClicked: root.importSub()
+                enabled: !xray.busy                  // empty field: Add puts the cursor there
+                onClicked: if (subUrlField.text.trim() === "") subUrlField.forceActiveFocus(); else root.importSub()
+              }
+
+              TextActionButton {
+                label: "󰐲 QR"
+                a11yName: "Scan a QR code on screen"
+                tooltip: "Drag a box around a QR code on screen: a subscription or a server"
+                enabled: !xray.busy
+                onClicked: xray.scanQr()
               }
             }
 
