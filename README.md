@@ -144,9 +144,13 @@ omarchy-xray set ua <text|default>  # subscription User-Agent
 omarchy-xray chain <key|off>        # first hop: the exit node is dialed through it
 omarchy-xray share <key> [qr|copy]  # share link (or Xray JSON); qr writes a PNG, copy uses the clipboard
 omarchy-xray whoami                 # exit IP and country, through the tunnel
+omarchy-xray route youtube.com      # where it goes (vpn/direct/block) and which rule decides
+omarchy-xray routing ru-blocked     # only sites blocked in Russia go through the VPN
+omarchy-xray set failover on        # switch to the fastest node when yours stops answering
+omarchy-xray handler on             # clicked vless://, hy2://, happ://add/… links import here
 omarchy-xray speed                  # download speed through the tunnel
 omarchy-xray scan                   # import from a QR code on screen (grim, slurp, zbar)
-omarchy-xray geo update             # fresh geoip/geosite.dat, sha256-checked; weekly from the widget
+omarchy-xray geo update             # fresh geoip/geosite.dat (runetfreedom), sha256-checked
 omarchy-xray set subupdate 6        # auto-update every 6 h (auto = provider's interval, off)
 omarchy-xray settings export|copy|import -|paste   # settings without subscriptions or passwords
 omarchy-xray dns custom https://dns.example/dns-query   # or an IP, tls://…, quic://…

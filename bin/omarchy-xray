@@ -30,6 +30,13 @@ the two explicit TUN install steps):
   chain <key|off>    first hop: the selected node (or Auto) is dialed through this one
   share <key> [qr]   the node's share link (or its outbound JSON); qr: also a PNG path
   whoami             exit IP and country, asked through the tunnel
+  route <domain|ip>  where it goes (vpn/direct/block) and which rule decides
+  routing ru-blocked only what is blocked in Russia goes through the VPN
+                     (runetfreedom lists: `geo update` first)
+  set failover on|off  the widget switches to the fastest node when yours dies
+  heal               that check once: probe the tunnel, switch if it is dead
+  handler on|off     open vless://, hy2://, happ://add/… links with omarchy-xray
+  link               (the link opener) import $OMARCHY_XRAY_SUB_URL, notify
   speed [key]        download speed (Cloudflare, 25 MB max): the tunnel, or one node
                      on its own through a throwaway core
   scan               import from a QR code on screen (drag a region; grim, slurp, zbar)
@@ -71,7 +78,7 @@ Security model:
   - state.json holds secrets: private 0700 dir, 0600 no-follow atomic writes.
   - Child processes get an explicit environment allowlist and absolute paths.
 """
-import base64, copy, functools, hashlib, ipaddress, json, os, pathlib, pwd, re, shutil, signal
+import base64, contextlib, copy, functools, io, hashlib, ipaddress, json, os, pathlib, pwd, re, shutil, signal
 import socket, subprocess, sys, tempfile, time, urllib.parse
 # urllib.request and concurrent.futures are imported where they are used:
 # they are ~75 ms of the start-up the widget pays on every status poll.
@@ -203,8 +210,9 @@ REGIONS = {
 ASSET_DIRS = ("/usr/share/xray", "/usr/local/share/xray", "/usr/share/v2ray",
               "/usr/local/share/v2ray", "/opt/xray")
 GEO_DIR = CFG / "geo"
-GEO_URL = "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/"
-GEO_MAX_BYTES = 64 * 1024 * 1024
+# runetfreedom: the v2fly lists plus ru-blocked (what Roskomnadzor blocks)
+GEO_URL = "https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/"
+GEO_MAX_BYTES = 160 * 1024 * 1024
 GEO_DAYS = 7                      # a downloaded set refreshes weekly
 SPEED_URL = "https://speed.cloudflare.com/__down?bytes=25000000"
 
@@ -564,13 +572,13 @@ def load_state():
     st["selected"] = sel
     if st.get("mode") not in ("proxy", "tun"):
         st["mode"] = "proxy"
-    if st.get("routing") != "global" and not region_of(st.get("routing")):
+    if st.get("routing") not in ("global", BLOCKED) and not region_of(st.get("routing")):
         st["routing"] = "global"
     st["adblock"] = st.get("adblock") is True
     st["fragment"] = st.get("fragment") is True
     favs = st.get("favorites") if isinstance(st.get("favorites"), list) else []
     st["favorites"] = [f for f in favs if isinstance(f, str) and re.fullmatch(r"k[0-9a-f]{10}", f)][:MAX_FAVS]
-    for k in ("autoFavorites", "lan", "mux"):
+    for k in ("autoFavorites", "lan", "mux", "failover"):
         st[k] = st.get(k) is True
     mc = st.get("muxConcurrency")
     st["muxConcurrency"] = mc if isinstance(mc, int) and not isinstance(mc, bool) and 1 <= mc <= 1024 else 8
@@ -1732,8 +1740,14 @@ def build_config(st, custom=None):
                       + (["geosite:" + site] if geo and site else []), "outboundTag": "direct"})
         if geo:
             rules.append({"ip": ["geoip:" + cc], "outboundTag": "direct"})
-    rules.append(dict({"network": "tcp,udp"}, **target))
-    routing = {"domainStrategy": "IPIfNonMatch" if cc and geo else "AsIs", "rules": rules}
+    blocked = st["routing"] == BLOCKED and geo_has(BLOCKED)   # without the lists: all via VPN
+    if blocked:
+        rules.append(dict({"domain": ["geosite:" + BLOCKED]}, **target))
+        rules.append(dict({"ip": ["geoip:" + BLOCKED]}, **target))
+        rules.append({"network": "tcp,udp", "outboundTag": "direct"})
+    else:
+        rules.append(dict({"network": "tcp,udp"}, **target))
+    routing = {"domainStrategy": "IPIfNonMatch" if (cc or blocked) and geo else "AsIs", "rules": rules}
     if auto:
         routing["balancers"] = [{"tag": "auto", "selector": ["node-"],
                                  "strategy": {"type": "leastPing"}, "fallbackTag": "node-0"}]
@@ -2140,6 +2154,9 @@ def cmd_mode(mode):
     out({"ok": True, "mode": mode, "running": was_running})
 
 
+BLOCKED = "ru-blocked"           # only what is blocked in Russia goes through the VPN
+
+
 def region_of(routing):
     m = re.match(r"^([a-z]{2})-direct$", routing if isinstance(routing, str) else "")
     return m.group(1) if m and m.group(1) in REGIONS else None
@@ -2153,9 +2170,210 @@ def _apply(st):
     restart_if_running(st)
 
 
+def _pb_fields(buf, start=0, end=None):
+    """(field, wiretype, value) of one protobuf message; value is bytes for
+    length-delimited fields, an int otherwise."""
+    i, end = start, len(buf) if end is None else end
+    while i < end:
+        key = shift = 0
+        while True:
+            b = buf[i]; i += 1
+            key |= (b & 0x7F) << shift; shift += 7
+            if b < 0x80:
+                break
+        field, wt = key >> 3, key & 7
+        if wt == 0:
+            v = shift = 0
+            while True:
+                b = buf[i]; i += 1
+                v |= (b & 0x7F) << shift; shift += 7
+                if b < 0x80:
+                    break
+            yield field, wt, v
+        elif wt == 2:
+            n = shift = 0
+            while True:
+                b = buf[i]; i += 1
+                n |= (b & 0x7F) << shift; shift += 7
+                if b < 0x80:
+                    break
+            yield field, wt, memoryview(buf)[i:i + n]
+            i += n
+        elif wt == 5:
+            i += 4
+        elif wt == 1:
+            i += 8
+        else:
+            raise ValueError("bad geo data")
+
+
+@functools.lru_cache(maxsize=4)
+def _geo_file(name):
+    a = asset_dir()
+    if not a:
+        return b""
+    try:
+        with open(os.path.join(a, name), "rb") as f:
+            return f.read()
+    except OSError:
+        return b""
+
+
+def geo_entry(kind, code):
+    """The protobuf entry of geosite:/geoip:<code>, or None."""
+    want = code.upper().encode()
+    data = _geo_file(kind + ".dat")
+    try:
+        for f, _, entry in _pb_fields(data):
+            if f != 1:
+                continue
+            for f2, _, v in _pb_fields(entry):
+                if f2 == 1:
+                    if bytes(v).upper() == want:
+                        return entry
+                    break
+    except (ValueError, IndexError):
+        pass
+    return None
+
+
+def geo_has(code):
+    """geosite:<code> exists in the geo data (the distro's lists lack ru-blocked)."""
+    return geo_entry("geosite", code) is not None
+
+
+def _geosite_match(code, host):
+    entry = geo_entry("geosite", code)
+    if entry is None:
+        return None
+    for f, _, d in _pb_fields(entry):
+        if f != 2:
+            continue
+        typ, val = 0, ""
+        for f2, _, v in _pb_fields(d):
+            if f2 == 1:
+                typ = v
+            elif f2 == 2:
+                val = bytes(v).decode("utf-8", "replace").lower()
+        if (typ == 0 and val in host) or (typ == 3 and host == val) \
+                or (typ == 2 and (host == val or host.endswith("." + val))) \
+                or (typ == 1 and re.search(val, host)):
+            return val
+    return None
+
+
+def _geoip_match(code, ip):
+    entry = geo_entry("geoip", code)
+    if entry is None:
+        return None
+    reverse, hit = False, None
+    for f, _, v in _pb_fields(entry):
+        if f == 3:
+            reverse = bool(v)
+        elif f == 2 and hit is None:
+            raw, plen = b"", 0
+            for f2, _, x in _pb_fields(v):
+                if f2 == 1:
+                    raw = bytes(x)
+                elif f2 == 2:
+                    plen = x
+            bits = len(raw) * 8
+            if bits == ip.max_prefixlen and plen <= bits and \
+                    int.from_bytes(raw, "big") >> (bits - plen) == int(ip) >> (bits - plen):
+                hit = str(ipaddress.ip_network((int.from_bytes(raw, "big"), plen), strict=False)) \
+                    if bits == 32 else str(ipaddress.IPv6Network((int.from_bytes(raw, "big"), plen), strict=False))
+    return ("not " + code) if reverse and hit is None else None if reverse else hit
+
+
+def _rule_hits(rule, host, ips):
+    """What in an xray rule matches host / one of ips (None: no match)."""
+    for m in rule.get("domain", []) if host else []:
+        m = m.lower()
+        if m.startswith("geosite:"):
+            got = _geosite_match(m[8:], host)
+            if got:
+                return m + " (" + got + ")"
+        elif m.startswith("domain:"):
+            if host == m[7:] or host.endswith("." + m[7:]):
+                return m
+        elif m.startswith("full:"):
+            if host == m[5:]:
+                return m
+        elif m.startswith("regexp:"):
+            if re.search(m[7:], host):
+                return m
+        elif m.removeprefix("keyword:") in host:
+            return m
+    for m in rule.get("ip", []):
+        for ip in ips:
+            if m.startswith("geoip:"):
+                got = _geoip_match(m[6:], ip)
+                if got:
+                    return m + " (" + got + ")"
+            else:
+                try:
+                    if ip in ipaddress.ip_network(m, strict=False):
+                        return m
+                except ValueError:
+                    pass
+    return None
+
+
+def cmd_route(target):
+    """Where a domain or an IP goes, and which rule sends it there (the
+    config's own rules, in order; a domain is resolved as xray would)."""
+    t = (target or "").strip().lower()
+    t = urllib.parse.urlsplit(t).hostname or t if "://" in t else t
+    ip = None
+    try:
+        ip = ipaddress.ip_address(t)
+    except ValueError:
+        if not _DOMAIN_RE.match(t):
+            die("not a domain or an IP: " + t[:64])
+    st = load_state()
+    if not st["nodes"]:
+        die("no nodes")
+    conf = build_config(st)
+    routing = conf["routing"]
+    rules = [r for r in routing["rules"] if "inboundTag" not in r]
+
+    def walk(host, ips):
+        for i, r in enumerate(rules):
+            if set(r) - {"domain", "ip", "network", "outboundTag", "balancerTag", "ruleTag"}:
+                continue
+            if "domain" not in r and "ip" not in r:      # the catch-all
+                return i, r, "everything else"
+            why = _rule_hits(r, host, ips)
+            if why:
+                return i, r, why
+        return None, {"outboundTag": "proxy"}, "no rule (first outbound)"
+
+    host = "" if ip else t
+    resolved = []
+    if ip:
+        _, r, why = walk("", [ip])
+    else:
+        # domain rules first; IPIfNonMatch resolves only when none matched
+        i, r, why = walk(host, [])
+        if (i is None or why == "everything else") and routing.get("domainStrategy") == "IPIfNonMatch":
+            try:
+                resolved = sorted({ipaddress.ip_address(a[4][0].split("%")[0])
+                                   for a in socket.getaddrinfo(host, None)[:8]}, key=str)
+            except (OSError, ValueError):
+                resolved = []
+            if resolved:
+                i, r, why = walk(host, [a for a in resolved if a.version == 4] or resolved)
+    to = r.get("outboundTag") or r.get("balancerTag") or "proxy"
+    verdict = {"direct": "direct", "block": "block"}.get(to, "vpn")
+    out({"ok": True, "target": t, "via": verdict, "match": why,
+         "ips": [str(a) for a in resolved][:4]})
+
+
 def cmd_routing(preset):
-    if preset != "global" and not region_of(preset):
-        die("routing preset must be global or <region>-direct, region: " + ", ".join(REGIONS))
+    if preset not in ("global", BLOCKED) and not region_of(preset):
+        die("routing preset must be global, ru-blocked or <region>-direct, region: " + ", ".join(REGIONS))
+    if preset == BLOCKED and not geo_has(BLOCKED):
+        die("ru-blocked needs the runetfreedom geo data: run `omarchy-xray geo update` first")
     st = load_state()
     st["routing"] = preset
     _apply(st)
@@ -2229,7 +2447,12 @@ def cmd_fav(key):
 def cmd_set(key, value):
     st = load_state()
     onoff = {"on": True, "off": False}
-    if key in ("autofav", "lan") and value in onoff:
+    if key == "failover" and value in onoff:
+        st["failover"] = onoff[value]
+        save_state(st)                       # the widget's health check reads it
+        out({"ok": True, "failover": st["failover"]})
+        return
+    elif key in ("autofav", "lan") and value in onoff:
         st["autoFavorites" if key == "autofav" else "lan"] = onoff[value]
     elif key == "mux" and (value in onoff or (value.isdigit() and 1 <= int(value) <= 1024)):
         st["mux"] = onoff.get(value, True)
@@ -2259,7 +2482,7 @@ def cmd_set(key, value):
         return
     else:
         die("usage: omarchy-xray set autofav|lan on|off · mux on|off|<1-1024> · loglevel "
-            + "|".join(LOGLEVELS) + " · ua <text|default> · subupdate auto|off|<1-168 hours> · geoupdate off|<1-90 days>")
+            + "|".join(LOGLEVELS) + " · ua <text|default> · subupdate auto|off|<1-168 hours> · geoupdate off|<1-90 days> · failover on|off")
     _apply(st)
     out({"ok": True, key: value})
 
@@ -2394,7 +2617,7 @@ def geo_due(st):
 
 
 def cmd_geo(verb):
-    """geo update: fresh geoip.dat + geosite.dat (Loyalsoldier), checked
+    """geo update: fresh geoip.dat + geosite.dat (runetfreedom), checked
     against the release's sha256 files, swapped in whole."""
     if verb != "update":
         die("usage: omarchy-xray geo update")
@@ -2423,6 +2646,103 @@ def cmd_geo(verb):
     out({"ok": True, "geo": str(GEO_DIR), "bytes": sum(map(len, got.values()))})
 
 
+def cmd_heal():
+    """The widget's health check (failover on, one node selected, running):
+    if the tunnel stops answering, switch to the fastest node that does."""
+    st = load_state()
+    if not st["failover"] or st["selected"] == "auto" or not running_units()[0]:
+        out({"ok": True, "skipped": True})
+        return
+    if any(_curl(SOCKS) != "timeout" for _ in range(2)):
+        out({"ok": True, "healthy": True})
+        return
+    old = selected_node(st)
+    others = [n for n in st["nodes"] if not old or n["id"] != old["id"]][:TEST_BATCH]
+    if not others:
+        die("the node stopped answering and there is no other")
+    res = _probe_batch(others, default_dev() if tun_active() else None, runtime_dir()) or []
+    alive = sorted((int(r[:-2]), n["id"], n["name"]) for n, r in zip(others, res)
+                   if isinstance(r, str) and r.endswith("ms"))
+    if not alive:
+        die("no node answers: the network itself may be down")
+    _, key, name = alive[0]
+    st["selected"] = key
+    write_config(st)
+    save_state(st)
+    restart_if_running(st)
+    out({"ok": True, "switched": name, "from": old["name"] if old else ""})
+
+
+LINK_DESKTOP = HOME / ".local/share/applications/omarchy-xray-link.desktop"
+LINK_SCHEMES = ("vless", "vmess", "trojan", "ss", "hysteria2", "hy2", "happ", "v2rayn")
+
+
+def unwrap_link(text):
+    """Client deep links carry the real link or subscription inside."""
+    t = text.strip()
+    low = t.lower()
+    if low.startswith("happ://add/"):
+        return t[11:]
+    if low.startswith(("v2rayn://install-config?", "v2rayn://install-sub?")):
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(t).query)
+        return (q.get("url") or [""])[0]
+    return t
+
+
+def cmd_link():
+    """What a clicked vless://… (or happ://add/…) link opens: import it,
+    then say so in a notification (the panel is usually closed)."""
+    text = unwrap_link(secret_url_from_arg("-"))
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            _import_text(text)
+    except SystemExit:
+        pass
+    try:
+        res = json.loads(buf.getvalue().strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        res = {"ok": False, "error": "import failed"}
+    ns = tool("notify-send")
+    if ns:
+        body = ("Added %d server(s) to Manual" % res["manual"] if res.get("manual")
+                else "Subscription added: %d nodes" % res.get("nodes", 0)) if res.get("ok") \
+            else str(res.get("error", ""))[:200]
+        subprocess.run([ns, "-a", "Xray", "Xray" if res.get("ok") else "Xray: link refused", body],
+                       env=_wayland_env(), timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    print(json.dumps(res))
+
+
+def cmd_handler(verb):
+    """Make omarchy-xray the opener of vless://, hy2://, happ://… links."""
+    if verb == "off":
+        try:
+            LINK_DESKTOP.unlink()
+        except OSError:
+            pass
+        out({"ok": True, "handler": False})
+        return
+    if verb != "on":
+        die("usage: omarchy-xray handler on|off")
+    if not _UNIT_PATH_RE.match(SELF):
+        die("unsupported install path for a .desktop file")
+    LINK_DESKTOP.parent.mkdir(parents=True, exist_ok=True)
+    # The link reaches sh as an argument (that is how a browser hands it
+    # over) and goes on to the manager through the environment only.
+    atomic_write(LINK_DESKTOP, "[Desktop Entry]\nType=Application\nName=Xray (import link)\n"
+                 "NoDisplay=true\nExec=sh -c 'OMARCHY_XRAY_SUB_URL=\"$1\" exec %s link' omarchy-xray-link %%u\n"
+                 "MimeType=%s\n" % (SELF, "".join("x-scheme-handler/%s;" % s for s in LINK_SCHEMES)), 0o644)
+    xm = tool("xdg-mime")
+    if xm:
+        for sch in LINK_SCHEMES:
+            sh(xm, "default", LINK_DESKTOP.name, "x-scheme-handler/" + sch, timeout=10)
+    out({"ok": True, "handler": True})
+
+
+def handler_on():
+    return LINK_DESKTOP.is_file()
+
+
 def cmd_whoami():
     """Exit IP and country through the tunnel (Cloudflare's trace page)."""
     if not running_units()[0]:
@@ -2436,7 +2756,7 @@ def cmd_whoami():
     out({"ok": True, "ip": ip, "country": loc})
 
 
-SETTINGS_KEYS = ("userAgent", "subUpdate", "geoDays", "routing", "adblock", "dns", "dnsCustom", "fragment", "fragmentOpts", "rules",
+SETTINGS_KEYS = ("userAgent", "subUpdate", "geoDays", "failover", "routing", "adblock", "dns", "dnsCustom", "fragment", "fragmentOpts", "rules",
                  "favorites", "autoFavorites", "mux", "muxConcurrency", "loglevel")
 
 
@@ -2764,6 +3084,8 @@ def cmd_status():
         "chain": st["chain"],
         "chainName": next((n["name"][:MAX_STR] for n in st["nodes"] if n["id"] == st["chain"]), ""),
         "lan": st["lan"],
+        "failover": st["failover"],
+        "handler": handler_on(),
         # the LAN password is for the user to type into a phone: shown, never logged
         "lanInfo": {"ip": lan_ip(), "socks": LAN_SOCKS, "http": LAN_HTTP,
                     "user": st["lanAuth"]["user"], "pass": st["lanAuth"]["pass"]} if st["lan"] else None,
@@ -3243,7 +3565,7 @@ def cmd_cleanup():
     if SYS_UNIT.is_file():
         _tun_remove(st)                    # one polkit/sudo prompt
     removed = []
-    for path in (UNIT, T2S_UNIT, UNIT_DIR / "omarchy-xray-tun-login.service"):
+    for path in (UNIT, T2S_UNIT, UNIT_DIR / "omarchy-xray-tun-login.service", LINK_DESKTOP):
         if path.exists():
             uctl("disable", path.name)
             path.unlink()
@@ -3294,7 +3616,7 @@ def _rebind():
 # --- main --------------------------------------------------------------------
 
 ROOT_COMMANDS = {"tun-install", "tun-uninstall"}
-LOCKED_COMMANDS = {"import", "subremove", "update", "select", "mode", "routing", "adblock", "fragment", "rule", "dns", "fav", "set", "settings", "chain", "scan", "geo", "speed",
+LOCKED_COMMANDS = {"import", "subremove", "update", "select", "mode", "routing", "adblock", "fragment", "rule", "dns", "fav", "set", "settings", "chain", "scan", "geo", "speed", "heal", "link", "handler",
                    "on", "restart", "tun-remove", "cleanup"}
 _LOCK_FD = None
 
@@ -3340,6 +3662,10 @@ def main():
         "set": lambda: cmd_set(arg, rest[1] if len(rest) > 1 else ""),
         "whoami": cmd_whoami,
         "scan": cmd_scan,
+        "route": lambda: cmd_route(arg),
+        "heal": cmd_heal,
+        "link": cmd_link,
+        "handler": lambda: cmd_handler(arg),
         "speed": lambda: cmd_speed(arg),
         "geo": lambda: cmd_geo(arg),
         "chain": lambda: cmd_chain(arg),

@@ -62,6 +62,9 @@ Item {
   property var share: null
   property bool geo: false
   property bool geoOwn: false             // a downloaded set (geo update), not the distro's
+  property bool failover: false
+  property bool handler: false             // vless://… links open here
+  property var routeCheck: null            // {target, via, match, ips} of the last check
   property int geoDays: 7                 // 0: no automatic geo refresh
   property int subUpdate: -1              // hours; -1 the provider's interval, 0 off
   property string speedKey: ""             // the node being measured
@@ -361,6 +364,8 @@ Item {
     chainName = typeof d.chainName === "string" ? scrub(d.chainName) : ""
     geo = d.geo === true
     geoOwn = d.geoOwn === true
+    failover = d.failover === true
+    handler = d.handler === true
     geoDays = typeof d.geoDays === "number" ? d.geoDays : 7
     subUpdate = typeof d.subUpdate === "number" ? d.subUpdate : -1
     tunInstalled = d.tunInstalled === true
@@ -599,9 +604,10 @@ Item {
   }
 
   function setRouting(preset) {
-    if (preset !== "global" && !/^[a-z]{2}-direct$/.test(preset)) return
+    if (preset !== "global" && preset !== "ru-blocked" && !/^[a-z]{2}-direct$/.test(preset)) return
     runLong([manager, "routing", preset], "routing", 120000,
-            preset === "global" ? "Everything goes through the VPN" : regionName(preset) + " sites now bypass the VPN",
+            preset === "global" ? "Everything goes through the VPN"
+            : preset === "ru-blocked" ? "Only blocked sites go through the VPN" : regionName(preset) + " sites now bypass the VPN",
             "Applying routing…")
   }
 
@@ -657,6 +663,36 @@ Item {
   function settingsClipboard(verb) {
     runLong([manager, "settings", verb], "settings", 120000,
             verb === "copy" ? "Settings copied (no subscriptions, no passwords)" : "Settings pasted", "Working…")
+  }
+
+  // Where a domain or an IP goes; the answer stays under the field.
+  function checkRoute(target) {
+    var t = String(target || "").trim().slice(0, 253)
+    if (t === "" || /\s/.test(t)) return
+    routeCheck = null
+    if (!run(_probe, [manager, "route", t], function(resp) {
+      routeCheck = resp.ok ? resp.data : { target: t, via: "", match: resp.message, ips: [] }
+    })) busyRefused()
+  }
+
+  function setHandler(on) {
+    runLong([manager, "handler", on ? "on" : "off"], "settings", 30000,
+            on ? "Links (vless://, happ://…) now open here" : "Links no longer open here", "Applying…")
+  }
+
+  // Health check with failover on: the manager probes the tunnel and, when
+  // it is dead, moves to the fastest node that answers.
+  Timer {
+    id: _healTimer
+    interval: 45000; repeat: true
+    running: root.failover && root.connected
+    // quietly in the side slot: a healthy check must not dim the panel
+    onTriggered: if (!root.busy) root.run(_probe, [root.manager, "heal"], function(resp) {
+      if (!resp.ok || !resp.data.switched) return
+      Quickshell.execDetached(["notify-send", "-a", "Xray", "Switched to " + root.scrub(resp.data.switched),
+                               root.scrub(resp.data.from) + " stopped answering"])
+      root.refresh()
+    })
   }
 
   function updateGeo() {

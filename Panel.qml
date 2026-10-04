@@ -56,7 +56,8 @@ Panel {
 
   function chooseRoute(v) {
     if (xray.busy) { xray.busyRefused(); return }
-    if (v === "global") { if (xray.region) xray.setRouting("global") }
+    if (v === "global") { if (xray.routing !== "global") xray.setRouting("global") }
+    else if (v === "blocked") { if (xray.routing !== "ru-blocked") xray.setRouting("ru-blocked") }
     else if (!xray.region) {
       if (routeRegion) xray.setRouting(routeRegion.code + "-direct")
       else regionsOpen = true
@@ -74,9 +75,9 @@ Panel {
       // the same order as on the page
       : ["hero", "settings"].concat(settingsOpen ? ["mode", "route"].concat(regionsOpen ? ["regions"] : [],
           ["login", "dns", "dnsown", "ads", "fragment"], xray.fragment ? ["fragopts"] : [],
-          ["mux"], xray.mux ? ["muxc"] : [], ["auto", "chain", "subupd", "lan", "log", "ua", "geo", "geodays", "backup", "ruleadd"], xray.rules.map(function(r, i) { return "rule" + i })) : [])
+          ["mux"], xray.mux ? ["muxc"] : [], ["auto", "chain", "subupd", "failover", "lan", "links", "log", "ua", "geo", "geodays", "backup", "check", "ruleadd"], xray.rules.map(function(r, i) { return "rule" + i })) : [])
   readonly property string settingsSummary: (xray.mode === "tun" ? "TUN" : "PROXY")
-      + " · " + (xray.region ? xray.region.code.toUpperCase() + " DIRECT" : "ALL")
+      + " · " + (xray.routing === "ru-blocked" ? "RU BLOCKED" : xray.region ? xray.region.code.toUpperCase() + " DIRECT" : "ALL")
       + (xray.adblock ? " · ADBLOCK" : "")
       + (xray.fragment ? " · FRAG" : "")
       + (xray.rules.length ? " · " + xray.rules.length + " RULES" : "")
@@ -209,7 +210,7 @@ Panel {
     if (r === "hero") return "VPN switch, " + (xray.blocked ? "kill switch holding" : tunnelUp ? "on" : "off")
     if (r === "settings") return "Settings, " + settingsSummary
     if (r === "mode") return "Mode " + (c === 1 ? "TUN" : "proxy")
-    if (r === "route") return c === 2 ? "Change the direct country" : "Route " + (c === 1 ? "direct" : "all")
+    if (r === "route") return c === 2 ? "Change the direct country" : "Route " + ["all", "direct", "", "only blocked"][c]
     if (r === "regions") return xray.regions[c] ? xray.regions[c].name : ""
     if (r === "ads") return "Ad blocking " + (xray.adblock ? "on" : "off")
     if (r === "dns") return "DNS " + (xray.dns === "custom" ? "own server " + xray.dnsCustom : dnsOptions[dnsIndex()].tooltip)
@@ -230,6 +231,9 @@ Panel {
     if (r === "ua") return "Subscription user agent " + (xray.userAgent || "default")
     if (r === "subupd") return "Subscriptions update " + subUpdateValue
     if (r === "geo") return "Update geo data"
+    if (r === "failover") return "Failover " + (xray.failover ? "on" : "off")
+    if (r === "links") return "Open links here " + (xray.handler ? "on" : "off")
+    if (r === "check") return "Check where a domain goes"
     if (r === "geodays") return "Geo data refresh " + (xray.geoDays ? "every " + xray.geoDays + " days" : "off")
     if (r === "backup") return c === 1 ? "Paste settings" : "Copy settings"
     if (r === "ruleadd") return "New rule, target " + ruleTargetLabel(ruleTarget)
@@ -284,11 +288,13 @@ Panel {
     { value: "global", label: "ALL", tooltip: "Everything through the VPN, except your local network" },
     { value: "direct", label: routeRegion ? routeRegion.code.toUpperCase() + " DIRECT" : "DIRECT",
       tooltip: routeRegion ? routeRegion.name + " sites go direct, the rest via the VPN"
-                           : "One country's sites go direct, not through the VPN" }
+                           : "One country's sites go direct, not through the VPN" },
+    { value: "blocked", label: "RU BLOCKED", tooltip: "Only sites blocked in Russia go through the VPN, the rest direct · needs Geo UPDATE" }
   ]
+  readonly property string routeValue: xray.routing === "ru-blocked" ? "blocked" : xray.region ? "direct" : "global"
 
   function chipCount(row) {
-    return row === "mode" ? 2 : row === "route" ? 3 : row === "dns" ? 1
+    return row === "mode" ? 2 : row === "route" ? 4 : row === "dns" ? 1
          : row === "ruleadd" ? ruleTargets.length
          : row === "traffic" ? 3 : row === "switches" ? 2 : row === "fragopts" ? 3
          : row === "auto" ? 2 : row === "log" ? logOptions.length : row === "backup" ? 2 : row === "subupd" ? subUpdateOptions.length : row === "geodays" ? geoDaysOptions.length
@@ -299,7 +305,7 @@ Panel {
 
   function currentChip(row) {
     if (row === "mode") return xray.mode === "tun" ? 1 : 0
-    if (row === "route") return xray.region ? 1 : 0
+    if (row === "route") return routeValue === "blocked" ? 3 : routeValue === "direct" ? 1 : 0
     if (row === "auto") return xray.autoFavorites ? 1 : 0
     if (row === "log") return optIndex(logOptions, xray.loglevel)
     if (row === "subupd") return optIndex(subUpdateOptions, subUpdateValue)
@@ -324,8 +330,8 @@ Panel {
     else if (r === "settings") toggleSettings()
     else if (r === "mode") chooseMode(chipIndex === 1 ? "tun" : "proxy")
     else if (r === "route") {
-      if (chipIndex < 2) chooseRoute(chipIndex === 1 ? "direct" : "global")
-      else regionsOpen = !regionsOpen
+      if (chipIndex === 2) regionsOpen = !regionsOpen
+      else chooseRoute(routeOptions[chipIndex === 3 ? 2 : chipIndex].value)
     }
     else if (r === "regions" && xray.regions[chipIndex]) pickRegion(xray.regions[chipIndex].code)
     else if (r === "ads") toggleAdblock()
@@ -342,6 +348,9 @@ Panel {
     else if (r === "log") guarded(function() { xray.setOption("loglevel", logOptions[chipIndex].value, "Log level: " + logOptions[chipIndex].label) })
     else if (r === "ua") { var dd = nodeList.headerItem ? nodeList.headerItem.uaDropdown : null; if (dd) dd.open() }
     else if (r === "subupd") guarded(function() { xray.setOption("subupdate", subUpdateOptions[chipIndex].value, "Subscriptions update: " + subUpdateOptions[chipIndex].label) })
+    else if (r === "failover") guarded(function() { xray.setOption("failover", xray.failover ? "off" : "on", xray.failover ? "Failover off" : "Failover on") })
+    else if (r === "links") guarded(function() { xray.setHandler(!xray.handler) })
+    else if (r === "check") focusField("checkField")
     else if (r === "geodays") guarded(function() { var g = geoDaysOptions[chipIndex].value; xray.setOption("geoupdate", g === "0" ? "off" : g, "Geo data: " + geoDaysOptions[chipIndex].tooltip.toLowerCase()) })
     else if (r === "geo") guarded(function() { xray.updateGeo() })
     else if (r === "backup") guarded(function() { xray.settingsClipboard(chipIndex === 1 ? "paste" : "copy") })
@@ -808,6 +817,7 @@ Panel {
                                                  || nodeList.headerItem.dnsField.activeFocus
                                                  || nodeList.headerItem.chainField.activeFocus
                                                  || nodeList.headerItem.muxField.activeFocus
+                                                 || nodeList.headerItem.checkField.activeFocus
                                                  || nodeList.headerItem.uaDropdown.popupOpen || nodeList.headerItem.dnsDropdown.popupOpen
                                                  || nodeList.headerItem.fragFocused))
                || (nodeList.footerItem !== null && nodeList.footerItem.subUrl.activeFocus)
@@ -994,7 +1004,7 @@ Panel {
           text: {
             var r = root.cursorRow, c = root.chipIndex
             if (r === "mode") return root.modeOptions[c].tooltip
-            if (r === "route") return c < 2 ? root.routeOptions[c].tooltip : "Change the direct country"
+            if (r === "route") return c === 2 ? "Change the direct country" : root.routeOptions[c === 3 ? 2 : c].tooltip
             if (r === "settings") return root.settingsOpen ? "Enter goes back to the nodes" : "Enter opens the settings"
             if (r === "traffic" || r === "switches") {
               var pp = (r === "traffic" ? root.trafficPills : root.switchPills)[c]
@@ -1010,6 +1020,9 @@ Panel {
             if (r === "mux") return "Fewer handshakes · not Vision, XHTTP, Hysteria2"
             if (r === "muxc") return "Enter edits · streams per connection, 1-1024"
             if (r === "lan") return "Your network can use this VPN, with a password"
+            if (r === "failover") return "Switch to the fastest node when yours stops answering · not with Auto"
+            if (r === "links") return "Clicked vless://, hy2://, happ://add/… links import here"
+            if (r === "check") return "Enter types · a domain or an IP, Enter checks"
             if (r === "ua") return "Enter opens the list · the next update uses it"
             if (r === "dnsown") return "Enter edits · IP or https/tls/quic URL"
             if (r === "fragopts") return "Enter edits · in a field Enter applies, Esc restores"
@@ -1108,6 +1121,7 @@ Panel {
           property alias dnsField: dnsField
           property alias chainField: chainRow.field
           property alias muxField: muxRow.field
+          property alias checkField: checkRow.field
           property alias uaDropdown: uaDropdown
           property alias dnsDropdown: dnsDropdown
           property alias fragPackets: fragPacketsField
@@ -1181,12 +1195,12 @@ Panel {
               spacing: Style.space(8)
               RowLabel { text: "Route" }
               ChipGroup {
-                options: root.routeOptions
-                value: xray.region ? "direct" : "global"
+                options: root.routeOptions.slice(0, 2)
+                value: root.routeValue
                 cursorIndex: root.cursorRow === "route" && root.chipIndex < 2 ? root.chipIndex : -1
                 Accessible.role: Accessible.Grouping
-                Accessible.name: "Route: " + (xray.region ? xray.region.name + " sites go direct" : "everything through the VPN")
-                Accessible.description: "Options: all through the VPN, one country direct. h and l switch"
+                Accessible.name: "Route: " + (xray.routing === "ru-blocked" ? "only blocked sites through the VPN" : xray.region ? xray.region.name + " sites go direct" : "everything through the VPN")
+                Accessible.description: "Options: all through the VPN, one country direct, only blocked sites. h and l switch"
                 Accessible.focusable: true
                 Accessible.focused: cursorIndex >= 0
                 opacity: xray.busy ? 0.45 : 1.0
@@ -1210,6 +1224,16 @@ Panel {
                 onHovered: function(h) { if (h) root.cursorActive = false }
                 Accessible.role: Accessible.Button
                 Accessible.name: root.regionsOpen ? "Hide the country list" : "Change the direct country"
+              }
+
+              // after the arrow: the arrow picks DIRECT's country, not this
+              ChipGroup {
+                options: root.routeOptions.slice(2)
+                value: root.routeValue
+                cursorIndex: root.cursorRow === "route" && root.chipIndex === 3 ? 0 : -1
+                opacity: xray.busy ? 0.45 : 1.0
+                onChanged: function(v) { root.chooseRoute(v) }
+                onHovered: function(i, h) { if (h) root.cursorActive = false }
               }
 
               Item { Layout.fillWidth: true }
@@ -1409,6 +1433,16 @@ Panel {
               onChanged: function(v) { root.guarded(function() { xray.setOption("subupdate", v, "Subscriptions update: " + v) }) }
             }
 
+            SettingToggle {
+              label: "Failover"
+              a11yName: "Switch nodes when yours stops answering"
+              checked: xray.failover
+              busy: xray.busy
+              hasCursor: root.cursorRow === "failover"
+              note: "When your node stops answering, switch to the fastest one that does · not with Auto"
+              onFlip: root.guarded(function() { xray.setOption("failover", xray.failover ? "off" : "on", xray.failover ? "Failover off" : "Failover on") })
+            }
+
             SectionTitle { text: "SYSTEM" }
 
             SettingToggle {
@@ -1454,6 +1488,16 @@ Panel {
                   }
                 }
               }
+            }
+
+            SettingToggle {
+              label: "Links"
+              a11yName: "Open vless and happ links here"
+              checked: xray.handler
+              busy: xray.busy
+              hasCursor: root.cursorRow === "links"
+              note: "Clicked vless://, hy2://, happ://add/… links import here"
+              onFlip: root.guarded(function() { xray.setHandler(!xray.handler) })
             }
 
             ChipRow {
@@ -1511,6 +1555,32 @@ Panel {
             }
 
             SectionTitle { text: "RULES"; trailing: xray.rules.length ? String(xray.rules.length) : "" }
+
+            // Where would this go? The config's own rules answer, in order.
+            FieldRow {
+              id: checkRow
+              label: "Check"
+              hint: "domain or IP: where does it go?"
+              icon: "󰍉"
+              row: "check"
+              onSubmitted: function(t) { xray.checkRoute(t) }
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              visible: !!xray.routeCheck
+              width: parent.width
+              leftPadding: root.settingLabelWidth + Style.space(8)
+              wrapMode: Text.Wrap
+              text: !xray.routeCheck ? "" : xray.routeCheck.via === "" ? xray.routeCheck.match
+                    : xray.routeCheck.target + " → " + ({ vpn: "VPN", direct: "DIRECT", block: "BLOCK" })[xray.routeCheck.via]
+                      + " · " + xray.routeCheck.match
+                      + (xray.routeCheck.ips && xray.routeCheck.ips.length ? " · " + xray.routeCheck.ips[0] : "")
+              color: !xray.routeCheck || xray.routeCheck.via === "" ? root.errorColor
+                   : xray.routeCheck.via === "block" ? root.errorColor : root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
 
             RowLayout {
               width: parent.width

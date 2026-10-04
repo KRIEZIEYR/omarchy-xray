@@ -558,6 +558,34 @@ class ConfigBuilding(Base):
         finally:
             M.running_units, M._probe_batch, M.tun_active = saved
 
+    def test_route_check_and_blocked_mode(self):
+        ns = self.nodes()
+        M.STATE.parent.mkdir(parents=True, exist_ok=True)
+        M.STATE.write_text(json.dumps(self.state(ns, routing="ru-direct",
+                                                 rules=[{"target": "block", "value": "ads.example"}])))
+        M._geo_file.cache_clear()
+
+        def route(t):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                M.cmd_route(t)
+            return json.loads(buf.getvalue())
+        self.assertEqual(route("x.ads.example")["via"], "block")
+        self.assertEqual(route("yandex.ru")["via"], "direct")
+        self.assertEqual(route("10.1.2.3")["via"], "direct")
+        st = self.state(ns, routing="ru-blocked")
+        has = M.geo_has("ru-blocked")
+        rules = M.build_config(st)["routing"]["rules"]
+        if has:
+            self.assertEqual(rules[-1], {"network": "tcp,udp", "outboundTag": "direct"})
+        else:                                         # no lists: all through the VPN, never all direct
+            self.assertNotEqual(rules[-1].get("outboundTag"), "direct")
+
+    def test_unwrap_link(self):
+        self.assertEqual(M.unwrap_link("happ://add/https://sub.example/x"), "https://sub.example/x")
+        self.assertEqual(M.unwrap_link("v2rayn://install-sub?url=https%3A%2F%2Fs.example%2Fa"), "https://s.example/a")
+        self.assertEqual(M.unwrap_link(" vless://a@b:1 "), "vless://a@b:1")
+
     def test_chain_share_ua(self):
         ns = [self.node("vless-ws-tls"), self.node("vless-reality-vision"), self.node("hy2-hop")]
         st = self.state(ns, chain=ns[1]["id"], fragment=True)
