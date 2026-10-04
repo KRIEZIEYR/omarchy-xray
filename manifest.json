@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "krieziey.omarchy-xray",
   "name": "Xray",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "author": "krieziey",
   "license": "MIT",
   "description": "Xray in the Omarchy bar: VLESS/VMess/Trojan/Shadowsocks/Hysteria2 subscriptions, every Xray transport, proxy and TUN modes, Auto (best ping), routing presets, latency tests and live traffic.",
