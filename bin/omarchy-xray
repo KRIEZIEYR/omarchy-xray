@@ -2277,11 +2277,9 @@ def _geoip_match(code, ip):
                     raw = bytes(x)
                 elif f2 == 2:
                     plen = x
-            bits = len(raw) * 8
-            if bits == ip.max_prefixlen and plen <= bits and \
-                    int.from_bytes(raw, "big") >> (bits - plen) == int(ip) >> (bits - plen):
-                hit = str(ipaddress.ip_network((int.from_bytes(raw, "big"), plen), strict=False)) \
-                    if bits == 32 else str(ipaddress.IPv6Network((int.from_bytes(raw, "big"), plen), strict=False))
+            if len(raw) * 8 == ip.max_prefixlen and plen <= ip.max_prefixlen:
+                net = ipaddress.ip_network((ipaddress.ip_address(raw), plen), strict=False)
+                hit = str(net) if ip in net else None
     return ("not " + code) if reverse and hit is None else None if reverse else hit
 
 
