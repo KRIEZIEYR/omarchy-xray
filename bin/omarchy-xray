@@ -1268,12 +1268,15 @@ def _ob_endpoint(ob):
 
 
 def scrub_ob(ob):
-    """Drop provider keys that write local files (TLS key log)."""
-    ss = ob.get("streamSettings")
-    if isinstance(ss, dict):
-        for k in ("tlsSettings", "realitySettings"):
-            if isinstance(ss.get(k), dict):
-                ss[k].pop("masterKeyLog", None)
+    """Drop provider keys that write local files (TLS key log) at any depth:
+    tlsSettings, realitySettings, finalmask tlsConfig all accept one."""
+    if isinstance(ob, dict):
+        ob.pop("masterKeyLog", None)
+        for v in ob.values():
+            scrub_ob(v)
+    elif isinstance(ob, list):
+        for v in ob:
+            scrub_ob(v)
     return ob
 
 

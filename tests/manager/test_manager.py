@@ -1195,7 +1195,8 @@ class ManualServers(Base):
     def test_json_tls_key_log_dropped(self):
         ob = {"protocol": "vless", "settings": {"vnext": [{"address": "j.example.com", "port": 443,
                                                            "users": [{"id": UUID}]}]},
-              "streamSettings": {"security": "tls", "tlsSettings": {"masterKeyLog": "/tmp/k"}}}
+              "streamSettings": {"security": "tls", "tlsSettings": {"masterKeyLog": "/tmp/k"},
+                                 "finalmask": {"udp": [{"settings": {"tlsConfig": {"masterKeyLog": "/tmp/k"}}}]}}}
         n = M.node_from_json_config({"outbounds": [ob]})
         self.assertNotIn("masterKeyLog", json.dumps(n))
         stored = {"ob": ob, "host": "j.example.com"}     # imported before the fix
