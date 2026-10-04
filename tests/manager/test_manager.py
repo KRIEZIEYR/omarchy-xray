@@ -1192,6 +1192,15 @@ class ManualServers(Base):
         names = sorted(n["name"] for n in M.load_state()["nodes"])
         self.assertEqual(names, ["From JSON", "j.example.com"])
 
+    def test_json_tls_key_log_dropped(self):
+        ob = {"protocol": "vless", "settings": {"vnext": [{"address": "j.example.com", "port": 443,
+                                                           "users": [{"id": UUID}]}]},
+              "streamSettings": {"security": "tls", "tlsSettings": {"masterKeyLog": "/tmp/k"}}}
+        n = M.node_from_json_config({"outbounds": [ob]})
+        self.assertNotIn("masterKeyLog", json.dumps(n))
+        stored = {"ob": ob, "host": "j.example.com"}     # imported before the fix
+        self.assertNotIn("masterKeyLog", json.dumps(M.node_outbound(stored, "x", "proxy")))
+
     def test_nothing_usable_is_refused_and_not_stored(self):
         M.save_state(self.state([self.node("trojan-ws")]))
         for text in ("hello", "foo://bar", "{\"outbounds\": [{\"protocol\": \"freedom\"}]}",

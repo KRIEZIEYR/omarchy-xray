@@ -1267,6 +1267,16 @@ def _ob_endpoint(ob):
     return st.get("address"), st.get("port")
 
 
+def scrub_ob(ob):
+    """Drop provider keys that write local files (TLS key log)."""
+    ss = ob.get("streamSettings")
+    if isinstance(ss, dict):
+        for k in ("tlsSettings", "realitySettings"):
+            if isinstance(ss.get(k), dict):
+                ss[k].pop("masterKeyLog", None)
+    return ob
+
+
 def node_from_json_config(cfg):
     """One entry of an Xray-JSON subscription -> node (its proxy outbound)."""
     obs = cfg.get("outbounds") if isinstance(cfg, dict) else None
@@ -1276,7 +1286,7 @@ def node_from_json_config(cfg):
     if not cands:
         raise Skip("no supported outbound in JSON config")
     pick = next((o for o in cands if o.get("tag") in ("proxy", "", None)), cands[0])
-    ob = copy.deepcopy(pick)
+    ob = scrub_ob(copy.deepcopy(pick))
     for k in ("tag", "proxySettings", "sendThrough"):
         ob.pop(k, None)
     ss = ob.get("streamSettings")
@@ -1368,7 +1378,7 @@ def core_filter(nodes, skipped):
     def conf_for(group):
         obs = []
         for i, n in enumerate(group):
-            ob = copy.deepcopy(n["ob"])
+            ob = scrub_ob(copy.deepcopy(n["ob"]))
             ob["tag"] = "t%d" % i
             obs.append(ob)
         return {"log": {"loglevel": "none"}, "outbounds": obs}
@@ -1558,7 +1568,7 @@ def auto_members(st):
 
 
 def node_outbound(n, tag, mode, patch=None, iface=None):
-    ob = copy.deepcopy(n["ob"])
+    ob = scrub_ob(copy.deepcopy(n["ob"]))   # also nodes stored before the scrub
     ob["tag"] = tag
     if patch:
         deep_merge(ob, patch)
