@@ -147,7 +147,7 @@ omarchy-xray whoami                 # exit IP and country, through the tunnel
 omarchy-xray route youtube.com      # where it goes (vpn/direct/block) and which rule decides
 omarchy-xray routing ru-blocked     # only sites blocked in Russia go through the VPN
 omarchy-xray set failover on        # switch to the fastest node when yours stops answering
-omarchy-xray handler on             # clicked vless://, hy2://, happ://add/… links import here
+omarchy-xray handler on             # clicked vless://, hy2://, omarchy-xray://add/… links import here
 omarchy-xray speed                  # download speed through the tunnel
 omarchy-xray scan                   # import from a QR code on screen (grim, slurp, zbar)
 omarchy-xray geo update             # fresh geoip/geosite.dat (runetfreedom), sha256-checked
@@ -173,7 +173,29 @@ use it; TUN or off clears both.
 
 - **ALL**: everything except private networks through the VPN.
 - **<CC> DIRECT**: one country's ccTLDs and `geoip:<code>` go direct, plus a geosite list where one exists (RU: `.ru/.su/.рф` + `geosite:category-ru`, CN: `geosite:cn`, IR: `geosite:category-ir`). Regions: RU BY KZ UZ TM CN IR TR AE SA EG PK VN MM. Without geo data only the ccTLDs apply.
+- **RU BLOCKED**: only `geosite:ru-blocked` and `geoip:ru-blocked` go through the VPN, everything else direct. The lists come from [runetfreedom](https://github.com/runetfreedom/russia-v2ray-rules-dat): run `omarchy-xray geo update` (or Geo → UPDATE) first. Without them the config sends everything through the VPN, never everything direct.
 - **Adblock**: `geosite:category-ads-all` → blackhole (needs geo data).
+
+`omarchy-xray route <domain|ip>` (RULES → Check in the widget) says where a destination goes and which rule decides.
+
+## Opening links
+
+`omarchy-xray handler on` (SYSTEM → Links) registers a hidden `.desktop` entry as the opener of
+`vless://`, `vmess://`, `trojan://`, `ss://`, `hysteria2://`, `hy2://` and the plugin's own
+`omarchy-xray://` scheme. A clicked link is imported (share links into Manual, a URL as a
+subscription) and a notification says what happened. `handler off` or `cleanup` removes the entry.
+
+Other clients' schemes (`happ://`, `v2rayn://`) are left to them. To hand out a subscription
+or a server for this client, wrap it:
+
+```
+omarchy-xray://add/https://sub.example.com/abcdef
+omarchy-xray://add/vless://uuid@host:443?security=reality&…#Name
+omarchy-xray://add/https%3A%2F%2Fsub.example.com%2Fabcdef     # percent-encoded also works
+```
+
+The link is a secret: the browser passes it to the opener as an argument (briefly visible in the
+process list); from there it reaches the manager only through the environment.
 
 ## TUN mode
 

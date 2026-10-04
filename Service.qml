@@ -677,7 +677,7 @@ Item {
 
   function setHandler(on) {
     runLong([manager, "handler", on ? "on" : "off"], "settings", 30000,
-            on ? "Links (vless://, happ://…) now open here" : "Links no longer open here", "Applying…")
+            on ? "Links (vless://, omarchy-xray://…) now open here" : "Links no longer open here", "Applying…")
   }
 
   // Health check with failover on: the manager probes the tunnel and, when

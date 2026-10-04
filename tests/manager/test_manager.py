@@ -582,8 +582,9 @@ class ConfigBuilding(Base):
             self.assertNotEqual(rules[-1].get("outboundTag"), "direct")
 
     def test_unwrap_link(self):
-        self.assertEqual(M.unwrap_link("happ://add/https://sub.example/x"), "https://sub.example/x")
-        self.assertEqual(M.unwrap_link("v2rayn://install-sub?url=https%3A%2F%2Fs.example%2Fa"), "https://s.example/a")
+        self.assertEqual(M.unwrap_link("omarchy-xray://add/https://sub.example/x"), "https://sub.example/x")
+        self.assertEqual(M.unwrap_link("omarchy-xray://add/https%3A%2F%2Fs.example%2Fa"), "https://s.example/a")
+        self.assertEqual(M.unwrap_link("happ://add/https://sub.example/x"), "happ://add/https://sub.example/x")
         self.assertEqual(M.unwrap_link(" vless://a@b:1 "), "vless://a@b:1")
 
     def test_chain_share_ua(self):

@@ -35,7 +35,7 @@ the two explicit TUN install steps):
                      (runetfreedom lists: `geo update` first)
   set failover on|off  the widget switches to the fastest node when yours dies
   heal               that check once: probe the tunnel, switch if it is dead
-  handler on|off     open vless://, hy2://, happ://add/… links with omarchy-xray
+  handler on|off     open vless://, hy2://, omarchy-xray://add/… links here
   link               (the link opener) import $OMARCHY_XRAY_SUB_URL, notify
   speed [key]        download speed (Cloudflare, 25 MB max): the tunnel, or one node
                      on its own through a throwaway core
@@ -2674,23 +2674,22 @@ def cmd_heal():
 
 
 LINK_DESKTOP = HOME / ".local/share/applications/omarchy-xray-link.desktop"
-LINK_SCHEMES = ("vless", "vmess", "trojan", "ss", "hysteria2", "hy2", "happ", "v2rayn")
+# Our own scheme instead of other clients' (happ://, v2rayn://): those stay theirs.
+LINK_SCHEMES = ("vless", "vmess", "trojan", "ss", "hysteria2", "hy2", "omarchy-xray")
 
 
 def unwrap_link(text):
-    """Client deep links carry the real link or subscription inside."""
+    """omarchy-xray://add/<link or subscription URL> (the URL may be
+    percent-encoded) carries the real thing; other links pass through."""
     t = text.strip()
-    low = t.lower()
-    if low.startswith("happ://add/"):
-        return t[11:]
-    if low.startswith(("v2rayn://install-config?", "v2rayn://install-sub?")):
-        q = urllib.parse.parse_qs(urllib.parse.urlsplit(t).query)
-        return (q.get("url") or [""])[0]
+    if t.lower().startswith("omarchy-xray://add/"):
+        inner = t[19:]
+        return urllib.parse.unquote(inner) if re.match(r"^[a-z0-9+.-]+%3a", inner, re.I) else inner
     return t
 
 
 def cmd_link():
-    """What a clicked vless://… (or happ://add/…) link opens: import it,
+    """What a clicked vless://… (or omarchy-xray://add/…) link opens: import it,
     then say so in a notification (the panel is usually closed)."""
     text = unwrap_link(secret_url_from_arg("-"))
     buf = io.StringIO()
@@ -2714,7 +2713,7 @@ def cmd_link():
 
 
 def cmd_handler(verb):
-    """Make omarchy-xray the opener of vless://, hy2://, happ://… links."""
+    """Make omarchy-xray the opener of vless://, hy2://, omarchy-xray://… links."""
     if verb == "off":
         try:
             LINK_DESKTOP.unlink()

@@ -1021,7 +1021,7 @@ Panel {
             if (r === "muxc") return "Enter edits · streams per connection, 1-1024"
             if (r === "lan") return "Your network can use this VPN, with a password"
             if (r === "failover") return "Switch to the fastest node when yours stops answering · not with Auto"
-            if (r === "links") return "Clicked vless://, hy2://, happ://add/… links import here"
+            if (r === "links") return "Clicked vless://, hy2://, omarchy-xray://add/… links import here"
             if (r === "check") return "Enter types · a domain or an IP, Enter checks"
             if (r === "ua") return "Enter opens the list · the next update uses it"
             if (r === "dnsown") return "Enter edits · IP or https/tls/quic URL"
@@ -1492,11 +1492,11 @@ Panel {
 
             SettingToggle {
               label: "Links"
-              a11yName: "Open vless and happ links here"
+              a11yName: "Open vless and omarchy-xray links here"
               checked: xray.handler
               busy: xray.busy
               hasCursor: root.cursorRow === "links"
-              note: "Clicked vless://, hy2://, happ://add/… links import here"
+              note: "Clicked vless://, hy2://, omarchy-xray://add/… links import here"
               onFlip: root.guarded(function() { xray.setHandler(!xray.handler) })
             }
 
