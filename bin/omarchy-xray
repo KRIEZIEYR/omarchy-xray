@@ -540,6 +540,21 @@ def check_https_url(url):
     return u
 
 
+@functools.lru_cache(maxsize=None)
+def device_headers():
+    """Remnawave-style device headers for panels with a device limit. The id
+    is a salted hash of machine-id: stable per machine, not the id itself."""
+    try:
+        mid = (read_nofollow("/etc/machine-id", 64) or "").strip()
+    except ValueError:
+        mid = ""
+    h = {"x-device-os": "Linux", "x-ver-os": os.uname().release[:64],
+         "x-device-model": "omarchy-xray"}
+    if mid:
+        h["x-hwid"] = hashlib.sha256(("omarchy-xray:" + mid).encode()).hexdigest()[:16]
+    return h
+
+
 def fetch(url, via_proxy=False):
     """Returns (body, headers). HTTPS only, byte-capped, redirect-checked."""
     import urllib.request
@@ -565,8 +580,8 @@ def fetch(url, via_proxy=False):
     else:
         handlers.append(urllib.request.ProxyHandler({}))
     opener = urllib.request.build_opener(*handlers)
-    req = urllib.request.Request(url, headers={"User-Agent": "omarchy-xray/" + VERSION,
-                                               "Accept": "*/*"})
+    req = urllib.request.Request(url, headers=dict(device_headers(),
+                                 **{"User-Agent": "omarchy-xray/" + VERSION, "Accept": "*/*"}))
     try:
         r = opener.open(req, timeout=FETCH_TIMEOUT)
     except ValueError:

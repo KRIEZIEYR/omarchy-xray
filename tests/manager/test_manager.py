@@ -336,6 +336,14 @@ class Subscriptions(Base):
         self.assertEqual(len(nodes), len(LINKS))
         self.assertEqual(sum(skipped.values()), len(SKIPPED))
 
+    def test_device_headers(self):
+        h = M.device_headers()
+        self.assertEqual(h["x-device-os"], "Linux")
+        if os.path.exists("/etc/machine-id"):
+            mid = pathlib.Path("/etc/machine-id").read_text().strip()
+            self.assertRegex(h["x-hwid"], r"^[0-9a-f]{16}$")
+            self.assertNotIn(h["x-hwid"], mid)   # salted hash, never the raw id
+
     def test_base64_variants(self):
         raw = self.body_links().encode()
         for enc in (base64.b64encode(raw), base64.urlsafe_b64encode(raw).rstrip(b"="),

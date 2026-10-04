@@ -302,9 +302,11 @@ Panel {
     for (var g = 0; g < visibleGroups.length; g++) {
       var grp = visibleGroups[g]
       var st = grp.status === undefined || grp.status === null ? "" : String(grp.status).trim()
-      var title = grp.subscriptionId === "auto" ? ""          // one row needs no header
-                : grp.title + (st === "" || st === "undefined" || st === "null" ? "" : "  ·  " + st)
-      for (var i = 0; i < grp.nodes.length; i++) out.push({ node: grp.nodes[i], title: i === 0 ? title : "" })
+      var title = grp.subscriptionId === "auto" ? "" : grp.title   // one row needs no header
+      var head = { title: title, status: st === "undefined" || st === "null" ? "" : st,
+                   expiry: grp.expiry || "", low: grp.low || { usage: false, expiry: false } }
+      for (var i = 0; i < grp.nodes.length; i++)
+        out.push({ node: grp.nodes[i], title: i === 0 ? title : "", head: head })
     }
     return out
   }
@@ -1214,13 +1216,40 @@ Panel {
           spacing: Style.space(4)
           topPadding: groupTitle !== "" && index > 0 ? Style.space(6) : 0
 
-          PanelSectionHeader {
+          readonly property var head: root.visibleRows[index] ? root.visibleRows[index].head : null
+
+          // Title, then traffic; time left on the right edge. A part running
+          // low (or a failed update) turns dim red.
+          Item {
             visible: rowCol.groupTitle !== ""
             width: parent.width
-            elide: Text.ElideRight
-            text: rowCol.groupTitle
-            foreground: root.foreground
-            fontFamily: root.fontFamily
+            height: groupTitleText.implicitHeight
+
+            PanelSectionHeader {
+              id: groupTitleText
+              anchors.left: parent.left
+              text: rowCol.groupTitle
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            PanelSectionHeader {
+              anchors.left: groupTitleText.right
+              anchors.right: groupExpiryText.left
+              anchors.rightMargin: groupExpiryText.text !== "" ? Style.space(8) : 0
+              elide: Text.ElideRight
+              text: rowCol.head && rowCol.head.status !== "" ? "  ·  " + rowCol.head.status : ""
+              foreground: rowCol.head && rowCol.head.low.usage ? root.errorColor : root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            PanelSectionHeader {
+              id: groupExpiryText
+              anchors.right: parent.right
+              text: rowCol.head ? rowCol.head.expiry : ""
+              foreground: rowCol.head && rowCol.head.low.expiry ? root.errorColor : root.foreground
+              fontFamily: root.fontFamily
+            }
           }
 
           NodeRow { globalIndex: rowCol.index }
@@ -1364,7 +1393,8 @@ Panel {
                       Layout.fillWidth: true
                       visible: text !== ""
                       text: subRow.sub ? (subRow.sub.error ? "󰀦 " + subRow.sub.error : Model.subInfoLabel(subRow.sub.info)) : ""
-                      color: subRow.sub && subRow.sub.error ? root.errorColor : root.dim
+                      color: subRow.sub && (subRow.sub.error || Model.subLow(subRow.sub.info).usage
+                             || Model.subLow(subRow.sub.info).expiry) ? root.errorColor : root.dim
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.bodySmall
                       elide: Text.ElideRight

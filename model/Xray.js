@@ -52,33 +52,52 @@ function groupsFromStatus(data, maxNodes, nowSec) {
   for (var g = 0; g < order.length; g++) {
     var k = order[g]
     var title = "AUTO"
-    var status = ""
+    var status = "", expiry = "", low = { usage: false, expiry: false }
     if (k !== "auto") {
       var sub = subs[parseInt(k, 10)] || {}
       title = String(sub.title || sub.host || "SERVERS").toUpperCase()
       // a failing subscription says so where its nodes are, not only in the footer
-      status = sub.error ? "󰀦 " + String(sub.error).slice(0, 60) : subInfoLabel(sub.info, nowSec)
+      status = sub.error ? "󰀦 " + String(sub.error).slice(0, 60) : subUsageLabel(sub.info)
+      // a subscription that reports traffic but no expiry does not run out
+      expiry = sub.error ? "" : subExpiryLabel(sub.info, nowSec) || (status !== "" ? "∞" : "")
+      low = subLow(sub.info, nowSec)
+      if (sub.error) low.usage = true
     }
-    result.groups.push({ title: title, status: status, subscriptionId: k, nodes: bySub[k] })
+    result.groups.push({ title: title, status: status, expiry: expiry, low: low, subscriptionId: k, nodes: bySub[k] })
   }
   return result
 }
 
-/* "12.3 GB / 100 GB · 23d left" from subscription-userinfo. */
-function subInfoLabel(info, nowSec) {
+/* "12.3 GB / 100 GB" from subscription-userinfo; no total means unlimited. */
+function subUsageLabel(info) {
   if (!info || typeof info !== "object") return ""
-  var parts = []
   var used = (Number(info.upload) || 0) + (Number(info.download) || 0)
   var total = Number(info.total) || 0
-  if (total > 0) parts.push(formatBytes(used) + " / " + formatBytes(total))
-  else if (used > 0) parts.push(formatBytes(used) + " used")
-  var expire = Number(info.expire) || 0
-  if (expire > 0) {
-    var now = nowSec || Math.floor(Date.now() / 1000)
-    var days = Math.floor((expire - now) / 86400)
-    parts.push(days < 0 ? "expired" : (days === 0 ? "expires today" : days + "d left"))
-  }
-  return parts.join(" · ")
+  if (total > 0) return formatBytes(used) + " / " + formatBytes(total)
+  return used > 0 ? formatBytes(used) + " / ∞" : ""
+}
+
+/* "23d left", "expires today", "expired" or "" without an expiry. */
+function subExpiryLabel(info, nowSec) {
+  var expire = Number(info && info.expire) || 0
+  if (expire <= 0) return ""
+  var days = Math.floor((expire - (nowSec || Math.floor(Date.now() / 1000))) / 86400)
+  return days < 0 ? "expired" : (days === 0 ? "expires today" : days + "d left")
+}
+
+/* Which part is running low: under 10% traffic left, 3 days or less left. */
+function subLow(info, nowSec) {
+  var i = info && typeof info === "object" ? info : {}
+  var total = Number(i.total) || 0
+  var used = (Number(i.upload) || 0) + (Number(i.download) || 0)
+  var expire = Number(i.expire) || 0
+  return { usage: total > 0 && total - used < total * 0.1,
+           expiry: expire > 0 && expire - (nowSec || Math.floor(Date.now() / 1000)) <= 3 * 86400 }
+}
+
+/* Both parts in one line, for the subscriptions list. */
+function subInfoLabel(info, nowSec) {
+  return [subUsageLabel(info), subExpiryLabel(info, nowSec)].filter(function(x) { return x }).join(" · ")
 }
 
 function skippedLabel(skipped) {
@@ -171,7 +190,7 @@ function filterNodes(groups, query) {
       else if (q.length >= 3 && (n.address + " " + n.net + " " + src.title).toLowerCase().indexOf(q) !== -1) byMeta.push(n)
     }
     var kept = byName.concat(byMeta)
-    if (kept.length > 0) out.push({ title: src.title, subscriptionId: src.subscriptionId, status: src.status, nodes: kept })
+    if (kept.length > 0) out.push({ title: src.title, subscriptionId: src.subscriptionId, status: src.status, expiry: src.expiry, low: src.low, nodes: kept })
   }
   return out
 }

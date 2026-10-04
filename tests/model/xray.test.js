@@ -28,7 +28,9 @@ module.exports = function ({ Xray, assert, eq }) {
     assert('connected key', t.connectedKeys.k2 === true)
     assert('connected flag', Xray.findNodeByKey(t.nodes, 'k2').connected === true)
     assert('others not connected', Xray.findNodeByKey(t.nodes, 'k1').connected === false)
-    eq('sub info label', t.groups[1].status, '2.00 GB / 100.00 GB · 3d left')
+    eq('sub usage label', t.groups[1].status, '2.00 GB / 100.00 GB')
+    eq('sub expiry label', t.groups[1].expiry, '3d left')
+    eq('3 days is low', t.groups[1].low, { usage: false, expiry: true })
     eq('empty info label', t.groups[2].status, '')
   }
   {
@@ -39,8 +41,10 @@ module.exports = function ({ Xray, assert, eq }) {
   }
 
   /* ---- labels ---- */
-  eq('expired', Xray.subInfoLabel({ expire: NOW - 10 }, NOW), 'expired')
-  eq('used only', Xray.subInfoLabel({ download: 2048 }, NOW), '2.0 KB used')
+  eq('low traffic', Xray.subLow({ download: 95, total: 100 }, NOW), { usage: true, expiry: false })
+  eq('unlimited not low', Xray.subLow({ download: 95, expire: NOW + 5 * 86400 }, NOW), { usage: false, expiry: false })
+    eq('expired', Xray.subInfoLabel({ expire: NOW - 10 }, NOW), 'expired')
+  eq('used only', Xray.subInfoLabel({ download: 2048 }, NOW), '2.0 KB / ∞')
   eq('skipped none', Xray.skippedLabel({}), '')
   eq('skipped one reason', Xray.skippedLabel({ 'transport h2 was removed from Xray core (use XHTTP)': 2 }),
     '2 nodes skipped (transport h2 was removed from Xray core (use XHTTP))')
