@@ -269,6 +269,10 @@ Panel {
     { value: "quad9", label: "Quad9" }, { value: "adguard", label: "AdGuard" },
     { value: "system", label: "System" }
   ].concat(xray.dnsCustom ? [{ value: "custom", label: "Own" }] : [])
+  // first hop: off, or any real node (Auto is not one)
+  readonly property var chainMenu: [{ value: "", label: "Off" }].concat(
+      (xray.touch ? xray.touch.nodes : []).filter(function(n) { return n.key !== "auto" })
+        .map(function(n) { return { value: n.key, label: n.name } }))
   function dnsIndex() { return Math.max(0, dnsOptions.findIndex(function(o) { return o.value === xray.dns })) }
   function chooseDns(v) {
     if (xray.busy) { xray.busyRefused(); return }
@@ -341,7 +345,7 @@ Panel {
     else if (r === "dnsown") focusDnsField()
     else if (r === "auto") guarded(function() { xray.setOption("autofav", chipIndex === 1 ? "on" : "off",
                                                               chipIndex === 1 ? "Auto: starred nodes only" : "Auto: all nodes") })
-    else if (r === "chain") focusField("chainField")
+    else if (r === "chain") { var dd3 = nodeList.headerItem ? nodeList.headerItem.chainDropdown : null; if (dd3) dd3.open() }
     else if (r === "mux") guarded(function() { xray.setOption("mux", xray.mux ? "off" : "on", xray.mux ? "Mux off" : "Mux on") })
     else if (r === "muxc") focusField("muxField")
     else if (r === "lan") guarded(function() { xray.setOption("lan", xray.lan ? "off" : "on", xray.lan ? "Local network access off" : "Local network access on") })
@@ -815,7 +819,7 @@ Panel {
       // Inline editors get every key (kit contract); they handle Up/Down/Enter/Esc themselves.
       blocked: (nodeList.headerItem !== null && (nodeList.headerItem.search.activeFocus || nodeList.headerItem.ruleField.activeFocus
                                                  || nodeList.headerItem.dnsField.activeFocus
-                                                 || nodeList.headerItem.chainField.activeFocus
+                                                 || nodeList.headerItem.chainDropdown.popupOpen
                                                  || nodeList.headerItem.muxField.activeFocus
                                                  || nodeList.headerItem.checkField.activeFocus
                                                  || nodeList.headerItem.uaDropdown.popupOpen || nodeList.headerItem.dnsDropdown.popupOpen
@@ -1016,7 +1020,7 @@ Panel {
               var o = hintOpts[r]
               return o[c] ? o[c].tooltip : ""
             }
-            if (r === "chain") return "Enter edits · traffic goes through this node first"
+            if (r === "chain") return "Enter opens the list · traffic goes through this node first"
             if (r === "mux") return "Fewer handshakes · not Vision, XHTTP, Hysteria2"
             if (r === "muxc") return "Enter edits · streams per connection, 1-1024"
             if (r === "lan") return "Your network can use this VPN, with a password"
@@ -1119,7 +1123,7 @@ Panel {
           property alias search: searchField
           property alias ruleField: ruleField
           property alias dnsField: dnsField
-          property alias chainField: chainRow.field
+          property alias chainDropdown: chainDropdown
           property alias muxField: muxRow.field
           property alias checkField: checkRow.field
           property alias uaDropdown: uaDropdown
@@ -1415,14 +1419,25 @@ Panel {
               onChanged: function(v) { root.guarded(function() { xray.setOption("autofav", v === "fav" ? "on" : "off") }) }
             }
 
-            FieldRow {
-              id: chainRow
-              label: "Chain"
-              value: xray.chainName
-              hint: "off · type a node name"
-              icon: "󰌷"
-              row: "chain"
-              onSubmitted: function(t) { root.guarded(function() { xray.setChain(t === "" ? "off" : t) }) }
+            RowLayout {
+              width: parent.width
+              spacing: Style.space(8)
+              RowLabel { text: "Chain" }
+              Dropdown {
+                id: chainDropdown
+                showLabel: false
+                rowHeight: root.ctlHeight
+                popupRowHeight: root.ctlHeight
+                Layout.preferredWidth: Style.space(150)
+                options: root.chainMenu
+                value: xray.chain
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                hasCursor: root.cursorRow === "chain"
+                onHovered: function(h) { if (h) root.cursorActive = false }
+                onChanged: function(v) { if (v !== xray.chain) root.guarded(function() { xray.setChain(v === "" ? "off" : v) }) }
+              }
+              Item { Layout.fillWidth: true }
             }
 
             ChipRow {
