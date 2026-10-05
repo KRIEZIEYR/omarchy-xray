@@ -283,7 +283,7 @@ multiplexing); a ClientHello `fragment` helps only plain-TLS nodes under DPI, no
 - Xray and tun2socks never run as root or with a capability. TUN is opt-in; its setup is the only privileged step ([above](#tun-mode)); the polkit rule covers one user, one unit, three verbs.
 - The manager refuses root except `tun-install`/`tun-uninstall`, uses `#!/usr/bin/python3 -I`, absolute tool paths and an environment allowlist for children; the widget starts processes with a cleared environment plus an allowlist.
 - Downloads: HTTPS only (redirects re-checked), 2 MiB streaming cap, strict per-protocol validation with bounds (2000 nodes, 5000 lines).
-- Xray-JSON subscriptions: only the proxy outbound is kept; `tag`, `proxySettings`, `sendThrough`, `sockopt.dialerProxy` are dropped and every `masterKeyLog` (TLS, REALITY, finalmask, any depth) is removed on import and again when the config is built, so a provider can't chain outbounds or make Xray write files.
+- Xray-JSON subscriptions: only the proxy outbound is kept; `tag`, `proxySettings`, `sendThrough`, `sockopt.dialerProxy` are dropped and every `masterKeyLog` (TLS, REALITY, finalmask, any depth) is removed when the config is built, so a provider can't chain outbounds or make Xray write files.
 - QR scan: the screenshot goes to `zbarimg` over stdin with `--nodbus`, so the decoded link is never broadcast on the system DBus.
 - Secrets: `~/.config/omarchy-xray/` `0700`, `state.json`/`config.json` atomic `0600` no-follow writes; `import -` reads from `$OMARCHY_XRAY_SUB_URL`/stdin (120 KiB cap), a URL in argv is refused; status and errors show `host/***` only; test configs in `$XDG_RUNTIME_DIR/omarchy-xray` (`0700`).
 - Loopback-only listeners: socks 20170, http 20171, metrics 15491.

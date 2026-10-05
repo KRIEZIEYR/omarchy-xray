@@ -873,8 +873,11 @@ Panel {
           id: hero
           width: parent.width
           title: xray.heroTitle
-          meta: xray.heroState + (xray.connected && xray.exitIp !== ""
-                ? "  ·  " + Model.flagOf(xray.exitCountry) + " " + xray.exitIp : "")
+          // connected: the node name or the exit IP, a click flips them
+          // (both on one line ran past the panel edge)
+          readonly property bool hasIp: xray.connected && xray.exitIp !== ""
+          property bool showIp: false
+          meta: hasIp && showIp ? Model.flagOf(xray.exitCountry) + " " + xray.exitIp : xray.heroState
           foreground: root.foreground
           fontFamily: root.fontFamily
           iconOpacity: root.onTarget ? 1.0 : 0.5
@@ -901,6 +904,15 @@ Panel {
               badgeColor: root.errorColor
             }
             }
+          }
+          MouseArea {
+            // over the title and caption only: not the icon, not the switch
+            anchors.fill: parent
+            anchors.leftMargin: Math.round(Style.font.display * 1.25) + Style.space(6)
+            anchors.rightMargin: hero.trailingInset
+            enabled: hero.hasIp
+            cursorShape: Qt.PointingHandCursor
+            onClicked: hero.showIp = !hero.showIp
           }
           trailingControl: Component {
             ToggleSwitch {

@@ -1197,9 +1197,7 @@ class ManualServers(Base):
                                                            "users": [{"id": UUID}]}]},
               "streamSettings": {"security": "tls", "tlsSettings": {"masterKeyLog": "/tmp/k"},
                                  "finalmask": {"udp": [{"settings": {"tlsConfig": {"masterKeyLog": "/tmp/k"}}}]}}}
-        n = M.node_from_json_config({"outbounds": [ob]})
-        self.assertNotIn("masterKeyLog", json.dumps(n))
-        stored = {"ob": ob, "host": "j.example.com"}     # imported before the fix
+        stored = {"ob": ob, "host": "j.example.com"}
         self.assertNotIn("masterKeyLog", json.dumps(M.node_outbound(stored, "x", "proxy")))
 
     def test_nothing_usable_is_refused_and_not_stored(self):

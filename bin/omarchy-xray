@@ -1289,7 +1289,7 @@ def node_from_json_config(cfg):
     if not cands:
         raise Skip("no supported outbound in JSON config")
     pick = next((o for o in cands if o.get("tag") in ("proxy", "", None)), cands[0])
-    ob = scrub_ob(copy.deepcopy(pick))
+    ob = copy.deepcopy(pick)
     for k in ("tag", "proxySettings", "sendThrough"):
         ob.pop(k, None)
     ss = ob.get("streamSettings")
@@ -1571,7 +1571,7 @@ def auto_members(st):
 
 
 def node_outbound(n, tag, mode, patch=None, iface=None):
-    ob = scrub_ob(copy.deepcopy(n["ob"]))   # also nodes stored before the scrub
+    ob = scrub_ob(copy.deepcopy(n["ob"]))
     ob["tag"] = tag
     if patch:
         deep_merge(ob, patch)
