@@ -1319,7 +1319,7 @@ Panel {
               width: parent.width
               spacing: Style.space(8)
               RowLabel { text: "Server" }
-              Dropdown {
+              PanelDropdown {
                 id: dnsDropdown
                 showLabel: false
                 rowHeight: root.ctlHeight
@@ -1435,7 +1435,7 @@ Panel {
               width: parent.width
               spacing: Style.space(8)
               RowLabel { text: "Chain" }
-              Dropdown {
+              PanelDropdown {
                 id: chainDropdown
                 showLabel: false
                 rowHeight: root.ctlHeight
@@ -1539,7 +1539,7 @@ Panel {
               width: parent.width
               spacing: Style.space(8)
               RowLabel { text: "UA" }
-              Dropdown {
+              PanelDropdown {
                 id: uaDropdown
                 showLabel: false
                 rowHeight: root.ctlHeight            // as tall as the chips beside it
@@ -2327,6 +2327,24 @@ Panel {
 
   // Group title: more space above than below, optional quiet trailing note.
   // A group title; every group after the first opens with a hairline.
+  // The kit popup closes on any press outside it, the trigger's own press
+  // included, and the click that follows opens it again: the list blinks.
+  // A press on the trigger right after that close only closes.
+  component PanelDropdown: Dropdown {
+    id: pd
+    property real closedAt: 0
+    onPopupOpenChanged: if (!popupOpen) closedAt = Date.now()
+    MouseArea {
+      z: 10
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.top: parent.top
+      height: pd.rowHeight
+      cursorShape: Qt.PointingHandCursor
+      onClicked: if (Date.now() - pd.closedAt > 300) pd.open()
+    }
+  }
+
   component SectionTitle: Column {
     id: sct
     property string text: ""
